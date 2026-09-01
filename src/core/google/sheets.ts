@@ -8,6 +8,7 @@
 import { google, type sheets_v4 } from 'googleapis';
 
 import { fromGoogleError, gcError } from '../errors.ts';
+import { limitOf } from '../policy.ts';
 import { withRetry } from '../retry.ts';
 import type {
   Cell,
@@ -19,7 +20,8 @@ import type {
   ValidationRule,
 } from '../sheets/types.ts';
 
-const DEFAULT_MAX_ROWS = 500;
+/** Источник истины — правило `read.max-rows` в rules.json; число здесь только страховка. */
+export const DEFAULT_MAX_ROWS = limitOf('read.max-rows', 500);
 
 /**
  * Форматы, при которых значение ячейки для человека — СТРОКА, а не число.

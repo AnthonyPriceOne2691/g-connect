@@ -7,6 +7,7 @@
  */
 
 import { gcError } from '../errors.ts';
+import { assertChangeBudget } from '../policy.ts';
 import { needsClarification, resolveColumn, type ResolveOptions } from '../resolver.ts';
 import { normalizeValue } from '../values.ts';
 import {
@@ -198,6 +199,7 @@ async function finish(
   prepared: Prepared,
   options: RowOptions,
 ): Promise<ApplyOutcome> {
+  assertChangeBudget(changes.length);
   const base = {
     changes,
     assumptions: prepared.assumptions,

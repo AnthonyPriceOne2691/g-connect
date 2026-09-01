@@ -10,6 +10,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { gcError } from './errors.ts';
+import { denyByRule } from './policy.ts';
 import { DEFAULT_ACCOUNT, profileDir } from './profiles.ts';
 
 export type TargetType = 'doc' | 'sheet' | 'folder' | 'form' | 'unknown';
@@ -122,15 +123,14 @@ export function resolveTarget(ref: string, registry: Registry = { targets: [] })
   };
 }
 
-/** Запись разрешена только целям из реестра с `allow: write` (§11.2). */
+/** Запись разрешена только целям из реестра с `allow: write` (§11.2, правило write.allowlist). */
 export function assertWritable(target: ResolvedTarget): void {
   if (target.allow === 'write') return;
-  throw gcError('policy_denied', {
-    detail:
-      target.alias === null
-        ? `Цель ${target.id} не описана в реестре, поэтому доступна только для чтения. ` +
-          'Добавь её в targets.json с allow: write — это делает человек, не агент.'
-        : `Цель «${target.alias}» описана как read-only.`,
-    cause: 'write_allowlist',
-  });
+  denyByRule(
+    'write.allowlist',
+    target.alias === null
+      ? `Цель ${target.id} не описана в реестре, поэтому доступна только для чтения. ` +
+          'Добавить её с allow: write может человек, не агент.'
+      : `Цель «${target.alias}» описана как read-only.`,
+  );
 }

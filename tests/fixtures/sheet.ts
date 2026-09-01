@@ -101,6 +101,23 @@ export function instructionSheet(): SheetSnapshot {
   };
 }
 
+/** Лист с защищённым диапазоном — для правила write.protected-range. */
+export function protectedSheet(): SheetSnapshot {
+  return {
+    title: 'Защита',
+    sheetId: 4,
+    rows: [row('Проект', 'Владелец'), row('G connect', 'Антон'), row('lash-try-on', 'Антон')],
+    protectedRanges: [{ startRow: 2, endRow: 100, startColumn: 1, endColumn: 1 }],
+  };
+}
+
+/** Лист на `rows` строк с одинаковым значением ключа — для правила write.max-changes. */
+export function wideSheet(rows: number): SheetSnapshot {
+  const data: Cell[][] = [row('Группа', 'Значение')];
+  for (let i = 0; i < rows; i += 1) data.push(row('все', i));
+  return { title: 'Много', sheetId: 5, rows: data };
+}
+
 export function snapshot(sheets: SheetSnapshot[] = [reportSheet()]): SpreadsheetSnapshot {
   return {
     id: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',

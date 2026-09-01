@@ -16,7 +16,8 @@ import { profileDir, profileStatus, readToken, writeToken } from '../src/core/pr
 import { withRetry } from '../src/core/retry.ts';
 import { isSilent, needsClarification, resolveColumn } from '../src/core/resolver.ts';
 import { buildSheetData, buildSheetMap } from '../src/core/sheets/map.ts';
-import { upsertRow } from '../src/core/sheets/rows.ts';
+import { limitOf } from '../src/core/policy.ts';
+import { appendRow, setCells, upsertRow } from '../src/core/sheets/rows.ts';
 import { assertWritable, parseTargetUrl, resolveTarget } from '../src/core/targets.ts';
 import { normalizeValue } from '../src/core/values.ts';
 import {
@@ -24,6 +25,7 @@ import {
   MutableSheetsClient,
   STATUS_VALUES,
   snapshot,
+  wideSheet,
 } from './fixtures/sheet.ts';
 
 /** Алфавит ID файлов Google. */
@@ -170,6 +172,66 @@ describe('инварианты повторов', () => {
         for (let i = 1; i < delays.length; i += 1) {
           expect(delays[i]!).toBeGreaterThan(delays[i - 1]!);
         }
+      }),
+    );
+  });
+});
+
+describe('инварианты правил (D-12)', () => {
+  it('ни одна операция без dryRun:false не пишет — при любых значениях и любой операции', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.constantFrom('appendRow', 'upsertRow', 'setCells'),
+        fc.integer({ min: -50, max: 50 }),
+        async (kind, hours) => {
+          const client = new FakeSheetsClient();
+          const data = buildSheetData(snapshot());
+          const values = { Часы: hours };
+          const selector = { Проект: 'G connect' };
+
+          if (kind === 'appendRow') await appendRow(client, data, { ...selector, ...values });
+          else if (kind === 'upsertRow') await upsertRow(client, data, selector, values);
+          else await setCells(client, data, selector, values);
+
+          expect(client.writes).toHaveLength(0);
+          expect(client.appends).toHaveLength(0);
+        },
+      ),
+      { numRuns: 20 },
+    );
+  });
+
+  it('план никогда не превышает бюджет правила: либо влезает, либо отказ с id правила', async () => {
+    const max = limitOf('write.max-changes', 200);
+    await fc.assert(
+      fc.asyncProperty(fc.integer({ min: 1, max: max * 2 }), async (rows) => {
+        const data = buildSheetData(snapshot([wideSheet(rows)]));
+        try {
+          const outcome = await setCells(
+            new FakeSheetsClient(),
+            data,
+            { Группа: 'все' },
+            { Значение: -1 },
+          );
+          expect(outcome.changes.length).toBeLessThanOrEqual(max);
+        } catch (error) {
+          const payload = (error as { payload: { cause?: string } }).payload;
+          expect(payload.cause).toBe('write.max-changes');
+          expect(rows).toBeGreaterThan(max);
+        }
+      }),
+      { numRuns: 15 },
+    );
+  });
+
+  it('любая ошибка ядра доходит человеку с кодом, названием и решением про действие', () => {
+    fc.assert(
+      fc.property(errorCode, (code) => {
+        const payload = gcError(code).toPayload();
+        expect(payload.code).toBe(code);
+        expect(payload.title.length).toBeGreaterThan(0);
+        // Либо действие названо, либо явно сказано, что его нет (§13.7 п.3).
+        expect(payload.action === null || payload.action.label.length > 0).toBe(true);
       }),
     );
   });

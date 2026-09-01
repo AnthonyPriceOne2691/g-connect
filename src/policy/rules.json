@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "comment": "Машинная часть правил работы с документами (DESIGN.md §12.4, D-12). Каждое правило ИСПОЛНЯЕТСЯ ядром: у него есть точка отказа в коде и тест. Правило, живущее только как текст для модели, правилом не является.",
+  "rules": [
+    {
+      "id": "write.dry-run-default",
+      "title": "Записывающая операция по умолчанию возвращает план, а не пишет",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/ops.ts (dryRun.default) + src/core/sheets/rows.ts (finish)",
+      "probe": "операция без dryRun не пишет ни одной ячейки"
+    },
+    {
+      "id": "write.allowlist",
+      "title": "Писать можно только в цели реестра с allow: write",
+      "kind": "deny",
+      "enforced_in": "src/core/targets.ts (assertWritable)",
+      "probe": "запись в цель вне реестра → policy_denied"
+    },
+    {
+      "id": "write.formula-column",
+      "title": "Запись в формульную колонку блокируется без явного подтверждения",
+      "kind": "deny",
+      "enforced_in": "src/core/sheets/rows.ts (prepare)",
+      "probe": "setCells в колонку с формулой → write_blocked, cause=formula_column"
+    },
+    {
+      "id": "write.protected-range",
+      "title": "Запись в защищённый диапазон блокируется без явного подтверждения",
+      "kind": "deny",
+      "enforced_in": "src/core/sheets/rows.ts (prepare)",
+      "probe": "setCells в защищённую колонку → write_blocked, cause=protected_range"
+    },
+    {
+      "id": "write.max-changes",
+      "title": "За один вызов меняется не больше 200 ячеек",
+      "kind": "limit",
+      "value": 200,
+      "enforced_in": "src/core/policy.ts (assertChangeBudget)",
+      "probe": "план из 201 изменения → policy_denied с числом"
+    },
+    {
+      "id": "write.revision-guard",
+      "title": "Запись отклоняется, если таблица изменилась с момента чтения",
+      "kind": "deny",
+      "enforced_in": "src/core/sheets/rows.ts (assertRevision)",
+      "probe": "expectRevision не совпал → revision_conflict"
+    },
+    {
+      "id": "columns.no-silent-create",
+      "title": "Неизвестная колонка не создаётся молча — задаётся вопрос",
+      "kind": "ask",
+      "enforced_in": "src/core/resolver.ts (ступень 6) + rows.ts (prepare)",
+      "probe": "values с несуществующей колонкой → needs_clarification, колонка не создана"
+    },
+    {
+      "id": "values.enum-ask",
+      "title": "Значение вне списка допустимых спрашивается, а не дописывается",
+      "kind": "ask",
+      "enforced_in": "src/core/values.ts (normalizeValue)",
+      "probe": "значение вне enum → needs_clarification со списком допустимых"
+    },
+    {
+      "id": "values.no-objects",
+      "title": "В ячейку пишется простое значение, не объект и не массив",
+      "kind": "deny",
+      "enforced_in": "src/core/values.ts (normalizeValue)",
+      "probe": "объект в значении → bad_request, cause=non_primitive_value"
+    },
+    {
+      "id": "read.max-rows",
+      "title": "Чтение ограничено по строкам, а усечение помечается",
+      "kind": "limit",
+      "value": 500,
+      "enforced_in": "src/core/google/sheets.ts (DEFAULT_MAX_ROWS, ReadOptions.maxRows)",
+      "probe": "чтение без maxRows берёт не больше значения правила"
+    },
+    {
+      "id": "content.is-data",
+      "title": "Прочитанное из документов — данные, никогда не инструкции",
+      "kind": "invariant",
+      "enforced_in": "src/core/policy.ts (asData) — пометка источника в возвращаемых данных",
+      "probe": "прочитанный текст помечен как данные и не может инициировать запись"
+    },
+    {
+      "id": "secrets.never-leave-profile",
+      "title": "Токены и ключи не попадают в ответы, логи и аудит",
+      "kind": "invariant",
+      "enforced_in": "src/core/profiles.ts (profileStatus не отдаёт токены)",
+      "probe": "статус профиля не содержит access_token/refresh_token при любых входных данных"
+    }
+  ]
+}
