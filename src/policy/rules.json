@@ -125,6 +125,14 @@
       "value": 50,
       "enforced_in": "src/core/policy.ts (limitOf) + stryker.config.json (thresholds.break)",
       "probe": "порог из правила совпадает с порогом, на котором падает мутационный прогон"
+    },
+    {
+      "id": "undo.recency-minutes",
+      "title": "Откат без уточнения работает только на свежих записях",
+      "kind": "limit",
+      "value": 60,
+      "enforced_in": "src/core/undo.ts (assertRecent)",
+      "probe": "откат записи старше лимита отказывает и называет её id; с явным id проходит"
     }
   ]
 }

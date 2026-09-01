@@ -11,11 +11,14 @@
  */
 
 import { gcError, newCorrelationId } from './errors.js';
+import { limitOf } from './policy.js';
 import { lastUndoable, type JournalSink, type JournalSource, type WriteRecord } from './journal.js';
 import type { CellValue, SheetsClient, SheetSnapshot } from './sheets/types.js';
 
 export interface UndoOptions {
   readonly account?: string;
+  /** Откатить КОНКРЕТНУЮ запись по её id — способ дотянуться до старой осознанно. */
+  readonly correlationId?: string;
   /** Сколько последних записей откатить. Больше одной — редкий случай, но он законен. */
   readonly last?: number;
   /** Ревизия сейчас — только для записи в журнал; решение об откате принимается по ячейкам. */
@@ -90,6 +93,29 @@ async function assertSafeToUndo(
   }
 }
 
+/**
+ * Откат не уходит в историю молча.
+ *
+ * Замерено на живой таблице: два «откати» подряд вернули не только свою правку, но и
+ * запись ЧУЖОЙ сессии сорокаминутной давности — формально «последняя неоткаченная», по
+ * сути потеря чужой работы. «Последняя» должна означать «только что», иначе человек
+ * теряет то, о чём не думал. Старую запись откатить можно, но назвав её id явно.
+ */
+function assertRecent(record: WriteRecord, options: UndoOptions): void {
+  if (options.force === true || options.correlationId !== undefined) return;
+  const maxMinutes = limitOf('undo.recency-minutes', 60);
+  const ageMinutes = (Date.now() - new Date(record.at).getTime()) / 60_000;
+  if (ageMinutes <= maxMinutes) return;
+  throw gcError('revision_conflict', {
+    detail:
+      `Последняя неоткаченная запись сделана ${new Date(record.at).toLocaleString('ru-RU')} ` +
+      `(${Math.round(ageMinutes)} мин назад) и меняла ${record.changes.map((c) => c.a1).join(', ')}. ` +
+      'Откат без уточнения работает только на свежих записях: если нужна именно эта, ' +
+      `назови её id — ${record.correlationId}.`,
+    cause: 'undo_target_too_old',
+  });
+}
+
 export async function undoLast(
   client: SheetsClient,
   targetId: string,
@@ -98,11 +124,15 @@ export async function undoLast(
 ): Promise<UndoOutcome> {
   const depth = Math.max(1, options.last ?? 1);
   const history = await source.recent(targetId, Math.max(50, depth * 10));
-  const record = lastUndoable(history);
+  const record =
+    options.correlationId === undefined
+      ? lastUndoable(history)
+      : (history.find((r) => r.correlationId === options.correlationId) ?? null);
 
   if (record === null) {
     return { status: 'nothing_to_undo', restored: [], undoneCorrelationId: null, at: null };
   }
+  assertRecent(record, options);
   await assertSafeToUndo(client, targetId, record, options);
 
   const restored: { a1: string; column: string; value: string | number | boolean | null }[] = [];

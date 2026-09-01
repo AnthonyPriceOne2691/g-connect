@@ -199,6 +199,53 @@ describe('B9 — откат возвращает значения', () => {
   });
 });
 
+describe('откат не уходит в историю молча', () => {
+  const old = record({
+    at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+    correlationId: 'gc-old',
+    changes: [{ a1: 'Лист1!D3', column: 'Часы', before: 2, after: 2 }],
+  });
+
+  it('запись старше лимита не откатывается, но её id назван', async () => {
+    try {
+      await undoLast(new MutableSheetsClient(snapshot()), 'SHEET1', {
+        recent: () => Promise.resolve([old]),
+      });
+      expect.unreachable('должно бросить');
+    } catch (error) {
+      const payload = (error as { payload: { cause?: string; detail?: string } }).payload;
+      expect(payload.cause).toBe('undo_target_too_old');
+      expect(payload.detail).toContain('gc-old');
+      expect(payload.detail).toContain('Лист1!D3');
+    }
+  });
+
+  it('с явным id старая запись откатывается — это осознанное решение', async () => {
+    const outcome = await undoLast(
+      new MutableSheetsClient(snapshot()),
+      'SHEET1',
+      { recent: () => Promise.resolve([old]) },
+      { correlationId: 'gc-old', journal: noopJournal },
+    );
+    expect(outcome.status).toBe('ok');
+    expect(outcome.undoneCorrelationId).toBe('gc-old');
+  });
+
+  it('свежая запись откатывается без уточнений', async () => {
+    const fresh = record({
+      at: new Date().toISOString(),
+      changes: [{ a1: 'Лист1!D3', column: 'Часы', before: 9, after: 2 }],
+    });
+    const outcome = await undoLast(
+      new MutableSheetsClient(snapshot()),
+      'SHEET1',
+      { recent: () => Promise.resolve([fresh]) },
+      { journal: noopJournal },
+    );
+    expect(outcome.status).toBe('ok');
+  });
+});
+
 describe('B10 — откат при чужих правках', () => {
   it('с явным force человек берёт ответственность — откат идёт', async () => {
     const client = new FakeSheetsClient();

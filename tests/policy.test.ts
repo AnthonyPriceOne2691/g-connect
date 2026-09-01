@@ -203,6 +203,26 @@ const probes: Record<string, () => Promise<void>> = {
     expect(preview).toHaveLength(0);
   },
 
+  'undo.recency-minutes': async () => {
+    const maxMinutes = limitOf('undo.recency-minutes', -1);
+    expect(maxMinutes).toBeGreaterThan(0);
+    const oldRecord = {
+      at: new Date(Date.now() - (maxMinutes + 60) * 60_000).toISOString(),
+      account: 'default',
+      targetId: 'SHEET1',
+      alias: null,
+      sheet: 'Лист1',
+      op: 'upsertRow' as const,
+      changes: [{ a1: 'Лист1!D3', column: 'Часы', before: 2, after: 2 }],
+      revisionBefore: null,
+      revisionAfter: null,
+      correlationId: 'gc-ancient',
+    };
+    await expect(
+      undoLast(client(), 'SHEET1', { recent: () => Promise.resolve([oldRecord]) }),
+    ).rejects.toMatchObject({ payload: { cause: 'undo_target_too_old' } });
+  },
+
   'undo.revision-guard': async () => {
     const c = client();
     await expect(
