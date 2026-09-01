@@ -1,0 +1,30 @@
+# Active delivery status
+
+- **slug:** mcp-phase-2
+- **stack:** delivery@1.84, cqg@2.32, okf@absent
+- **class:** L
+- **kind:** feature
+- **repro_test:** n/a reason=kind=feature
+- **diagnosis:** n/a reason=kind=feature, дефекта не разбирали
+- **phase:** specify
+- **builder:** agent:claude-opus-5
+- **verifier:** human:anton
+- **human_ok_spec:** no
+- **human_ok_plan:** no
+- **shape-oracles:** cqg-deployed
+- **behavior-oracles:** tests-present
+- **artifact_oracle:** n/a reason=пока библиотека; сборка `dist/` появится в этой фазе вместе с MCP-сервером — тогда артефакт-оракул станет «сервер стартует из dist и отвечает на initialize»
+- **ci-oracles:** tooling
+- **worktree:** ветка feat/phase-2-mcp reason=урок L2 фазы 1: работа прямо в main обнуляет метрики и оставляет merge_guard.sh без единого суждения
+- **hooks:** not-deployed
+- **blockers:** none
+- **waivers:** none
+- **new_dependency:** @modelcontextprotocol/sdk reason=официальный TS-SDK MCP: транспорт stdio, схемы инструментов и ресурсов; писать протокол руками значит поддерживать его самому by=agent:claude-opus-5
+- **runtime_paths:** src/mcp/server.ts reason=stdio-транспорт: отказ виден не тестами, а тем, что клиент (Cursor/Claude Desktop) не видит инструментов; проверяется живым подключением
+- **model_surface:** src/policy/rules.md,src/policy/rules.json reason=§12.4: правила работы с документами уходят в модель через instructions сервера и MCP-ресурс — правка одной строки меняет поведение продукта при нетронутом коде
+- **canon_drift_waiver:** no
+- **baseline_growth_waiver:** no
+- **observability:** 1
+- **observe_signal:** заполняется на handoff
+- **observe_until:** 2026-10-15
+- **circuit_breakers:** defaults from AGENT_DELIVERY_HARNESS.md §3.4
