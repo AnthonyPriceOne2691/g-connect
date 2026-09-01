@@ -65,6 +65,42 @@ export function formulaSheet(): SheetSnapshot {
   };
 }
 
+/**
+ * Лист-инструкция по образцу живой таблицы владельца: заголовок-баннер в строке 1,
+ * назначение в 3–5, шапка в строке 7, ПУСТАЯ колонка D и отдельный жёлтый блок
+ * E:H с объединёнными ячейками. Ровно тот случай, где ридер молча втягивал врезку
+ * в данные как колонку с одной заполненной ячейкой.
+ */
+export function instructionSheet(): SheetSnapshot {
+  const blank = [null, null, null, null] as const;
+  return {
+    title: 'Инструкция',
+    sheetId: 3,
+    rows: [
+      row('Реестр инфраструктуры ИИ-отдела', ...blank),
+      row(null, ...blank),
+      row('Назначение', ...blank),
+      row(null, ...blank),
+      row('Единая точка контроля всех ИИ-проектов', ...blank),
+      row(null, ...blank),
+      row('Вкладка', 'Кто заполняет', 'Когда обновлять', null, 'Критерии завершения задачи'),
+      row(
+        'Проекты',
+        'ИИ-инженер / руководитель',
+        'При старте',
+        null,
+        '• Все объекты на корпоративных аккаунтах',
+      ),
+      row('Аккаунты и сервисы', 'ИИ-инженер / IT', 'При создании аккаунта', null, null),
+      row('API и интеграции', 'ИИ-инженер', 'При ротации ключа', null, null),
+    ],
+    merges: [
+      { startRow: 1, endRow: 1, startColumn: 0, endColumn: 7 },
+      { startRow: 8, endRow: 14, startColumn: 4, endColumn: 7 },
+    ],
+  };
+}
+
 export function snapshot(sheets: SheetSnapshot[] = [reportSheet()]): SpreadsheetSnapshot {
   return {
     id: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',

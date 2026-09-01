@@ -6,13 +6,13 @@
 - **kind:** feature
 - **repro_test:** n/a reason=kind=feature
 - **diagnosis:** n/a reason=kind=feature, дефекта не разбирали
-- **phase:** implement
+- **phase:** handoff
 - **builder:** agent:claude-opus-5
 - **verifier:** human:anton
-- **human_ok_spec:** deferred (reason=спека и acceptance-примеры написаны, ждут прочтения владельцем; §2.2b — работа идёт под запись долга, на handoff требуется yes, at=2026-09-01)
-- **human_ok_plan:** deferred (reason=класс L требует подтверждения плана; план написан, ждёт прочтения, at=2026-09-01)
+- **human_ok_spec:** yes (by=human:anton, at=2026-09-01)
+- **human_ok_plan:** yes (by=human:anton, at=2026-09-01)
 - **shape-oracles:** cqg-deployed
-- **behavior-oracles:** tests-present
+- **behavior-oracles:** tests-present (107 тестов, 18 из них реляционные; покрытие 86.49% строк)
 - **artifact_oracle:** n/a reason=фаза 1 — библиотека без сборки артефакта; `tsc --noEmit` относится к shape-оракулам, сборка `dist/` появится в фазе 2 вместе с MCP-сервером
 - **ci-oracles:** tooling
 - **worktree:** none reason=однопользовательский репозиторий, параллельных поставок нет; worktree заводится при первой параллельной работе (§5.1)
@@ -36,6 +36,6 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** заполняется на handoff
+- **observe_signal:** A1–A12 подтверждены на живой таблице владельца (карта, превью, запись, идемпотентность, оба вида вопросов) + `bash delivery/evals/smoke/run.sh` зелёный в чистом клоне + `contour_doctor` DEAD 0. Метрика: `npx vitest run` под 2 с (замер до: 0.9 с) — регресс скорости сьюта заметен раньше, чем станет больно
 - **observe_until:** 2026-09-30
 - **circuit_breakers:** defaults from AGENT_DELIVERY_HARNESS.md §3.4

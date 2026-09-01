@@ -4,7 +4,13 @@ import { describe, expect, it } from 'vitest';
 
 import { buildSheetData, buildSheetMap, detectHeaderRow } from '../src/core/sheets/map.ts';
 import { appendRow, setCells, upsertRow } from '../src/core/sheets/rows.ts';
-import { FakeSheetsClient, formulaSheet, snapshot, twoDatesSheet } from './fixtures/sheet.ts';
+import {
+  FakeSheetsClient,
+  formulaSheet,
+  instructionSheet,
+  snapshot,
+  twoDatesSheet,
+} from './fixtures/sheet.ts';
 
 const NOW = new Date(2026, 8, 1, 10, 0, 0);
 const data = () => buildSheetData(snapshot());
@@ -338,6 +344,67 @@ describe('A10, A11 — блокировки и похожие ключи', () =>
     expect(outcome.status).toBe('ok');
     expect(outcome.changes).toHaveLength(3);
     expect(client.writes.map((w) => w.range)).toEqual(['Лист1!A5', 'Лист1!B5', 'Лист1!D5']);
+  });
+});
+
+describe('живой лист-инструкция: две таблицы и объединённые ячейки (§9.3)', () => {
+  const map = () => buildSheetMap(snapshot([instructionSheet()]));
+
+  it('шапка найдена в строке 7, а не в баннере строки 1', () => {
+    expect(map().headerRow).toBe(7);
+    expect(map().columns.map((c) => c.name)).toEqual([
+      'Вкладка',
+      'Кто заполняет',
+      'Когда обновлять',
+      'Критерии завершения задачи',
+    ]);
+  });
+
+  it('пустая колонка D и подписи правее — предупреждение про ДВА блока, а не тишина', () => {
+    const text = map().warnings.join(' | ');
+    expect(text).toContain('колонка D пуста');
+    expect(text).toContain('ДВА блока');
+    expect(text).toContain('с E');
+  });
+
+  it('объединение в области данных названо диапазоном', () => {
+    const text = map().warnings.join(' | ');
+    expect(text).toContain('в области данных');
+    expect(text).toContain('E8:H14');
+  });
+
+  it('объединённый баннер ВЫШЕ шапки молчит — он ничего не искажает', () => {
+    // Строка 1 A:H объединена, но шапка в строке 7: разбор не страдает,
+    // и лишнее предупреждение только зашумило бы вывод.
+    expect(map().warnings.join(' ')).not.toContain('шапку задевают');
+  });
+
+  it('а вот объединение В САМОЙ шапке — предупреждение: имена читаются не как выглядят', () => {
+    const merged = buildSheetMap(
+      snapshot([
+        {
+          title: 'Свод',
+          sheetId: 9,
+          rows: [
+            [{ value: 'Проект' }, { value: 'Сроки' }, { value: null }],
+            [{ value: 'G connect' }, { value: '2026-09-01' }, { value: '2026-09-30' }],
+          ],
+          merges: [{ startRow: 1, endRow: 1, startColumn: 1, endColumn: 2 }],
+        },
+      ]),
+    );
+    expect(merged.warnings.join(' ')).toContain('шапку задевают объединённые ячейки');
+  });
+
+  it('строки над шапкой тоже названы — их шесть', () => {
+    expect(map().warnings.join(' ')).toContain('над шапкой');
+  });
+
+  it('врезка не притворяется полноценной колонкой: заполнена одна ячейка из трёх', () => {
+    const column = map().columns.find((c) => c.name === 'Критерии завершения задачи');
+    expect(column?.filled).toBe(1);
+    // Данные при этом читаются без искажения — просто про блок сказано вслух.
+    expect(map().dataRowCount).toBe(3);
   });
 });
 

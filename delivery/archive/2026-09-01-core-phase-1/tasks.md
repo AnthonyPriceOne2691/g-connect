@@ -50,4 +50,4 @@
 - [x] T15a: склейка с настоящим `googleapis` (`core/google/exchanger.ts`, `core/google/sheets.ts`), обвязка `npm run gc` (login/status/map/upsert), живое ЧТЕНИЕ реальной таблицы прошло
 - [x] T15b: живая ЗАПИСЬ выполнена на «Testing table infra» / лист «Проекты»: превью → запись → идемпотентность → все ступени резолвера и оба вида вопросов
 - [x] T16: `verify-report.md` — блок «Исполнение рисковых путей» по `auth.ts` и `profiles.ts`
-- [ ] T17: оракулы S5–S7 в `evals/smoke/README.md` включены и прогнаны
+- [x] T17: оракулы S1–S9 в `evals/smoke/README.md` + `run.sh`, прогнаны — все зелёные

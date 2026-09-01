@@ -156,6 +156,58 @@ function rowToRecord(
   return out;
 }
 
+/**
+ * Пустая колонка внутри шапки делит лист на блоки: справа от неё обычно отдельная
+ * таблица (или врезка), а не продолжение данных. Молча втянуть её значит выдать
+ * колонку с одной заполненной ячейкой и не сказать почему — §9.3 требует обратного.
+ */
+function detectSideBlock(
+  headerCells: readonly Cell[],
+): { gapAt: number; rightFrom: number } | null {
+  const filledAt: number[] = [];
+  headerCells.forEach((cell, index) => {
+    if (!isBlank(cell)) filledAt.push(index);
+  });
+  if (filledAt.length < 2) return null;
+
+  for (let i = 1; i < filledAt.length; i += 1) {
+    const previous = filledAt[i - 1]!;
+    const current = filledAt[i]!;
+    if (current - previous > 1) return { gapAt: previous + 1, rightFrom: current };
+  }
+  return null;
+}
+
+/** Объединённые ячейки, задевающие шапку или область данных. */
+function mergeWarnings(sheet: SheetSnapshot, headerRow: number): string[] {
+  const merges = sheet.merges ?? [];
+  if (merges.length === 0) return [];
+
+  const inHeader = merges.filter((m) => m.startRow <= headerRow && m.endRow >= headerRow);
+  const inData = merges.filter((m) => m.startRow > headerRow);
+  const out: string[] = [];
+  if (inHeader.length > 0) {
+    out.push(
+      `шапку задевают объединённые ячейки (${inHeader.length}) — имена колонок могут читаться не так, ` +
+        'как выглядят на экране',
+    );
+  }
+  if (inData.length > 0) {
+    const ranges = inData
+      .slice(0, 3)
+      .map(
+        (m) =>
+          `${columnLetter(m.startColumn)}${m.startRow}:${columnLetter(m.endColumn)}${m.endRow}`,
+      )
+      .join(', ');
+    out.push(
+      `в области данных ${inData.length} объединённых диапазон(ов) (${ranges}${inData.length > 3 ? ', …' : ''}) — ` +
+        'значение принадлежит верхней левой ячейке, остальные читаются пустыми',
+    );
+  }
+  return out;
+}
+
 export interface SheetMapOptions {
   /** Имя листа; без него берётся первый. */
   readonly sheet?: string;
@@ -240,6 +292,18 @@ export function buildSheetData(
   if (columns.length === 0) {
     warnings.push(`в строке ${guess.row} не нашлось ни одной подписи колонки`);
   }
+
+  const side = detectSideBlock(headerCells);
+  if (side !== null) {
+    const gap = columnLetter(side.gapAt);
+    const right = columnLetter(side.rightFrom);
+    warnings.push(
+      `колонка ${gap} пуста, а правее (с ${right}) снова есть подписи — похоже, на листе ДВА блока. ` +
+        `Правая часть в данные втянута как обычные колонки; если это отдельная таблица или врезка, ` +
+        `читай её отдельным вызовом или задай область явно`,
+    );
+  }
+  warnings.push(...mergeWarnings(sheet, guess.row));
   if (!guess.confident && options.headerRow === undefined) {
     warnings.push(
       `строка заголовков выбрана неуверенно (${guess.reason}) — проверь и при нужде задай headerRow`,

@@ -32,6 +32,8 @@ export interface SheetSnapshot {
   readonly frozenRows?: number;
   readonly validations?: readonly ValidationRule[];
   readonly protectedRanges?: readonly GridRange[];
+  /** Объединённые ячейки: на них разбор таблицы спотыкается, поэтому о них говорят. */
+  readonly merges?: readonly GridRange[];
 }
 
 export interface SpreadsheetSnapshot {

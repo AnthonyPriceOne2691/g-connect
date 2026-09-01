@@ -101,10 +101,18 @@ export function toSheetSnapshot(sheet: sheets_v4.Schema$Sheet): SheetSnapshot {
     ];
   });
 
+  const merges = (sheet.merges ?? []).map((r) => ({
+    startRow: (r.startRowIndex ?? 0) + 1,
+    endRow: r.endRowIndex ?? 0,
+    startColumn: r.startColumnIndex ?? 0,
+    endColumn: (r.endColumnIndex ?? 1) - 1,
+  }));
+
   return {
     title: properties.title ?? 'Лист',
     sheetId: properties.sheetId ?? 0,
     rows: rowData.map((row) => (row.values ?? []).map(toCell)),
+    merges,
     ...(frozen === undefined || frozen === null ? {} : { frozenRows: frozen }),
     validations: validationsOf(sheet),
     protectedRanges,
