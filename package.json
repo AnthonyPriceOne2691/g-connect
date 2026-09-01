@@ -13,7 +13,7 @@
     "test:watch": "vitest",
     "check": "npm run typecheck && npm run test",
     "gc": "node dist/cli/manual.js",
-    "build": "tsc -p tsconfig.build.json && cp -R src/policy dist/policy",
+    "build": "tsc -p tsconfig.build.json && rm -rf dist/policy && cp -R src/policy dist/policy",
     "mcp": "node dist/mcp/server.js"
   },
   "dependencies": {

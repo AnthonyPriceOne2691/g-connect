@@ -27,5 +27,14 @@ run S6 "типы" npx tsc --noEmit
 run S7 "все гейты подключены" bash scripts/lint/check_gate_coverage.sh
 run S9 "шов с googleapis один" env LINT_TS_SRC=src bash scripts/lint/check_grep_gate_ts.sh --rule core-no-library
 
+# S10 родился из настоящей поломки: `cp -R src/policy dist/policy` на втором прогоне
+# вкладывал папку в папку, старая копия оставалась, и собранный сервер отдавал 14 правил
+# вместо 17. Сборка «прошла успешно», клиент получал устаревшую политику. Молча.
+run S10 "политика в dist совпадает с src" bash -c '
+  [ -d dist ] || exit 0
+  [ ! -d dist/policy/policy ] || { echo "dist/policy/policy: cp вложил папку в папку"; exit 1; }
+  diff -q src/policy/rules.json dist/policy/rules.json || exit 1
+  diff -q src/policy/rules.md dist/policy/rules.md || exit 1'
+
 [ "$FAILED" = "0" ] && echo "smoke: все оракулы зелёные" || echo "smoke: есть красные — см. выше" >&2
 exit "$FAILED"
