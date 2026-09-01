@@ -1,0 +1,18 @@
+# Секреты и креды — никогда в репозиторий (профили живут в ~/.gconnect/)
+credentials.json
+token.json
+*.token.json
+.env
+.env.*
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Результаты сканов и аудит — локальные артефакты
+index/
+audit/
+
+# macOS
+.DS_Store
