@@ -60,7 +60,12 @@ export const googleExchanger: TokenExchanger = {
       const { credentials } = await auth.refreshAccessToken();
       return toStored(credentials);
     } catch (error) {
-      throw fromGoogleError(error, 'Обновление токена не удалось — возможно, доступ отозван.');
+      throw fromGoogleError(
+        error,
+        'Обновление токена не удалось. Частая причина: приложение в Cloud Console стоит ' +
+          'в статусе Testing, а Google обрубает refresh-токен через 7 дней. Помогает ' +
+          'повторный вход (npm run gc -- login) или публикация приложения.',
+      );
     }
   },
 };

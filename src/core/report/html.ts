@@ -9,9 +9,10 @@
  * Открывается с диска и не тянет ничего наружу.
  */
 
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { limitOf } from '../policy.js';
 import { profilesRoot } from '../profiles.js';
 import type { ApplyOutcome, PlannedChange, Question } from '../sheets/rows.js';
 
@@ -146,6 +147,25 @@ export function reportFileName(at: Date, kind: string): string {
 }
 
 /** Пишет отчёт рядом с профилем (600), возвращает путь. */
+/**
+ * Ротация: держим только N последних отчётов (правило `reports.keep-last`).
+ *
+ * Без неё каталог рос бесконечно — за месяц активной работы сотни файлов, каждый с
+ * содержимым чужих таблиц, и все рядом с кредами. Старые превью никто не читает.
+ */
+export async function rotateReports(keep = limitOf('reports.keep-last', 50)): Promise<number> {
+  try {
+    const dir = reportsDir();
+    const files = (await readdir(dir)).filter((n) => n.endsWith('.html')).sort();
+    const extra = files.slice(0, Math.max(0, files.length - keep));
+    for (const name of extra) await rm(join(dir, name), { force: true });
+    return extra.length;
+  } catch {
+    // Каталога ещё нет или он недоступен — это не повод ронять запись отчёта.
+    return 0;
+  }
+}
+
 export async function writeReport(
   html: string,
   kind: string,
@@ -157,5 +177,6 @@ export async function writeReport(
   const path = join(dir, reportFileName(at, kind));
   await writeFile(path, html, { mode: FILE_MODE });
   await chmod(path, FILE_MODE).catch(() => undefined);
+  await rotateReports();
   return path;
 }

@@ -29,6 +29,13 @@ export interface StoredToken {
   readonly scope?: string;
   readonly expiry_date?: number;
   readonly token_type?: string;
+  /**
+   * Когда получен refresh-токен. Не приходит от Google — ставим сами при записи.
+   * Нужен из-за реального ограничения: у приложения в статусе Testing Google обрубает
+   * refresh-токен через 7 дней, и без этой отметки истечение выглядит как внезапная
+   * поломка доступа вместо «пора войти заново».
+   */
+  readonly obtained_at?: number;
 }
 
 /** То, что видит панель и агент: состояние без секретов (§13.5). */
@@ -39,6 +46,10 @@ export interface ProfileStatus {
   readonly hasToken: boolean;
   readonly scopes: readonly string[];
   readonly expiresAt: string | null;
+  /** Сколько дней живёт refresh-токен; `null`, если отметки нет (старый профиль). */
+  readonly refreshAgeDays: number | null;
+  /** Предупреждения человеку: пусто — значит всё в порядке. */
+  readonly warnings: readonly string[];
 }
 
 export function profilesRoot(): string {
@@ -144,6 +155,13 @@ export async function writeToken(
   token: StoredToken,
   account: string = DEFAULT_ACCOUNT,
 ): Promise<void> {
+  // Отметка ставится только при появлении НОВОГО refresh-токена: обновление access
+  // возраст не сбрасывает, иначе предупреждение никогда бы не сработало.
+  const stamped: StoredToken =
+    token.refresh_token === undefined || token.obtained_at !== undefined
+      ? token
+      : { ...token, obtained_at: Date.now() };
+  token = stamped;
   const dir = profileDir(account);
   await mkdir(dir, { recursive: true, mode: DIR_MODE });
   await chmod(dir, DIR_MODE).catch(() => undefined);
@@ -161,6 +179,22 @@ export async function profileStatus(account: string = DEFAULT_ACCOUNT): Promise<
   const expiresAt =
     token?.expiry_date === undefined ? null : new Date(token.expiry_date).toISOString();
 
+  const refreshAgeDays =
+    token?.obtained_at === undefined
+      ? null
+      : Math.floor((Date.now() - token.obtained_at) / 86_400_000);
+
+  const warnings: string[] = [];
+  // 7 дней — предел Google для приложения в статусе Testing; предупреждаем на шестой,
+  // чтобы «перестало работать» не случилось посреди работы.
+  if (refreshAgeDays !== null && refreshAgeDays >= 6) {
+    warnings.push(
+      `Вход сделан ${refreshAgeDays} дн. назад. У приложения в статусе Testing Google ` +
+        'обрубает доступ через 7 дней — войди заново (npm run gc -- login) или опубликуй ' +
+        'приложение в Cloud Console, чтобы ограничение снялось.',
+    );
+  }
+
   const state: ProfileStatus['state'] = !hasDir
     ? 'no_profile'
     : !hasCredentials
@@ -169,7 +203,16 @@ export async function profileStatus(account: string = DEFAULT_ACCOUNT): Promise<
         ? 'needs_reauth'
         : 'connected';
 
-  return { account, state, hasCredentials, hasToken: token !== null, scopes, expiresAt };
+  return {
+    account,
+    state,
+    hasCredentials,
+    hasToken: token !== null,
+    scopes,
+    expiresAt,
+    refreshAgeDays,
+    warnings,
+  };
 }
 
 /**

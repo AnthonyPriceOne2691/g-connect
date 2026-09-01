@@ -93,6 +93,9 @@ export const gcTargets: ToolDefinition = {
         state: a.state,
         scopes: a.scopes.length,
         expiresAt: a.expiresAt,
+        // Предупреждения профиля уходят агенту: «доступ кончится через день» полезно
+        // знать до того, как он кончится посреди работы.
+        ...(a.warnings.length > 0 ? { warnings: a.warnings } : {}),
       })),
       note:
         'Произвольная ссылка доступна только для чтения: право записи даёт реестр ' +

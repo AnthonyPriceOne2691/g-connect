@@ -203,6 +203,40 @@ const probes: Record<string, () => Promise<void>> = {
     expect(preview).toHaveLength(0);
   },
 
+  'reports.keep-last': async () => {
+    const keep = limitOf('reports.keep-last', -1);
+    expect(keep).toBeGreaterThan(0);
+    // Пишем на три больше лимита и проверяем, что осталось ровно keep, а ушли старые.
+    const { writeReport, reportsDir } = await import('../src/core/report/html.js');
+    const { readdir } = await import('node:fs/promises');
+    for (let i = 0; i < keep + 3; i += 1) {
+      await writeReport('<p>x</p>', 'preview', new Date(Date.UTC(2026, 0, 1, 0, 0, i)));
+    }
+    const files = (await readdir(reportsDir())).filter((f) => f.endsWith('.html')).sort();
+    expect(files).toHaveLength(keep);
+    expect(files[0]).not.toContain('T00-00-00');
+  },
+
+  'auth.testing-mode-warning': async () => {
+    await writeToken(
+      {
+        access_token: 'a',
+        refresh_token: 'r',
+        scope: 'x',
+        obtained_at: Date.now() - 7 * 86_400_000,
+      },
+      'stale',
+    );
+    const status = await profileStatus('stale');
+    expect(status.refreshAgeDays).toBeGreaterThanOrEqual(6);
+    expect(status.warnings.join(' ')).toContain('Testing');
+    expect(status.warnings.join(' ')).toContain('войди заново');
+
+    // Свежий профиль молчит: предупреждение без повода — шум.
+    await writeToken({ access_token: 'a', refresh_token: 'r', scope: 'x' }, 'fresh');
+    expect((await profileStatus('fresh')).warnings).toHaveLength(0);
+  },
+
   'undo.recency-minutes': async () => {
     const maxMinutes = limitOf('undo.recency-minutes', -1);
     expect(maxMinutes).toBeGreaterThan(0);
