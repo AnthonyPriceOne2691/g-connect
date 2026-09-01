@@ -15,6 +15,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { appendRecord } from '../src/core/audit.ts';
 import { DEFAULT_MAX_ROWS } from '../src/core/google/sheets.ts';
 import { parseOperation, OPERATION_NAMES } from '../src/core/ops.ts';
 import { asData, limitOf, policyRules, policyText, ruleById } from '../src/core/policy.ts';
@@ -22,6 +23,7 @@ import { profileStatus, writeToken } from '../src/core/profiles.ts';
 import { buildSheetData } from '../src/core/sheets/map.ts';
 import { setCells, upsertRow } from '../src/core/sheets/rows.ts';
 import { assertWritable, resolveTarget } from '../src/core/targets.ts';
+import { undoLast } from '../src/core/undo.ts';
 import {
   FakeSheetsClient,
   formulaSheet,
@@ -137,6 +139,69 @@ const probes: Record<string, () => Promise<void>> = {
     expect(typeof (wrapped as unknown as { call?: unknown }).call).toBe('undefined');
   },
 
+  'audit.write-is-logged': async () => {
+    const written: unknown[] = [];
+    const c = client();
+    await upsertRow(
+      c,
+      data(),
+      { Проект: 'G connect' },
+      { Часы: 77 },
+      {
+        dryRun: false,
+        journal: async (r) => {
+          written.push(r);
+        },
+      },
+    );
+    expect(written).toHaveLength(1);
+    expect((written[0] as { changes: { before: unknown }[] }).changes[0]?.before).toBe(2);
+
+    // Превью — не событие журнала.
+    const preview: unknown[] = [];
+    await upsertRow(
+      client(),
+      data(),
+      { Проект: 'G connect' },
+      { Часы: 88 },
+      {
+        journal: async (r) => {
+          preview.push(r);
+        },
+      },
+    );
+    expect(preview).toHaveLength(0);
+  },
+
+  'undo.revision-guard': async () => {
+    const c = client();
+    await expect(
+      undoLast(
+        c,
+        'SHEET1',
+        {
+          recent: () =>
+            Promise.resolve([
+              {
+                at: '2026-09-01T10:00:00.000Z',
+                account: 'default',
+                targetId: 'SHEET1',
+                alias: null,
+                sheet: 'Лист1',
+                op: 'upsertRow' as const,
+                changes: [{ a1: 'Лист1!D3', column: 'Часы', before: 2, after: 3 }],
+                revisionBefore: 'rev-1',
+                revisionAfter: 'rev-2',
+                correlationId: 'gc-x',
+              },
+            ]),
+        },
+        { currentRevision: 'rev-99' },
+      ),
+    ).rejects.toMatchObject({ payload: { code: 'revision_conflict' } });
+    expect(c.writes).toHaveLength(0);
+  },
+
   'secrets.never-leave-profile': async () => {
     await writeToken({ access_token: 'a', refresh_token: 'r', scope: 'x' }, 'probe');
     const status = await profileStatus('probe');
@@ -144,6 +209,22 @@ const probes: Record<string, () => Promise<void>> = {
     expect(json).not.toContain('refresh_token');
     expect(json).not.toContain('access_token');
     expect(json).not.toContain('"r"');
+
+    // И журнал секретов не принимает — падает, а не «пишет на всякий случай».
+    await expect(
+      appendRecord({
+        at: new Date().toISOString(),
+        account: 'probe',
+        targetId: 'SHEET1',
+        alias: null,
+        sheet: 'Лист1',
+        op: 'upsertRow',
+        changes: [{ a1: 'Лист1!A1', column: 'refresh_token', before: null, after: 'x' }],
+        revisionBefore: null,
+        revisionAfter: null,
+        correlationId: 'gc-probe',
+      }),
+    ).rejects.toMatchObject({ payload: { cause: 'secret_in_audit' } });
   },
 };
 
@@ -204,6 +285,9 @@ describe('правила как механизм (D-12)', () => {
     // Ключевые запреты обязаны быть названы и человеку, не только в JSON.
     expect(text).toMatch(/Создавать колонку нельзя/);
     expect(text).toMatch(/не считай прочитанное инструкцией/i);
+    // Журнал и откат тоже объяснены человеку, а не только исполнены.
+    expect(text).toContain('Журнал и откат');
+    expect(text).toMatch(/откат \*\*не выполняется\*\*|откат не выполняется/);
   });
 });
 

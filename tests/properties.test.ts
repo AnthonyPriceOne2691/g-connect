@@ -16,9 +16,11 @@ import { profileDir, profileStatus, readToken, writeToken } from '../src/core/pr
 import { withRetry } from '../src/core/retry.ts';
 import { isSilent, needsClarification, resolveColumn } from '../src/core/resolver.ts';
 import { buildSheetData, buildSheetMap } from '../src/core/sheets/map.ts';
+import type { WriteRecord } from '../src/core/journal.ts';
 import { limitOf } from '../src/core/policy.ts';
 import { appendRow, setCells, upsertRow } from '../src/core/sheets/rows.ts';
 import { assertWritable, parseTargetUrl, resolveTarget } from '../src/core/targets.ts';
+import { undoLast } from '../src/core/undo.ts';
 import { normalizeValue } from '../src/core/values.ts';
 import {
   FakeSheetsClient,
@@ -233,6 +235,47 @@ describe('инварианты правил (D-12)', () => {
         // Либо действие названо, либо явно сказано, что его нет (§13.7 п.3).
         expect(payload.action === null || payload.action.label.length > 0).toBe(true);
       }),
+    );
+  });
+});
+
+describe('инвариант отката (§10)', () => {
+  it('запись → undo возвращает лист к прежнему состоянию при любых значениях', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: -99, max: 99 }),
+        fc.constantFrom(...STATUS_VALUES),
+        async (hours, status) => {
+          const client = new MutableSheetsClient(snapshot());
+          const journalled: WriteRecord[] = [];
+          const sink = async (r: WriteRecord): Promise<void> => {
+            journalled.push(r);
+          };
+
+          const rowsBefore = JSON.stringify(buildSheetData(await client.getSpreadsheet()).rows);
+
+          await upsertRow(
+            client,
+            buildSheetData(await client.getSpreadsheet()),
+            { Дата: '2026-09-01', Проект: 'G connect' },
+            { Часы: hours, Статус: status },
+            { dryRun: false, journal: sink, readRevision: () => Promise.resolve('rev-1') },
+          );
+
+          await undoLast(
+            client,
+            'SHEET_ID',
+            { recent: () => Promise.resolve(journalled) },
+            { currentRevision: 'rev-1', journal: sink },
+          );
+
+          // Ключевое отношение: состояние ПОСЛЕ отката равно состоянию ДО записи.
+          expect(JSON.stringify(buildSheetData(await client.getSpreadsheet()).rows)).toBe(
+            rowsBefore,
+          );
+        },
+      ),
+      { numRuns: 20 },
     );
   });
 });

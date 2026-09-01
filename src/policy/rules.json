@@ -86,8 +86,22 @@
       "id": "secrets.never-leave-profile",
       "title": "Токены и ключи не попадают в ответы, логи и аудит",
       "kind": "invariant",
-      "enforced_in": "src/core/profiles.ts (profileStatus не отдаёт токены)",
-      "probe": "статус профиля не содержит access_token/refresh_token при любых входных данных"
+      "enforced_in": "src/core/profiles.ts (profileStatus не отдаёт токены) + src/core/audit.ts (assertNoSecrets)",
+      "probe": "статус профиля не содержит токенов; запись в аудит с полем refresh_token отклоняется"
+    },
+    {
+      "id": "audit.write-is-logged",
+      "title": "Каждая реальная запись попадает в журнал вместе со снимком «до»",
+      "kind": "invariant",
+      "enforced_in": "src/core/sheets/rows.ts (finish) + src/core/audit.ts (appendRecord)",
+      "probe": "upsertRow с dryRun:false даёт строку журнала с changes[].before; превью не даёт"
+    },
+    {
+      "id": "undo.revision-guard",
+      "title": "Откат не выполняется, если после записи документ правили",
+      "kind": "deny",
+      "enforced_in": "src/core/undo.ts (assertSafeToUndo)",
+      "probe": "undo при сдвинувшейся ревизии → revision_conflict, ни одной записи не сделано"
     }
   ]
 }

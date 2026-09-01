@@ -7,6 +7,8 @@
  */
 
 import { gcError } from '../errors.ts';
+import { newCorrelationId } from '../errors.ts';
+import type { JournalSink } from '../journal.ts';
 import { assertChangeBudget } from '../policy.ts';
 import { needsClarification, resolveColumn, type ResolveOptions } from '../resolver.ts';
 import { normalizeValue } from '../values.ts';
@@ -52,6 +54,17 @@ export interface ApplyOutcome {
 
 export interface RowOptions extends ResolveOptions {
   readonly dryRun?: boolean;
+  /** Куда писать в журнал. Не задан — записи не журналируются (превью и тесты). */
+  readonly journal?: JournalSink;
+  /** Имя профиля для журнала: в журнал уходит ИМЯ, не креды. */
+  readonly account?: string;
+  /** Алиас цели из реестра, если он есть — по нему потом читают историю глазами. */
+  readonly alias?: string | null;
+  /**
+   * Ревизия ПОСЛЕ записи. Отдельным колбэком, потому что API её не возвращает, а undo
+   * без неё не может отличить «после нас никто не трогал» от «трогали» (§10.3).
+   */
+  readonly readRevision?: () => Promise<string | null>;
   readonly now?: Date;
   /** Осознанное подтверждение записи в формульную/защищённую колонку (§8.1). */
   readonly force?: boolean;
@@ -198,6 +211,7 @@ async function finish(
   changes: readonly PlannedChange[],
   prepared: Prepared,
   options: RowOptions,
+  op: 'appendRow' | 'upsertRow' | 'setCells',
 ): Promise<ApplyOutcome> {
   assertChangeBudget(changes.length);
   const base = {
@@ -208,7 +222,31 @@ async function finish(
     revisionId: map.revisionId,
   };
   if (options.dryRun !== false) return { status: 'preview', ...base };
+
   await writeCells(client, map, changes);
+
+  // Журнал пишется ПОСЛЕ успешной записи и до возврата: если журналирование упало,
+  // вызывающий обязан узнать об этом — «записали, но не знаем что» хуже отказа.
+  if (options.journal !== undefined && changes.length > 0) {
+    await options.journal({
+      at: new Date().toISOString(),
+      account: options.account ?? 'default',
+      targetId: map.spreadsheetId,
+      alias: options.alias ?? null,
+      sheet: map.sheet,
+      op,
+      changes: changes.map((c) => ({
+        a1: c.a1,
+        column: c.column,
+        before: c.before,
+        after: c.after,
+      })),
+      revisionBefore: map.revisionId,
+      revisionAfter: (await options.readRevision?.()) ?? null,
+      correlationId: newCorrelationId(),
+    });
+  }
+
   return { status: 'ok', ...base };
 }
 
@@ -233,7 +271,7 @@ export async function appendRow(
     after: value,
   }));
 
-  return finish(client, map, changes, prepared, options);
+  return finish(client, map, changes, prepared, options, 'appendRow');
 }
 
 /**
@@ -294,7 +332,7 @@ export async function upsertRow(
     }))
     .filter((change) => String(change.before ?? '') !== String(change.after ?? ''));
 
-  return finish(client, map, changes, prepared, options);
+  return finish(client, map, changes, prepared, options, 'upsertRow');
 }
 
 /** Точечно поправить ячейки во всех строках, подходящих под условие. */
@@ -343,7 +381,7 @@ export async function setCells(
     }
   }
 
-  return finish(client, map, changes, prepared, options);
+  return finish(client, map, changes, prepared, options, 'setCells');
 }
 
 export { columnLetter };
