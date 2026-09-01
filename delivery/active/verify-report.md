@@ -3,9 +3,9 @@
 **Date:** 2026-09-01
 **Verifier:** human:anton
 **asserts_reviewed_by:** deferred — acceptance-примеры A1–A12 в spec.md написаны до кода, но человеком пока не подписаны (`human_ok_spec: deferred`, §2.2b); на handoff требуется подпись
-**CI run:** https://github.com/AnthonyPriceOne2691/g-connect/actions/runs/33531118838
-**clean_clone_run:** npm ci + tsc --noEmit + vitest run в чистом клоне на ubuntu-latest / Node 24 — все три зелёные (шаг «Delivery contour» красный, причина известна и разобрана ниже) at=2026-09-01
-**Commit:** 82db53a
+**CI run:** https://github.com/AnthonyPriceOne2691/g-connect/actions/runs/33531442569 (зелёный целиком)
+**clean_clone_run:** npm ci + tsc --noEmit + vitest run + delivery_check в чистом клоне на ubuntu-latest / Node 24 — все четыре шага зелёные at=2026-09-01
+**Commit:** 950d2b8
 
 ## Shape oracles
 - [x] PASS — `npx tsc --noEmit` (strict, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`) в чистом клоне
@@ -17,8 +17,8 @@
 
 ## Product oracles
 - [x] PASS — оракул S1 (`delivery_check`) исполняется в CI, а не только локально
-- [ ] FAIL (известный) — шаг «Delivery contour» красный: `class L with ci-oracles: weak`.
-      Это тот самый вопрос из `active/escalation.md`, а не новый дефект
+- [x] PASS — шаг «Delivery contour» зелёный после компенсации §10.4 п.4; открытый вопрос
+      (waiver или гейт мержа) остаётся в `active/escalation.md` и ждёт владельца
 
 ## Что закрыто из спеки
 
@@ -34,7 +34,7 @@
 
 `runtime_paths: src/core/auth.ts,src/core/profiles.ts`
 
-- `src/core/profiles.ts` — **исполнен частично**: чтение/запись профиля и права 600/700 проверены на реальной файловой системе во временном каталоге (`GCONNECT_HOME`), 11 тестов. Не исполнено: поведение при `EACCES` на чужом файле — воспроизводится только вручную, вынесено в слайс 3. at=2026-09-01
+- `src/core/profiles.ts` — **исполнен**: чтение/запись профиля и права 600/700 проверены на реальной файловой системе во временном каталоге (`GCONNECT_HOME`), 11 тестов + property на любые имена аккаунтов. Плюс прогон на **настоящем** профиле `~/.gconnect/default/` с перенесёнными кредами: `state: connected`, 5 scopes, срок токена — прочитано верно, секреты в вывод не попали. Не исполнено: поведение при `EACCES` на чужом файле — воспроизводится только вручную, вынесено в слайс 3. at=2026-09-01
 - `src/core/auth.ts` — **не исполнен**: модуля ещё нет (слайс 3). OAuth-вход, redirect-порт 3333 и обновление токена проверяются человеком на живом аккаунте; тестами это не воспроизводится, поэтому и объявлено в `runtime_paths`.
 
 ## Ревью рисковых мест (§12.5)
