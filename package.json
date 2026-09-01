@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run typecheck && npm run test"
+    "check": "npm run typecheck && npm run test",
+    "gc": "node --experimental-strip-types src/cli/manual.ts"
   },
   "dependencies": {
     "googleapis": "^144.0.0",

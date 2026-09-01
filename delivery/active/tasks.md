@@ -33,7 +33,8 @@
 
 ## Slice 3 — реальный путь
 
-- [ ] T14: `src/core/auth.ts` — OAuth, redirect `127.0.0.1:3333`, refresh, сообщение про смену scopes
-- [ ] T15: склейка с настоящим `googleapis`, ручной прогон на тестовой таблице
+- [x] T14: `src/core/auth.ts` — OAuth, redirect `127.0.0.1:3333`, refresh, сообщение про смену scopes
+- [x] T15a: склейка с настоящим `googleapis` (`core/google/exchanger.ts`, `core/google/sheets.ts`), обвязка `npm run gc` (login/status/map/upsert), живое ЧТЕНИЕ реальной таблицы прошло
+- [ ] T15b: живая ЗАПИСЬ — нужна тестовая таблица владельца в `targets.json` с `allow: write` (ждёт человека)
 - [ ] T16: `verify-report.md` — блок «Исполнение рисковых путей» по `auth.ts` и `profiles.ts`
 - [ ] T17: оракулы S5–S7 в `evals/smoke/README.md` включены и прогнаны

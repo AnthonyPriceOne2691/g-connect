@@ -93,8 +93,15 @@ export interface SheetData {
   readonly rows: readonly Readonly<Record<string, CellValue>>[];
 }
 
+export interface ReadOptions {
+  /** Читать только этот лист — иначе тянется всё, а это дорого на живых таблицах. */
+  readonly sheet?: string;
+  /** Верхняя граница строк: ответ помечается усечённым, а не молча обрезается (§9.5). */
+  readonly maxRows?: number;
+}
+
 export interface SheetsClient {
-  getSpreadsheet(id: string): Promise<SpreadsheetSnapshot>;
+  getSpreadsheet(id: string, options?: ReadOptions): Promise<SpreadsheetSnapshot>;
   /** Запись значений в A1-диапазон; `values` — как ввёл бы человек. */
   updateValues(id: string, range: string, values: readonly (readonly CellValue[])[]): Promise<void>;
   appendValues(id: string, range: string, values: readonly (readonly CellValue[])[]): Promise<void>;
