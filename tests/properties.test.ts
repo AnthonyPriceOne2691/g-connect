@@ -14,7 +14,12 @@ import { ERROR_CATALOG, type ErrorCode } from '../src/core/error-catalog.ts';
 import { gcError } from '../src/core/errors.ts';
 import { profileDir, profileStatus, readToken, writeToken } from '../src/core/profiles.ts';
 import { withRetry } from '../src/core/retry.ts';
+import { isSilent, needsClarification, resolveColumn } from '../src/core/resolver.ts';
+import { buildSheetData, buildSheetMap } from '../src/core/sheets/map.ts';
+import { upsertRow } from '../src/core/sheets/rows.ts';
 import { assertWritable, parseTargetUrl, resolveTarget } from '../src/core/targets.ts';
+import { normalizeValue } from '../src/core/values.ts';
+import { FakeSheetsClient, MutableSheetsClient, STATUS_VALUES, snapshot } from './fixtures/sheet.ts';
 
 /** Алфавит ID файлов Google. */
 const fileId = fc
@@ -221,6 +226,149 @@ describe('инварианты профилей', () => {
         }
       }),
       { numRuns: 30 },
+    );
+  });
+});
+
+describe('инварианты карты, резолвера и записи', () => {
+  const columnsOf = () => buildSheetMap(snapshot()).columns;
+  const names = ['Дата', 'Проект', 'Статус', 'Часы'] as const;
+
+  it('любое имя колонки в любом регистре и с любыми пробелами резолвится молча', () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...names),
+        fc.constantFrom('', ' ', '  '),
+        fc.boolean(),
+        (name, padding, upper) => {
+          const requested = `${padding}${upper ? name.toUpperCase() : name.toLowerCase()}${padding}`;
+          const result = resolveColumn(requested, columnsOf());
+          expect(isSilent(result.step)).toBe(true);
+          expect(result.column?.name).toBe(name);
+          expect(result.assumption).toBeNull();
+        },
+      ),
+    );
+  });
+
+  it('когда нужен вопрос — колонка не выбрана; когда есть оговорка — это ступень fuzzy', () => {
+    fc.assert(
+      fc.property(fc.string({ minLength: 1, maxLength: 20 }), (requested) => {
+        const result = resolveColumn(requested, columnsOf());
+        if (needsClarification(result.step)) {
+          expect(result.column).toBeNull();
+          expect(result.assumption).toBeNull();
+        }
+        if (result.assumption !== null) {
+          expect(result.step).toBe('fuzzy');
+          expect(result.column).not.toBeNull();
+        }
+      }),
+    );
+  });
+
+  it('ступень missing всегда отдаёт полный список колонок — выбирать из того, что есть', () => {
+    fc.assert(
+      fc.property(fc.stringMatching(/^[a-z]{6,12}$/), (requested) => {
+        const result = resolveColumn(requested, columnsOf());
+        if (result.step === 'missing') expect([...result.candidates]).toEqual([...names]);
+      }),
+    );
+  });
+
+  it('значение из enum в любом регистре приводится к каноническому', () => {
+    const status = columnsOf().find((c) => c.name === 'Статус')!;
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...STATUS_VALUES),
+        fc.boolean(),
+        (value, upper) => {
+          const outcome = normalizeValue(upper ? value.toUpperCase() : value, status);
+          expect(outcome.status).toBe('ok');
+          if (outcome.status === 'ok') expect(outcome.value).toBe(value);
+        },
+      ),
+    );
+  });
+
+  it('число остаётся числом, чем бы его ни сопроводили', () => {
+    const hours = columnsOf().find((c) => c.name === 'Часы')!;
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: 999 }),
+        fc.constantFrom('', 'ч', ' ч', 'ч.', ' часов'),
+        (n, suffix) => {
+          const outcome = normalizeValue(`${n}${suffix}`, hours);
+          expect(outcome.status).toBe('ok');
+          if (outcome.status === 'ok') expect(outcome.value).toBe(n);
+        },
+      ),
+    );
+  });
+
+  // Ключевой инвариант §5: регулярная запись не должна плодить дубликаты.
+  it('upsert идемпотентен: второй прогон с теми же значениями не меняет ничего', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 0, max: 99 }),
+        fc.constantFrom(...STATUS_VALUES),
+        async (hours, status) => {
+          const client = new MutableSheetsClient(snapshot());
+          const key = { 'Дата': '2026-09-01', 'Проект': 'G connect' };
+          const values = { 'Часы': hours, 'Статус': status };
+
+          const first = await upsertRow(client, buildSheetData(await client.getSpreadsheet()), key, values, {
+            dryRun: false,
+          });
+          expect(first.status).toBe('ok');
+
+          const second = await upsertRow(client, buildSheetData(await client.getSpreadsheet()), key, values, {
+            dryRun: false,
+          });
+          expect(second.changes).toHaveLength(0);
+
+          // И строк по-прежнему две: правили, а не добавляли.
+          expect(buildSheetMap(await client.getSpreadsheet()).dataRowCount).toBe(2);
+        },
+      ),
+      { numRuns: 20 },
+    );
+  });
+
+  it('в плане не бывает изменения, где before равно after', async () => {
+    await fc.assert(
+      fc.asyncProperty(fc.integer({ min: 0, max: 50 }), async (hours) => {
+        const outcome = await upsertRow(
+          new FakeSheetsClient(),
+          buildSheetData(snapshot()),
+          { 'Дата': '2026-09-01', 'Проект': 'G connect' },
+          { 'Часы': hours },
+        );
+        for (const change of outcome.changes) {
+          expect(String(change.before ?? '')).not.toBe(String(change.after ?? ''));
+        }
+      }),
+      { numRuns: 20 },
+    );
+  });
+
+  it('dryRun по умолчанию не пишет никогда, при любых значениях', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.integer({ min: 0, max: 99 }),
+        fc.constantFrom(...STATUS_VALUES),
+        async (hours, status) => {
+          const client = new FakeSheetsClient();
+          await upsertRow(
+            client,
+            buildSheetData(snapshot()),
+            { 'Дата': '2026-09-01', 'Проект': 'G connect' },
+            { 'Часы': hours, 'Статус': status },
+          );
+          expect(client.writes).toHaveLength(0);
+        },
+      ),
+      { numRuns: 15 },
     );
   });
 });

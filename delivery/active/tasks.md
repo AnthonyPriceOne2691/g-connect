@@ -23,13 +23,13 @@
 
 ## Slice 2 — Sheets и резолвер на моках
 
-- [ ] T7: `src/core/sheets/client.ts` — интерфейс `SheetsClient` + фейк для тестов с фикстурой спеки
-- [ ] T8: `src/core/sheets/map.ts` — листы, `usedRange`, автоопределение `headerRow`, профиль колонок (типы, enum из `dataValidation`, формульные, protected) → A1
-- [ ] T9: `src/core/resolver.ts` — шесть ступеней для имён колонок → A4, A5, A6, A11
-- [ ] T10: `src/core/values.ts` — нормализация значений по типу колонки → A7, A8, A9
-- [ ] T11: `src/core/ops.ts` — zod-схема операций, `dryRun`-план, `expectRevision`
-- [ ] T12: `src/core/sheets/rows.ts` — `appendRow` / `upsertRow` / `setCells` → A2, A3, A10
-- [ ] T13: тест «в коде нет имён листов и колонок» (грепом по `src/`)
+- [x] T7: `src/core/sheets/client.ts` — интерфейс `SheetsClient` + фейк для тестов с фикстурой спеки
+- [x] T8: `src/core/sheets/map.ts` — листы, `usedRange`, автоопределение `headerRow`, профиль колонок (типы, enum из `dataValidation`, формульные, protected) → A1
+- [x] T9: `src/core/resolver.ts` — шесть ступеней для имён колонок → A4, A5, A6, A11
+- [x] T10: `src/core/values.ts` — нормализация значений по типу колонки → A7, A8, A9
+- [x] T11: `dryRun`-план и `expectRevision` — в `sheets/rows.ts` (`ApplyOutcome`, `RowOptions`); zod-схема операций переезжает в фазу 2 к MCP: до внешней границы валидировать нечего, типы TS строже
+- [x] T12: `src/core/sheets/rows.ts` — `appendRow` / `upsertRow` / `setCells` → A2, A3, A10
+- [x] T13: тест «в коде нет имён листов и колонок» (грепом по `src/`)
 
 ## Slice 3 — реальный путь
 
