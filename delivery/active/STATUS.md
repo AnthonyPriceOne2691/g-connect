@@ -6,7 +6,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=kind=feature
 - **diagnosis:** n/a reason=kind=feature, дефекта не разбирали
-- **phase:** specify
+- **phase:** implement
 - **builder:** agent:claude-opus-5
 - **verifier:** human:anton
 - **human_ok_spec:** deferred (reason=спека и acceptance-примеры написаны, ждут прочтения владельцем; §2.2b — работа идёт под запись долга, на handoff требуется yes, at=2026-09-01)
@@ -17,12 +17,13 @@
 - **ci-oracles:** weak
 - **worktree:** none reason=однопользовательский репозиторий, параллельных поставок нет; worktree заводится при первой параллельной работе (§5.1)
 - **hooks:** not-deployed
-- **blockers:** ci-oracles weak на классе L — нужен waiver человека или минимальная CI-джоба; решение и два варианта с ценой в active/escalation.md (§12.3)
+- **blockers:** ci-oracles на классе L: CI-джоба развёрнута и зелена по tsc/тестам в чистом клоне, но серверной защиты ветки и merge_guard.sh нет (шаг ② CQG) — нужен выбор владельца между waiver и развёртыванием гейта мержа; два варианта с ценой в active/escalation.md (§12.3)
 - **waivers:** none
 - **new_dependency:** typescript reason=ядро на TS по D-1, компилятор нужен как devDependency by=agent:claude-opus-5
 - **new_dependency:** zod reason=схемы операций gc_apply валидируются до вызова Google API (§3, ops.ts); ручные проверки на 30 типов операций разъедутся by=agent:claude-opus-5
 - **new_dependency:** vitest reason=тестовый раннер для TS без отдельной сборки; behavior-оракулы фазы 1 живут в нём by=agent:claude-opus-5
 - **new_dependency:** googleapis reason=клиенты Drive/Docs/Sheets; та же библиотека, что в переносимом run.js (^144) by=agent:claude-opus-5
+- **new_dependency:** fast-check reason=реляционные оракулы класса L (§6.5): инварианты «ссылка без реестра не пишет», round-trip ID→URL→ID, идемпотентность повторов; в них нельзя спрятать неверное ожидание by=agent:claude-opus-5
 - **runtime_paths:** src/core/auth.ts,src/core/profiles.ts reason=OAuth-вход и работа с файлами профиля: отказ здесь платформа отдаёт не кодом ошибки, а невозможностью получить токен (браузер, redirect-порт, права на файл) — тестами это не воспроизводится
 - **model_surface:** n/a reason=фаза 1 не вызывает модель; поверхность появится в фазе 4 вместе с раннером (§12.2)
 - **canon_drift_waiver:** no

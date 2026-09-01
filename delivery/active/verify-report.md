@@ -1,0 +1,62 @@
+# Verify report
+
+**Date:** 2026-09-01
+**Verifier:** human:anton
+**asserts_reviewed_by:** deferred — acceptance-примеры A1–A12 в spec.md написаны до кода, но человеком пока не подписаны (`human_ok_spec: deferred`, §2.2b); на handoff требуется подпись
+**CI run:** https://github.com/AnthonyPriceOne2691/g-connect/actions/runs/33531118838
+**clean_clone_run:** npm ci + tsc --noEmit + vitest run в чистом клоне на ubuntu-latest / Node 24 — все три зелёные (шаг «Delivery contour» красный, причина известна и разобрана ниже) at=2026-09-01
+**Commit:** 82db53a
+
+## Shape oracles
+- [x] PASS — `npx tsc --noEmit` (strict, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`) в чистом клоне
+- [ ] n/a — CQG не развёрнут (`shape-oracles: weak`), момент — конец фазы 1
+
+## Behavior oracles
+- [x] PASS — `npx vitest run`: 45 тестов, 5 файлов, зелено локально и в чистом клоне
+- [x] PASS — реляционные оракулы (§6.5, `tests/properties.test.ts`, fast-check): инвариант «любая ссылка вне реестра — только чтение», round-trip ID→URL→ID по всем формам ссылок, идемпотентность резолва, «неповторяемая ошибка = ровно один вызов при любом бюджете», монотонность backoff, round-trip токена с правами 600 при любом имени аккаунта, «состояние профиля определено при любой комбинации файлов»
+
+## Product oracles
+- [x] PASS — оракул S1 (`delivery_check`) исполняется в CI, а не только локально
+- [ ] FAIL (известный) — шаг «Delivery contour» красный: `class L with ci-oracles: weak`.
+      Это тот самый вопрос из `active/escalation.md`, а не новый дефект
+
+## Что закрыто из спеки
+
+| id | Проверка | Статус |
+|---|---|---|
+| A12 | нет профиля → `no_profile` + `action: connect_google`, а не ENOENT | ✅ `tests/profiles.test.ts` |
+| — | 401 `invalid_grant` и 403 про scope дают **разные** действия | ✅ `tests/errors.test.ts` |
+| — | произвольная ссылка не становится пишущей целью (§11.2) | ✅ `tests/targets.test.ts` |
+| — | токен 600 в каталоге 700, статус без секретов (§13.5) | ✅ `tests/profiles.test.ts` |
+| A1–A11 | карта листа, резолвер, значения, upsert | ⏳ слайс 2, ещё не начат |
+
+## Исполнение рисковых путей (§12.6)
+
+`runtime_paths: src/core/auth.ts,src/core/profiles.ts`
+
+- `src/core/profiles.ts` — **исполнен частично**: чтение/запись профиля и права 600/700 проверены на реальной файловой системе во временном каталоге (`GCONNECT_HOME`), 11 тестов. Не исполнено: поведение при `EACCES` на чужом файле — воспроизводится только вручную, вынесено в слайс 3. at=2026-09-01
+- `src/core/auth.ts` — **не исполнен**: модуля ещё нет (слайс 3). OAuth-вход, redirect-порт 3333 и обновление токена проверяются человеком на живом аккаунте; тестами это не воспроизводится, поэтому и объявлено в `runtime_paths`.
+
+## Ревью рисковых мест (§12.5)
+
+**Класс риска: интеграция.**
+
+1. **`fromGoogleError` — единственная точка разбора чужих ошибок.** Форма ошибки у
+   `googleapis` не стабильна между версиями (`code` числом, `code` строкой, `response.status`),
+   и промах даст `internal` вместо действия. Смягчение: разбор покрыт тестами на все три
+   формы; неизвестное честно падает в `internal`, а не притворяется чем-то конкретным.
+2. **`resolveTarget` решает, можно ли писать.** Ошибка здесь — не косметика: она открывает
+   запись в чужой документ. Смягчение: по умолчанию `read`, `write` только из реестра,
+   отдельный тест на «та же ссылка без реестра — read».
+3. **`allowImportingTsExtensions` + импорты с `.ts`.** Работает при `noEmit` и в Node 24, но
+   в фазе 2 появится сборка `dist/` — тогда расширения придётся менять либо ставить бандлер.
+   Риск назван сейчас, чтобы не всплыл как «внезапно не собирается»: решение — в плане фазы 2.
+
+## Spec coverage gaps
+- Слайс 2 (A1–A11) и слайс 3 (живой OAuth) не начаты — фаза не закрыта, это ожидаемо.
+- `human_ok_spec` и `human_ok_plan` — `deferred`: спека и план написаны, ждут прочтения владельцем.
+
+## Verdict
+- [ ] READY FOR HANDOFF
+- [x] NEED CONVERGE (new tasks) — слайсы 2 и 3 по `tasks.md`
+- [ ] BLOCKED
