@@ -235,6 +235,22 @@ const probes: Record<string, () => Promise<void>> = {
     // Свежий профиль молчит: предупреждение без повода — шум.
     await writeToken({ access_token: 'a', refresh_token: 'r', scope: 'x' }, 'fresh');
     expect((await profileStatus('fresh')).warnings).toHaveLength(0);
+
+    // Профиль БЕЗ отметки (записан до её появления) не остаётся без присмотра:
+    // возраст берётся по времени файла — иначе защита не работает там, где нужна.
+    const { writeFile } = await import('node:fs/promises');
+    const { profileDir } = await import('../src/core/profiles.js');
+    const { mkdir, utimes } = await import('node:fs/promises');
+    await mkdir(profileDir('legacy'), { recursive: true });
+    await writeFile(
+      join(profileDir('legacy'), 'token.json'),
+      JSON.stringify({ access_token: 'a', refresh_token: 'r', scope: 'x' }),
+    );
+    const eightDaysAgo = new Date(Date.now() - 8 * 86_400_000);
+    await utimes(join(profileDir('legacy'), 'token.json'), eightDaysAgo, eightDaysAgo);
+    const legacy = await profileStatus('legacy');
+    expect(legacy.refreshAgeDays).toBeGreaterThanOrEqual(7);
+    expect(legacy.warnings.join(' ')).toContain('Testing');
   },
 
   'undo.recency-minutes': async () => {

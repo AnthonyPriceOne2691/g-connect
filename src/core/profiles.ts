@@ -179,10 +179,19 @@ export async function profileStatus(account: string = DEFAULT_ACCOUNT): Promise<
   const expiresAt =
     token?.expiry_date === undefined ? null : new Date(token.expiry_date).toISOString();
 
+  // Отметки может не быть — профиль записан до её появления. Тогда берём время файла:
+  // приблизительно, зато предупреждение работает и для уже существующих токенов, а не
+  // только для будущих. Точность здесь не нужна: вопрос «шестой день или нет».
+  let obtainedAt = token?.obtained_at;
+  if (obtainedAt === undefined && token !== null) {
+    try {
+      obtainedAt = (await stat(join(dir, 'token.json'))).mtimeMs;
+    } catch {
+      obtainedAt = undefined;
+    }
+  }
   const refreshAgeDays =
-    token?.obtained_at === undefined
-      ? null
-      : Math.floor((Date.now() - token.obtained_at) / 86_400_000);
+    obtainedAt === undefined ? null : Math.floor((Date.now() - obtainedAt) / 86_400_000);
 
   const warnings: string[] = [];
   // 7 дней — предел Google для приложения в статусе Testing; предупреждаем на шестой,
