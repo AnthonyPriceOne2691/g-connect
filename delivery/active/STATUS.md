@@ -1,7 +1,7 @@
 # Active delivery status
 
 - **slug:** core-phase-1
-- **stack:** delivery@1.84, cqg@absent, okf@absent
+- **stack:** delivery@1.84, cqg@2.32, okf@absent
 - **class:** L
 - **kind:** feature
 - **repro_test:** n/a reason=kind=feature
@@ -11,14 +11,14 @@
 - **verifier:** human:anton
 - **human_ok_spec:** deferred (reason=спека и acceptance-примеры написаны, ждут прочтения владельцем; §2.2b — работа идёт под запись долга, на handoff требуется yes, at=2026-09-01)
 - **human_ok_plan:** deferred (reason=класс L требует подтверждения плана; план написан, ждёт прочтения, at=2026-09-01)
-- **shape-oracles:** weak
+- **shape-oracles:** cqg-deployed
 - **behavior-oracles:** tests-present
 - **artifact_oracle:** n/a reason=фаза 1 — библиотека без сборки артефакта; `tsc --noEmit` относится к shape-оракулам, сборка `dist/` появится в фазе 2 вместе с MCP-сервером
-- **ci-oracles:** weak
+- **ci-oracles:** tooling
 - **worktree:** none reason=однопользовательский репозиторий, параллельных поставок нет; worktree заводится при первой параллельной работе (§5.1)
 - **hooks:** not-deployed
 - **blockers:** none
-- **waivers:** ci reason=CI на GitHub Actions зелёный (npm ci + tsc + vitest + delivery_check в чистом клоне), но серверной защиты ветки и merge_guard.sh нет; гейт мержа осмысленно ставить вместе с CQG на шаге ②, а не отдельно by=human:anton at=2026-09-01
+- **waivers:** none (waiver `ci` снят: CQG развёрнут, гейт мержа в репозитории, `ci-oracles: tooling` — серверной защиты ветки нет по тарифу, и это записано в STACK-ACCEPTANCE как остаток)
 - **new_dependency:** typescript reason=ядро на TS по D-1, компилятор нужен как devDependency by=agent:claude-opus-5
 - **new_dependency:** zod reason=схемы операций gc_apply валидируются до вызова Google API (§3, ops.ts); ручные проверки на 30 типов операций разъедутся by=agent:claude-opus-5
 - **new_dependency:** vitest reason=тестовый раннер для TS без отдельной сборки; behavior-оракулы фазы 1 живут в нём by=agent:claude-opus-5

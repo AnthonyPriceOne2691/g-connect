@@ -1,0 +1,59 @@
+name: quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # merge_guard и baseline-ratchet сравнивают с origin/main — нужна история.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install (clean clone)
+        run: npm ci
+
+      # Шаги независимы и с `if: always()`: гейт за упавшим шагом не запускается
+      # вовсе, и «зелёное» ниже означало бы «не проверялось» (Delivery §3.1a вопрос 2).
+      - name: Typecheck
+        if: always()
+        run: npx tsc --noEmit
+
+      - name: Tests
+        if: always()
+        run: npx vitest run
+
+      - name: Coverage (изменённый код)
+        if: always()
+        run: npx vitest run --coverage --reporter=dot
+
+      - name: Gates (pre-commit, все хуки)
+        if: always()
+        run: |
+          python -m pip install --quiet pre-commit
+          pre-commit run --all-files --show-diff-on-failure
+
+      - name: Снимки только вниз (baseline-ratchet)
+        if: always()
+        run: bash scripts/lint/check_baseline_ratchet.sh
+
+      - name: Контур поставки
+        if: always()
+        run: python3 scripts/delivery_check.py
+
+      - name: Доктор контура (судит ли вписанное)
+        if: always()
+        run: python3 scripts/lint/contour_doctor.py

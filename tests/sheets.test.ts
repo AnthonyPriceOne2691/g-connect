@@ -4,13 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildSheetData, buildSheetMap, detectHeaderRow } from '../src/core/sheets/map.ts';
 import { appendRow, setCells, upsertRow } from '../src/core/sheets/rows.ts';
-import {
-  FakeSheetsClient,
-  formulaSheet,
-  reportSheet,
-  snapshot,
-  twoDatesSheet,
-} from './fixtures/sheet.ts';
+import { FakeSheetsClient, formulaSheet, snapshot, twoDatesSheet } from './fixtures/sheet.ts';
 
 const NOW = new Date(2026, 8, 1, 10, 0, 0);
 const data = () => buildSheetData(snapshot());
@@ -70,8 +64,8 @@ describe('A2, A3 — upsert правит строку, а не плодит ду
     const outcome = await upsertRow(
       client,
       data(),
-      { 'Дата': '2026-09-01', 'Проект': 'G connect' },
-      { 'Часы': 3 },
+      { Дата: '2026-09-01', Проект: 'G connect' },
+      { Часы: 3 },
       { dryRun: false },
     );
     expect(outcome.status).toBe('ok');
@@ -86,8 +80,8 @@ describe('A2, A3 — upsert правит строку, а не плодит ду
     const outcome = await upsertRow(
       client,
       data(),
-      { 'Дата': '2026-09-02', 'Проект': 'G connect' },
-      { 'Статус': 'готово', 'Часы': 1 },
+      { Дата: '2026-09-02', Проект: 'G connect' },
+      { Статус: 'готово', Часы: 1 },
       { dryRun: false, now: NOW },
     );
     expect(outcome.status).toBe('ok');
@@ -105,8 +99,8 @@ describe('A2, A3 — upsert правит строку, а не плодит ду
     const outcome = await upsertRow(
       client,
       data(),
-      { 'Дата': '2026-09-01', 'Проект': 'G connect' },
-      { 'Часы': 9 },
+      { Дата: '2026-09-01', Проект: 'G connect' },
+      { Часы: 9 },
     );
     expect(outcome.status).toBe('preview');
     expect(outcome.changes).toHaveLength(1);
@@ -117,8 +111,8 @@ describe('A2, A3 — upsert правит строку, а не плодит ду
     const outcome = await upsertRow(
       new FakeSheetsClient(),
       data(),
-      { 'Дата': '2026-09-01', 'Проект': 'G connect' },
-      { 'Часы': 2 },
+      { Дата: '2026-09-01', Проект: 'G connect' },
+      { Часы: 2 },
     );
     expect(outcome.changes).toHaveLength(0);
   });
@@ -129,7 +123,7 @@ describe('A4, A4b, A4c — ступени резолва имени колонк
     const outcome = await setCells(
       new FakeSheetsClient(),
       data(),
-      { 'Проект': 'G connect' },
+      { Проект: 'G connect' },
       { 'Статус проекта': 'готово' },
     );
     expect(outcome.status).toBe('preview');
@@ -141,8 +135,8 @@ describe('A4, A4b, A4c — ступени резолва имени колонк
     const outcome = await setCells(
       new FakeSheetsClient(),
       data(),
-      { 'Проект': 'G connect' },
-      { 'Затрачено': 4 },
+      { Проект: 'G connect' },
+      { Затрачено: 4 },
       { aliases },
     );
     expect(outcome.assumptions).toEqual([]);
@@ -153,8 +147,8 @@ describe('A4, A4b, A4c — ступени резолва имени колонк
     const outcome = await setCells(
       new FakeSheetsClient(),
       data(),
-      { 'Проект': 'G connect' },
-      { 'Стаус': 'готово' },
+      { Проект: 'G connect' },
+      { Стаус: 'готово' },
     );
     expect(outcome.assumptions).toEqual(['«Стаус» → колонка «Статус»']);
   });
@@ -163,8 +157,8 @@ describe('A4, A4b, A4c — ступени резолва имени колонк
     const outcome = await setCells(
       new FakeSheetsClient(),
       data(),
-      { 'Проект': 'G connect' },
-      { 'cтатус': 'готово' },
+      { Проект: 'G connect' },
+      { cтатус: 'готово' },
     );
     expect(outcome.assumptions).toEqual([]);
     expect(outcome.changes[0]?.column).toBe('Статус');
@@ -177,8 +171,8 @@ describe('A5, A6 — неоднозначность и отсутствие сп
     const outcome = await setCells(
       new FakeSheetsClient(),
       twoDates,
-      { 'Проект': 'G connect' },
-      { 'Дата': 'сегодня' },
+      { Проект: 'G connect' },
+      { Дата: 'сегодня' },
       { now: NOW },
     );
     expect(outcome.status).toBe('needs_clarification');
@@ -192,8 +186,8 @@ describe('A5, A6 — неоднозначность и отсутствие сп
     const outcome = await setCells(
       client,
       data(),
-      { 'Проект': 'G connect' },
-      { 'Бюджет': 100 },
+      { Проект: 'G connect' },
+      { Бюджет: 100 },
       { dryRun: false },
     );
     expect(outcome.status).toBe('needs_clarification');
@@ -208,8 +202,8 @@ describe('A7, A8, A9 — значения', () => {
     const outcome = await upsertRow(
       new FakeSheetsClient(),
       data(),
-      { 'Дата': '2026-09-01', 'Проект': 'G connect' },
-      { 'Статус': 'В РАБОТЕ' },
+      { Дата: '2026-09-01', Проект: 'G connect' },
+      { Статус: 'В РАБОТЕ' },
     );
     expect(outcome.status).toBe('preview');
     expect(outcome.changes).toHaveLength(0);
@@ -220,8 +214,8 @@ describe('A7, A8, A9 — значения', () => {
     const outcome = await upsertRow(
       new FakeSheetsClient(),
       data(),
-      { 'Дата': '2026-09-01', 'Проект': 'G connect' },
-      { 'Статус': 'почти готово' },
+      { Дата: '2026-09-01', Проект: 'G connect' },
+      { Статус: 'почти готово' },
     );
     expect(outcome.status).toBe('needs_clarification');
     expect(outcome.questions[0]?.reason).toBe('not_in_enum');
@@ -233,8 +227,8 @@ describe('A7, A8, A9 — значения', () => {
     const outcome = await upsertRow(
       new FakeSheetsClient(),
       data(),
-      { 'Дата': '2026-09-01', 'Проект': 'G connect' },
-      { 'Часы': '3ч' },
+      { Дата: '2026-09-01', Проект: 'G connect' },
+      { Часы: '3ч' },
     );
     expect(outcome.changes[0]?.after).toBe(3);
     expect(outcome.notes.join(' ')).toContain('разобрано как 3');
@@ -244,8 +238,8 @@ describe('A7, A8, A9 — значения', () => {
     const outcome = await upsertRow(
       new FakeSheetsClient(),
       data(),
-      { 'Дата': '2026-09-01', 'Проект': 'G connect' },
-      { 'Часы': 'много' },
+      { Дата: '2026-09-01', Проект: 'G connect' },
+      { Часы: 'много' },
     );
     expect(outcome.status).toBe('needs_clarification');
     expect(outcome.questions[0]?.reason).toBe('not_a_number');
@@ -256,7 +250,7 @@ describe('A7, A8, A9 — значения', () => {
     const outcome = await setCells(
       new FakeSheetsClient(),
       twoDates,
-      { 'Проект': 'G connect' },
+      { Проект: 'G connect' },
       { 'Дата сдачи': 'сегодня' },
       { now: NOW },
     );
@@ -268,7 +262,7 @@ describe('A10, A11 — блокировки и похожие ключи', () =>
   it('A10: запись в формульную колонку блокируется с внятной причиной', async () => {
     const formulas = buildSheetData(snapshot([formulaSheet()]));
     await expect(
-      setCells(new FakeSheetsClient(), formulas, { 'Проект': 'G connect' }, { 'Итого': 10 }),
+      setCells(new FakeSheetsClient(), formulas, { Проект: 'G connect' }, { Итого: 10 }),
     ).rejects.toMatchObject({
       payload: {
         code: 'write_blocked',
@@ -283,8 +277,8 @@ describe('A10, A11 — блокировки и похожие ключи', () =>
     const outcome = await setCells(
       new FakeSheetsClient(),
       formulas,
-      { 'Проект': 'G connect' },
-      { 'Итого': 10 },
+      { Проект: 'G connect' },
+      { Итого: 10 },
       { force: true },
     );
     expect(outcome.status).toBe('preview');
@@ -294,8 +288,8 @@ describe('A10, A11 — блокировки и похожие ключи', () =>
     const outcome = await upsertRow(
       new FakeSheetsClient(),
       data(),
-      { 'Проект': 'Gconnect' },
-      { 'Часы': 1 },
+      { Проект: 'Gconnect' },
+      { Часы: 1 },
     );
     expect(outcome.status).toBe('needs_clarification');
     expect(outcome.questions[0]?.reason).toBe('key_not_found');
@@ -307,8 +301,8 @@ describe('A10, A11 — блокировки и похожие ключи', () =>
       upsertRow(
         new FakeSheetsClient(),
         data(),
-        { 'Проект': 'G connect' },
-        { 'Часы': 1 },
+        { Проект: 'G connect' },
+        { Часы: 1 },
         { expectRevision: 'rev-0', dryRun: false },
       ),
     ).rejects.toMatchObject({ payload: { code: 'revision_conflict' } });
@@ -329,7 +323,7 @@ describe('A10, A11 — блокировки и похожие ключи', () =>
       ]),
     );
     await expect(
-      upsertRow(new FakeSheetsClient(), many, { 'Проект': 'G connect' }, { 'Часы': 5 }),
+      upsertRow(new FakeSheetsClient(), many, { Проект: 'G connect' }, { Часы: 5 }),
     ).rejects.toMatchObject({ payload: { code: 'ambiguous_target' } });
   });
 
@@ -338,7 +332,7 @@ describe('A10, A11 — блокировки и похожие ключи', () =>
     const outcome = await appendRow(
       client,
       data(),
-      { 'Дата': '2026-09-01', 'Проект': 'G connect', 'Часы': 2 },
+      { Дата: '2026-09-01', Проект: 'G connect', Часы: 2 },
       { dryRun: false },
     );
     expect(outcome.status).toBe('ok');

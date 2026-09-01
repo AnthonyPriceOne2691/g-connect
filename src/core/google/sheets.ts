@@ -30,21 +30,23 @@ const DEFAULT_MAX_ROWS = 500;
  */
 const TEXTUAL_FORMATS = new Set(['DATE', 'DATE_TIME', 'TIME']);
 
+/** `null` в ответе Google значит «поля нет», а не «значение null». */
+const some = <T>(value: T | null | undefined): T | undefined => value ?? undefined;
+
 function cellValue(cell: sheets_v4.Schema$CellData): CellValue {
-  const formatType = cell.effectiveFormat?.numberFormat?.type;
-  if (formatType !== undefined && formatType !== null && TEXTUAL_FORMATS.has(formatType)) {
-    return cell.formattedValue ?? null;
+  const formatType = some(cell.effectiveFormat?.numberFormat?.type);
+  if (formatType !== undefined && TEXTUAL_FORMATS.has(formatType)) {
+    return some(cell.formattedValue) ?? null;
   }
   const effective = cell.effectiveValue;
-  if (effective?.numberValue !== undefined && effective.numberValue !== null) {
-    return effective.numberValue;
-  }
-  if (effective?.boolValue !== undefined && effective.boolValue !== null) return effective.boolValue;
-  if (effective?.stringValue !== undefined && effective.stringValue !== null) {
-    return effective.stringValue;
-  }
-  // formattedValue — то, что человек видит в ячейке: даты приходят именно так.
-  return cell.formattedValue ?? null;
+  return (
+    some(effective?.numberValue) ??
+    some(effective?.boolValue) ??
+    some(effective?.stringValue) ??
+    // formattedValue — то, что человек видит в ячейке.
+    some(cell.formattedValue) ??
+    null
+  );
 }
 
 function toCell(cell: sheets_v4.Schema$CellData): Cell {
@@ -57,22 +59,28 @@ function toCell(cell: sheets_v4.Schema$CellData): Cell {
  * Список допустимых значений приходит в Google на КАЖДУЮ ячейку, а карте нужен на колонку.
  * Берём правило с первой строки данных — ровно то, что проверяет `buildSheetMap`.
  */
+function oneOfListValues(cell: sheets_v4.Schema$CellData | undefined): string[] {
+  const condition = cell?.dataValidation?.condition;
+  if (condition?.type !== 'ONE_OF_LIST') return [];
+  return (condition.values ?? [])
+    .map((v) => v.userEnteredValue)
+    .filter((v): v is string => typeof v === 'string');
+}
+
 function validationsOf(sheet: sheets_v4.Schema$Sheet): ValidationRule[] {
   const rows = sheet.data?.[0]?.rowData ?? [];
   const out: ValidationRule[] = [];
-  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
-    const cells = rows[rowIndex]?.values ?? [];
-    for (let columnIndex = 0; columnIndex < cells.length; columnIndex += 1) {
-      const condition = cells[columnIndex]?.dataValidation?.condition;
-      if (condition?.type !== 'ONE_OF_LIST') continue;
-      const values = (condition.values ?? [])
-        .map((v) => v.userEnteredValue)
-        .filter((v): v is string => typeof v === 'string');
-      if (values.length === 0) continue;
+  rows.forEach((rowData, rowIndex) => {
+    (rowData.values ?? []).forEach((cell, columnIndex) => {
+      const values = oneOfListValues(cell);
+      if (values.length === 0) return;
       const row = rowIndex + 1;
-      out.push({ range: { startRow: row, endRow: row, startColumn: columnIndex, endColumn: columnIndex }, values });
-    }
-  }
+      out.push({
+        range: { startRow: row, endRow: row, startColumn: columnIndex, endColumn: columnIndex },
+        values,
+      });
+    });
+  });
   return out;
 }
 
@@ -155,7 +163,8 @@ export class GoogleSheetsClient implements SheetsClient {
     const maxRows = options.maxRows ?? this.maxRows;
     try {
       // Один запрос: метаданные всех листов + сетка только нужного диапазона.
-      const ranges = options.sheet === undefined ? undefined : [`'${options.sheet}'!A1:ZZ${maxRows}`];
+      const ranges =
+        options.sheet === undefined ? undefined : [`'${options.sheet}'!A1:ZZ${maxRows}`];
       const response = await this.retry(() =>
         this.sheets.spreadsheets.get({
           spreadsheetId: id,
@@ -167,7 +176,9 @@ export class GoogleSheetsClient implements SheetsClient {
       // Ревизия для защиты от гонки: у Docs-файлов её роль играет `version` из Drive.
       let revisionId: string | undefined;
       try {
-        const file = await this.retry(() => this.drive.files.get({ fileId: id, fields: 'version' }));
+        const file = await this.retry(() =>
+          this.drive.files.get({ fileId: id, fields: 'version' }),
+        );
         const version = file.data.version;
         if (version !== undefined && version !== null) revisionId = String(version);
       } catch {

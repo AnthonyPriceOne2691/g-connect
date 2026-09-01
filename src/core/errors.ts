@@ -108,6 +108,27 @@ const NETWORK_CAUSES = [
  * `invalid_grant` — это истёкший доступ (человеку надо переподключиться), а 401 без него
  * может быть отозванным правом, и путать их нельзя — действия разные.
  */
+/** Статус HTTP → код ядра. Вынесено из `fromGoogleError`: там ветвление копило сложность. */
+function codeForStatus(status: number, message: string): { code: ErrorCode; cause: string } {
+  if (status === 401) {
+    return message.includes('invalid_grant')
+      ? { code: 'auth_expired', cause: 'invalid_grant' }
+      : { code: 'auth_expired', cause: `HTTP 401: ${message}` };
+  }
+  if (status === 403) {
+    if (/insufficient|scope/i.test(message)) return { code: 'scope_missing', cause: message };
+    if (/rate limit|quota|userRateLimitExceeded/i.test(message)) {
+      return { code: 'quota_exceeded', cause: message };
+    }
+    return { code: 'forbidden', cause: `HTTP 403: ${message}` };
+  }
+  if (status === 404) return { code: 'not_found', cause: `HTTP 404: ${message}` };
+  if (status === 429) return { code: 'quota_exceeded', cause: `HTTP 429: ${message}` };
+  if (status === 400) return { code: 'bad_request', cause: `HTTP 400: ${message}` };
+  if (status >= 500) return { code: 'google_unavailable', cause: `HTTP ${status}: ${message}` };
+  return { code: 'internal', cause: `HTTP ${status}: ${message}` };
+}
+
 export function fromGoogleError(error: unknown, detail?: string): GcError {
   if (isGcError(error)) return error;
 
@@ -121,22 +142,9 @@ export function fromGoogleError(error: unknown, detail?: string): GcError {
   const networkCause = NETWORK_CAUSES.find((c) => codeText === c || message.includes(c));
   if (networkCause !== undefined) return gcError('offline', opts(networkCause));
 
-  if (status === 401) {
-    if (message.includes('invalid_grant')) return gcError('auth_expired', opts('invalid_grant'));
-    return gcError('auth_expired', opts(`HTTP 401: ${message}`));
-  }
-  if (status === 403) {
-    if (/insufficient|scope/i.test(message)) return gcError('scope_missing', opts(message));
-    if (/rate limit|quota|userRateLimitExceeded/i.test(message)) {
-      return gcError('quota_exceeded', opts(message));
-    }
-    return gcError('forbidden', opts(`HTTP 403: ${message}`));
-  }
-  if (status === 404) return gcError('not_found', opts(`HTTP 404: ${message}`));
-  if (status === 429) return gcError('quota_exceeded', opts(`HTTP 429: ${message}`));
-  if (status === 400) return gcError('bad_request', opts(`HTTP 400: ${message}`));
-  if (status !== undefined && status >= 500) {
-    return gcError('google_unavailable', opts(`HTTP ${status}: ${message}`));
+  if (status !== undefined) {
+    const { code, cause } = codeForStatus(status, message);
+    return gcError(code, opts(cause));
   }
   return gcError('internal', opts(message));
 }

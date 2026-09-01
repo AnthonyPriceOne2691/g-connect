@@ -133,10 +133,8 @@ export class MutableSheetsClient implements SheetsClient {
     const parsed = /^(.+)!([A-Z]+)(\d+)$/.exec(range);
     if (parsed === null) throw new Error(`фикстура не умеет диапазон ${range}`);
     const [, sheetTitle, letter, rowText] = parsed;
-    const columnIndex = [...(letter ?? '')].reduce(
-      (acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64),
-      0,
-    ) - 1;
+    const columnIndex =
+      [...(letter ?? '')].reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
     const rowIndex = Number(rowText) - 1;
     const next = this.data.sheets.map((sheet) => {
       if (sheet.title !== sheetTitle) return sheet;

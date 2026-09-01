@@ -2,9 +2,9 @@
 
 **Version:** 1.0
 **Ratified:** 2026-09-01
-**Canon stack:** delivery@1.84 · cqg@absent · okf@absent
+**Canon stack:** delivery@1.84 · cqg@2.32 · okf@absent
 <!-- версии из шапок соответствующих *.md; absent = слой не развёрнут -->
-**CI:** not-deployed   <!-- §10.4 -->
+**CI:** deployed (github-actions, `quality.yml`)   <!-- §10.4 -->
 
 ## Non-negotiables
 
@@ -86,10 +86,9 @@ ask: WebFetch
 
 ## Pointers to sibling layers (fill if deployed)
 
-- Code shape oracles: `CODE_QUALITY_GATES.md` — [x] not deployed / [ ] deployed
-  (backlog: шаг 2 §0.1, момент — конец фазы 1 DESIGN.md §15)
+- Code shape oracles: `CODE_QUALITY_GATES.md` — [ ] not deployed / [x] deployed (cqg@2.32)
 - Domain canon: `OKF_KNOWLEDGE_BUNDLE.md` / `knowledge/` — [x] not deployed / [ ] deployed
   (backlog: шаг 3 §0.1, момент — после фазы 2; инварианты пока в DESIGN.md D-1…D-10)
 - Agent hooks (§10): [x] not deployed / [ ] deployed
-- CI oracles (§10.4, workflow per CQG §8): [x] not deployed / [ ] deployed
+- CI oracles (§10.4, workflow per CQG §8): [ ] not deployed / [x] deployed (`quality.yml`)
 - Skills catalog: [x] absent / [ ] present

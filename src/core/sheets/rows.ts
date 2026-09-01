@@ -9,13 +9,21 @@
 import { gcError } from '../errors.ts';
 import { needsClarification, resolveColumn, type ResolveOptions } from '../resolver.ts';
 import { normalizeValue } from '../values.ts';
-import { columnLetter, type CellValue, type ColumnProfile, type SheetData, type SheetMap, type SheetsClient } from './types.ts';
+import {
+  columnLetter,
+  type CellValue,
+  type ColumnProfile,
+  type SheetData,
+  type SheetMap,
+  type SheetsClient,
+} from './types.ts';
 
 export type RowValues = Readonly<Record<string, unknown>>;
 
 export interface Question {
   readonly field: string;
-  readonly reason: 'ambiguous' | 'no_match' | 'not_in_enum' | 'not_a_number' | 'not_a_date' | 'key_not_found';
+  readonly reason:
+    'ambiguous' | 'no_match' | 'not_in_enum' | 'not_a_number' | 'not_a_date' | 'key_not_found';
   readonly detail: string;
   readonly candidates: readonly string[];
   /** Полный список доступного — чтобы человек выбирал из того, что есть (§8.2). */
@@ -89,7 +97,11 @@ function prepare(map: SheetMap, values: RowValues, options: RowOptions): Prepare
       });
     }
 
-    const normalized = normalizeValue(raw, column, options.now === undefined ? {} : { now: options.now });
+    const normalized = normalizeValue(
+      raw,
+      column,
+      options.now === undefined ? {} : { now: options.now },
+    );
     if (normalized.status === 'clarify') {
       out.questions.push({
         field: column.name,
@@ -108,7 +120,11 @@ function prepare(map: SheetMap, values: RowValues, options: RowOptions): Prepare
 }
 
 /** Индексы строк данных, подходящих под ключ. Сравнение — через нормализацию значений. */
-function findRows(data: SheetData, key: RowValues, options: RowOptions): { rows: number[]; questions: Question[] } {
+function findRows(
+  data: SheetData,
+  key: RowValues,
+  options: RowOptions,
+): { rows: number[]; questions: Question[] } {
   const map = data.map;
   const prepared = prepare(map, key, options);
   if (prepared.questions.length > 0) return { rows: [], questions: prepared.questions };
@@ -171,6 +187,29 @@ async function writeCells(
   }
 }
 
+/**
+ * Общий финал всех трёх операций: превью или запись. Был скопирован трижды —
+ * гейт дублей (jscpd) это и нашёл, а вместе с копией уезжала бы и логика dryRun.
+ */
+async function finish(
+  client: SheetsClient,
+  map: SheetMap,
+  changes: readonly PlannedChange[],
+  prepared: Prepared,
+  options: RowOptions,
+): Promise<ApplyOutcome> {
+  const base = {
+    changes,
+    assumptions: prepared.assumptions,
+    notes: prepared.notes,
+    questions: [] as readonly Question[],
+    revisionId: map.revisionId,
+  };
+  if (options.dryRun !== false) return { status: 'preview', ...base };
+  await writeCells(client, map, changes);
+  return { status: 'ok', ...base };
+}
+
 /** Дописать строку в конец. Дубликаты допустимы — там, где они осмысленны (§5). */
 export async function appendRow(
   client: SheetsClient,
@@ -192,11 +231,7 @@ export async function appendRow(
     after: value,
   }));
 
-  if (options.dryRun !== false) {
-    return { status: 'preview', changes, assumptions: prepared.assumptions, notes: prepared.notes, questions: [], revisionId: map.revisionId };
-  }
-  await writeCells(client, map, changes);
-  return { status: 'ok', changes, assumptions: prepared.assumptions, notes: prepared.notes, questions: [], revisionId: map.revisionId };
+  return finish(client, map, changes, prepared, options);
 }
 
 /**
@@ -257,11 +292,7 @@ export async function upsertRow(
     }))
     .filter((change) => String(change.before ?? '') !== String(change.after ?? ''));
 
-  if (options.dryRun !== false) {
-    return { status: 'preview', changes, assumptions: prepared.assumptions, notes: prepared.notes, questions: [], revisionId: map.revisionId };
-  }
-  await writeCells(client, map, changes);
-  return { status: 'ok', changes, assumptions: prepared.assumptions, notes: prepared.notes, questions: [], revisionId: map.revisionId };
+  return finish(client, map, changes, prepared, options);
 }
 
 /** Точечно поправить ячейки во всех строках, подходящих под условие. */
@@ -310,11 +341,7 @@ export async function setCells(
     }
   }
 
-  if (options.dryRun !== false) {
-    return { status: 'preview', changes, assumptions: prepared.assumptions, notes: prepared.notes, questions: [], revisionId: map.revisionId };
-  }
-  await writeCells(client, map, changes);
-  return { status: 'ok', changes, assumptions: prepared.assumptions, notes: prepared.notes, questions: [], revisionId: map.revisionId };
+  return finish(client, map, changes, prepared, options);
 }
 
 export { columnLetter };

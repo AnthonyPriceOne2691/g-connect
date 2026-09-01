@@ -1,0 +1,168 @@
+# Оркестрация гейтов (CQG §4). Состав гейтов — канонический, транспорт — `local`:
+# оффлайн-профиль законен (CQG §5, врезка про «дословно»), а половина гейтов у нас
+# всё равно адаптирована под TS-стек и живёт в репозитории.
+#
+# ⚠ Значения env-переменных стоят в `entry:` КАЖДОГО хука, а не в шелле (CQG §6):
+# `git commit` запускает хуки в своём окружении, и без этого путезависимые гейты
+# уходят в дефолт `backend/features`, печатают «0 файлов» и зеленеют.
+
+default_language_version:
+  python: python3
+
+repos:
+  # ── Конфиги парсятся, мусор не коммитится ──────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-json
+        exclude: ^tsconfig\.json$   # tsconfig допускает комментарии (JSONC)
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=512']
+      - id: end-of-file-fixer
+        exclude: ^(scripts/|delivery/)
+      - id: trailing-whitespace
+        exclude: ^(scripts/|delivery/)
+
+  # ── Секреты (CQG §2.7) ────────────────────────────────────────────────────
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        name: detect-secrets-guard
+        args: ['--baseline', '.secrets.baseline']
+        exclude: ^(package-lock\.json|delivery/|scripts/)
+
+  # ── Форма TS-кода ─────────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: typecheck
+        name: tsc --noEmit (строгий, без emit)
+        language: system
+        pass_filenames: false
+        files: \.ts$
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && npx tsc --noEmit'
+
+      - id: eslint
+        name: eslint (ошибки не молчат, промисы не висят)
+        language: system
+        pass_filenames: false
+        files: ^(src|tests)/.*\.ts$
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && npx eslint src tests'
+
+      - id: prettier
+        name: prettier --check
+        language: system
+        pass_filenames: false
+        files: ^(src|tests)/.*\.ts$
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && npx prettier --check src tests'
+
+      - id: tests
+        name: vitest run (поведение)
+        language: system
+        pass_filenames: false
+        files: ^(src|tests)/.*\.ts$
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && npx vitest run'
+
+  # ── Размеры и дубли ───────────────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: file-length
+        name: длина файлов под контролем
+        language: system
+        pass_filenames: false
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && LINT_LENGTH_GLOBS="*.ts *.py" MAX_LINES_PROD=500 MAX_LINES_TESTS=1000 bash scripts/lint/check_file_length.sh'
+
+      - id: jscpd-dry-gate
+        name: копипаст не растёт
+        language: system
+        pass_filenames: false
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && LINT_TS_SRC=src LINT_FE_DIR=. bash scripts/lint/check_jscpd_gate.sh'
+
+  # ── Конвенции ядра (адаптированные grep-правила, CQG §Применимость) ───────
+  - repo: local
+    hooks:
+      - id: config-access-gate
+        name: настройки читаются в одном типизированном месте
+        language: system
+        pass_filenames: false
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && LINT_TS_SRC=src bash scripts/lint/check_grep_gate_ts.sh --rule config-access'
+
+      - id: di-indirection-gate
+        name: зависимости инжектируются, а не добываются
+        language: system
+        pass_filenames: false
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && LINT_TS_SRC=src bash scripts/lint/check_grep_gate_ts.sh --rule di-indirection'
+
+      - id: core-no-library-gate
+        name: шов с googleapis ровно один
+        language: system
+        pass_filenames: false
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && LINT_TS_SRC=src bash scripts/lint/check_grep_gate_ts.sh --rule core-no-library'
+
+      - id: no-grab-bag-module-gate
+        name: нет модулей-помоек
+        language: system
+        pass_filenames: false
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && LINT_TS_SRC=src bash scripts/lint/check_grep_gate_ts.sh --rule no-grab-bag-module'
+
+      - id: blind-error-gate
+        name: ошибки с кодом и действием, а не new Error
+        language: system
+        pass_filenames: false
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && LINT_TS_SRC=src bash scripts/lint/check_grep_gate_ts.sh --rule blind-error'
+
+      - id: unstructured-log-gate
+        name: ядро не печатает
+        language: system
+        pass_filenames: false
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && LINT_TS_SRC=src bash scripts/lint/check_grep_gate_ts.sh --rule unstructured-log'
+
+  # ── Слои, сложность, зависимости ──────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: layers-gate
+        name: направление зависимостей (ядро — лист)
+        language: system
+        pass_filenames: false
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && LINT_TS_SRC=src LINT_FE_DIR=. LINT_TSCONFIG=tsconfig.json bash scripts/lint/check_layers_gate.sh'
+
+      - id: complexity-gate
+        name: сложность функций под контролем
+        language: system
+        pass_filenames: false
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && LINT_TS_SRC=src LINT_FE_DIR=. LINT_ESLINT_CONFIG=eslint.config.js bash scripts/lint/check_complexity_gate.sh'
+
+      - id: deps-audit
+        name: зависимости без известных уязвимостей
+        language: system
+        pass_filenames: false
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && LINT_FE_DIR=. bash scripts/lint/check_deps_audit.sh'
+
+  # ── На push: то, что требует remote-ref или минут (CQG §8.5) ─────────────
+  - repo: local
+    hooks:
+      - id: new-dependency
+        name: новый пакет объявлен в STATUS (reason= и by=)
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && BASE=origin/main python3 scripts/lint/check_new_dependency.py'
+
+      - id: diff-coverage
+        name: покрытие изменённого кода
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && npx vitest run --coverage --reporter=dot'
+
+  # ── Мета-гейт: все ли гейты подключены (идёт последним) ───────────────────
+  - repo: local
+    hooks:
+      - id: gate-coverage
+        name: все гейты подключены (мета)
+        language: system
+        pass_filenames: false
+        always_run: true
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && bash scripts/lint/check_gate_coverage.sh'

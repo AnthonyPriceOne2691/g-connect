@@ -20,8 +20,25 @@ export interface ResolveResult {
 
 /** Латинские двойники кириллицы: «c» в «Cтатус» глазом не отличить, а строки разные. */
 const HOMOGLYPHS: Readonly<Record<string, string>> = {
-  a: 'а', c: 'с', e: 'е', o: 'о', p: 'р', x: 'х', y: 'у',
-  A: 'а', B: 'в', C: 'с', E: 'е', H: 'н', K: 'к', M: 'м', O: 'о', P: 'р', T: 'т', X: 'х', Y: 'у',
+  a: 'а',
+  c: 'с',
+  e: 'е',
+  o: 'о',
+  p: 'р',
+  x: 'х',
+  y: 'у',
+  A: 'а',
+  B: 'в',
+  C: 'с',
+  E: 'е',
+  H: 'н',
+  K: 'к',
+  M: 'м',
+  O: 'о',
+  P: 'р',
+  T: 'т',
+  X: 'х',
+  Y: 'у',
 };
 
 export function normalizeName(name: string): string {

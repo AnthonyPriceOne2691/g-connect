@@ -32,7 +32,7 @@ const text = (cell: Cell | undefined): string =>
 
 const isBlank = (cell: Cell | undefined): boolean => text(cell) === '';
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$|^\d{1,2}[.\/]\d{1,2}[.\/]\d{2,4}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$|^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/;
 const NUMBER_RE = /^-?\d+([.,]\d+)?$/;
 const LINK_RE = /^https?:\/\//i;
 
@@ -70,7 +70,7 @@ function detectDateFormat(values: readonly string[]): 'iso' | 'dotted' | null {
   let dotted = 0;
   for (const v of values) {
     if (/^\d{4}-\d{2}-\d{2}$/.test(v)) iso += 1;
-    else if (/^\d{1,2}[.\/]\d{1,2}[.\/]\d{2,4}$/.test(v)) dotted += 1;
+    else if (/^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/.test(v)) dotted += 1;
   }
   if (iso === 0 && dotted === 0) return null;
   return iso >= dotted ? 'iso' : 'dotted';
@@ -125,7 +125,10 @@ export function detectHeaderRow(rows: readonly (readonly Cell[])[]): HeaderGuess
 }
 
 const inRange = (range: GridRange, row: number, column: number): boolean =>
-  row >= range.startRow && row <= range.endRow && column >= range.startColumn && column <= range.endColumn;
+  row >= range.startRow &&
+  row <= range.endRow &&
+  column >= range.startColumn &&
+  column <= range.endColumn;
 
 function validationValues(
   sheet: SheetSnapshot,
@@ -133,13 +136,24 @@ function validationValues(
   firstDataRow: number,
 ): readonly string[] | null {
   for (const rule of sheet.validations ?? []) {
-    if (inRange(rule.range, firstDataRow, columnIndex) && rule.values.length > 0) return rule.values;
+    if (inRange(rule.range, firstDataRow, columnIndex) && rule.values.length > 0)
+      return rule.values;
   }
   return null;
 }
 
 function isProtected(sheet: SheetSnapshot, columnIndex: number, firstDataRow: number): boolean {
   return (sheet.protectedRanges ?? []).some((r) => inRange(r, firstDataRow, columnIndex));
+}
+
+/** Строка сетки → запись по именам колонок. Было скопировано дважды (нашёл jscpd). */
+function rowToRecord(
+  row: readonly Cell[],
+  columns: readonly ColumnProfile[],
+): Record<string, CellValue> {
+  const out: Record<string, CellValue> = {};
+  for (const column of columns) out[column.name] = row[column.index]?.value ?? null;
+  return out;
 }
 
 export interface SheetMapOptions {
@@ -242,17 +256,8 @@ export function buildSheetData(
       ? `${sheet.title}!A1:A1`
       : `${sheet.title}!A1:${columnLetter(width - 1)}${rows.length}`;
 
-  const sampleRows = dataRows.slice(0, SAMPLE_ROWS).map((row) => {
-    const out: Record<string, CellValue> = {};
-    for (const column of columns) out[column.name] = row[column.index]?.value ?? null;
-    return out;
-  });
-
-  const allRows = dataRows.map((row) => {
-    const out: Record<string, CellValue> = {};
-    for (const column of columns) out[column.name] = row[column.index]?.value ?? null;
-    return out;
-  });
+  const allRows = dataRows.map((row) => rowToRecord(row, columns));
+  const sampleRows = allRows.slice(0, SAMPLE_ROWS);
 
   const map: SheetMap = {
     spreadsheetId: snapshot.id,

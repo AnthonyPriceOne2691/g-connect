@@ -105,7 +105,11 @@ export function waitForCode(options: WaitForCodeOptions = {}): Promise<string> {
         return;
       }
       if (options.state !== undefined && state !== options.state) {
-        finish(400, 'Не тот запрос', 'Похоже, это чужой или устаревший переход. Начни вход заново.');
+        finish(
+          400,
+          'Не тот запрос',
+          'Похоже, это чужой или устаревший переход. Начни вход заново.',
+        );
         return;
       }
       if (code === null) {
@@ -141,7 +145,10 @@ export function waitForCode(options: WaitForCodeOptions = {}): Promise<string> {
               detail: `Порт ${port} занят другим процессом — вход через него невозможен.`,
               cause: 'EADDRINUSE',
             })
-          : gcError('internal', { detail: 'Локальный сервер входа не поднялся.', cause: err.message }),
+          : gcError('internal', {
+              detail: 'Локальный сервер входа не поднялся.',
+              cause: err.message,
+            }),
       );
     });
 
@@ -205,32 +212,42 @@ export interface AccessTokenOptions {
  * Недостающее право — отдельная ошибка с объяснением, ЧТО именно не выдано и зачем:
  * иначе смена набора scopes выглядит как «доступ сломался».
  */
-export async function ensureAccessToken(options: AccessTokenOptions): Promise<string> {
-  const account = options.account ?? DEFAULT_ACCOUNT;
-  const required = options.scopes ?? MVP_SCOPES;
-  const now = options.now ?? Date.now;
+const SCOPE_PREFIX = 'https://www.googleapis.com/auth/';
 
+/** Профиль пригоден и права выданы — или ошибка с действием. Вынесено ради сложности. */
+async function requireUsableProfile(account: string, required: readonly string[]): Promise<void> {
   const status = await profileStatus(account);
   if (status.state !== 'connected') {
-    throw gcError(status.state === 'no_profile' ? 'no_profile' : status.state === 'no_credentials' ? 'no_credentials' : 'auth_expired', {
-      detail: `Профиль «${account}»: ${status.state}. Нужен вход.`,
-    });
+    const code =
+      status.state === 'no_profile'
+        ? 'no_profile'
+        : status.state === 'no_credentials'
+          ? 'no_credentials'
+          : 'auth_expired';
+    throw gcError(code, { detail: `Профиль «${account}»: ${status.state}. Нужен вход.` });
   }
 
   const lacking = missingScopes(status, required);
-  if (lacking.length > 0) {
-    throw gcError('scope_missing', {
-      detail:
-        `Профилю «${account}» не выдано: ${lacking.map((s) => s.replace('https://www.googleapis.com/auth/', '')).join(', ')}. ` +
-        'Нужен повторный вход — набор прав изменился, старый токен их не покрывает.',
-      cause: lacking.join(' '),
-    });
-  }
+  if (lacking.length === 0) return;
+  throw gcError('scope_missing', {
+    detail:
+      `Профилю «${account}» не выдано: ${lacking.map((s) => s.replace(SCOPE_PREFIX, '')).join(', ')}. ` +
+      'Нужен повторный вход — набор прав изменился, старый токен их не покрывает.',
+    cause: lacking.join(' '),
+  });
+}
+
+export async function ensureAccessToken(options: AccessTokenOptions): Promise<string> {
+  const account = options.account ?? DEFAULT_ACCOUNT;
+  const now = options.now ?? Date.now;
+
+  await requireUsableProfile(account, options.scopes ?? MVP_SCOPES);
 
   const token = await readToken(account);
   const accessToken = token?.access_token;
   const expiry = token?.expiry_date;
-  const fresh = accessToken !== undefined && (expiry === undefined || expiry - EXPIRY_SKEW_MS > now());
+  const fresh =
+    accessToken !== undefined && (expiry === undefined || expiry - EXPIRY_SKEW_MS > now());
   if (fresh) return accessToken;
 
   const client = await readOAuthClient(account);

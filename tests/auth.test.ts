@@ -32,7 +32,13 @@ beforeEach(async () => {
   await mkdir(profileDir(), { recursive: true });
   await writeFile(
     join(profileDir(), 'credentials.json'),
-    JSON.stringify({ web: { client_id: CLIENT.clientId, client_secret: CLIENT.clientSecret, redirect_uris: [CLIENT.redirectUri] } }),
+    JSON.stringify({
+      web: {
+        client_id: CLIENT.clientId,
+        client_secret: CLIENT.clientSecret,
+        redirect_uris: [CLIENT.redirectUri],
+      },
+    }),
   );
 });
 
@@ -110,7 +116,9 @@ describe('вход целиком', () => {
       port: PORT + 4,
       present: (url) => {
         shown = url;
-        void fetch(`http://127.0.0.1:${PORT + 4}/?code=C&state=${new URL(url).searchParams.get('state')}`);
+        void fetch(
+          `http://127.0.0.1:${PORT + 4}/?code=C&state=${new URL(url).searchParams.get('state')}`,
+        );
       },
     });
     expect(shown).toContain('accounts.google.com');
@@ -126,7 +134,9 @@ describe('вход целиком', () => {
         exchanger: ex,
         port: PORT + 5,
         present: (url) => {
-          void fetch(`http://127.0.0.1:${PORT + 5}/?code=C&state=${new URL(url).searchParams.get('state')}`);
+          void fetch(
+            `http://127.0.0.1:${PORT + 5}/?code=C&state=${new URL(url).searchParams.get('state')}`,
+          );
         },
       }),
     ).rejects.toMatchObject({ payload: { cause: 'no_refresh_token' } });

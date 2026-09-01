@@ -1,0 +1,27 @@
+{
+  "_comment": "Канарейки для contour_doctor.py: гейт обязан быть зелёным без файла и красным с ним. Свои гейты без канарейки навсегда остаются SKIP (CQG §5 шаг 5).",
+  "check_grep_gate_ts.sh:config-access": {
+    "path": "src/core/__canary__.ts",
+    "content": "export const home = process.env['HOME'];\n"
+  },
+  "check_grep_gate_ts.sh:di-indirection": {
+    "path": "src/core/__canary__.ts",
+    "content": "export const load = async () => await import('node:fs');\n"
+  },
+  "check_grep_gate_ts.sh:core-no-library": {
+    "path": "src/core/__canary__.ts",
+    "content": "import { google } from 'googleapis';\nexport const g = google;\n"
+  },
+  "check_grep_gate_ts.sh:no-grab-bag-module": {
+    "path": "src/core/utils.ts",
+    "content": "export const x = 1;\n"
+  },
+  "check_grep_gate_ts.sh:blind-error": {
+    "path": "src/core/__canary__.ts",
+    "content": "export const boom = () => {\n  throw new Error('boom');\n};\n"
+  },
+  "check_grep_gate_ts.sh:unstructured-log": {
+    "path": "src/core/__canary__.ts",
+    "content": "export const show = () => {\n  console.log('hi');\n};\n"
+  }
+}

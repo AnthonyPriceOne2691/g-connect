@@ -1,0 +1,18 @@
+{
+  "_comment": "Почему гейт не применим в этом проекте (CQG cqg@1.67). Без причины n/a не бывает.",
+  "check_ast_gate.py:silent-except": "нет прод-Python: ядро на TypeScript; роль «ошибки не молчат» держит eslint (no-empty без allowEmptyCatch) и правило blind-error в check_grep_gate_ts.sh",
+  "check_ast_gate.py:inline-prompt": "нет прод-Python; промптов пока нет вовсе — появятся в фазе 4 (policy/rules.md как файл, а не литерал)",
+  "check_ast_gate.py:cpu-in-async": "нет прод-Python; для TS роль частично держит eslint no-floating-promises / no-misused-promises",
+  "check_ast_gate.py:unbounded-list": "нет прод-Python и нет web-эндпоинтов; границы чтения живут в ReadOptions.maxRows (DESIGN §9.5) и проверяются тестами",
+  "check_grep_gate.sh:config-access": "python-паттерн (os.getenv); роль занял check_grep_gate_ts.sh --rule config-access (process.env вне src/core/env.ts)",
+  "check_grep_gate.sh:di-indirection": "python-паттерн (importlib); роль занял check_grep_gate_ts.sh --rule di-indirection",
+  "check_grep_gate.sh:service-no-web": "python-паттерн (fastapi); роль занял check_grep_gate_ts.sh --rule core-no-library плюс layers-гейт (core-is-leaf)",
+  "check_grep_gate.sh:no-grab-bag-module": "python-маска *.py; роль занял check_grep_gate_ts.sh --rule no-grab-bag-module",
+  "check_grep_gate.sh:blind-error": "python-паттерн; роль занял check_grep_gate_ts.sh --rule blind-error (new Error вместо gcError)",
+  "check_grep_gate.sh:unstructured-log": "python-паттерн; роль занял check_grep_gate_ts.sh --rule unstructured-log (console.* в ядре)",
+  "check_diff_coverage.sh": "python-половина неприменима (нет прод-Python); TS-половины у канонического скрипта нет — роль держит vitest run --coverage, порог проверяется в CI (см. STACK-ACCEPTANCE, остатки)",
+  "check_mutation_gate.sh": "инструмент не установлен: Stryker не ставился, чтобы не тянуть мутационный прогон в фазу 1. Роль «тесты действительно утверждают» частично держат 18 property-тестов на fast-check (§6.5), но это НЕ эквивалент — непокрытость названа в STACK-ACCEPTANCE",
+  "check_eslint_warnings.sh": "роль занята напрямую: eslint у нас работает в режиме error, а не warning — ратчет по варнингам нечего снимать; правило-в-error жёстче снимка",
+  "check_ast_gate.py": "нет прод-Python: всё ядро на TypeScript, `ast`-гейты канона парсят только Python. Роли переразданы: «ошибки не молчат» — eslint no-empty + правило blind-error; «промпты в файлах» — политика появится в фазе 4; «event loop не голодает» — eslint no-floating-promises/no-misused-promises; «список с границей» — ReadOptions.maxRows и тесты",
+  "check_grep_gate.sh": "python-паттерны и маска *.py: на этом стеке гейт видел бы ноль файлов. Роль целиком занял check_grep_gate_ts.sh (те же шесть правил, механика ратчета сохранена, область и паттерны под TS) — CQG §Применимость, «карта ролей»"
+}

@@ -6,8 +6,9 @@
  * не опечатка, а решение человека, и решать его за него нельзя.
  */
 
-import type { CellValue, ColumnProfile } from './sheets/types.ts';
+import { gcError } from './errors.ts';
 import { normalizeName } from './resolver.ts';
+import type { CellValue, ColumnProfile } from './sheets/types.ts';
 
 export type ValueOutcome =
   | { readonly status: 'ok'; readonly value: CellValue; readonly note: string | null }
@@ -24,8 +25,18 @@ export interface NormalizeOptions {
 }
 
 const MONTHS = [
-  'январ', 'феврал', 'март', 'апрел', 'ма', 'июн',
-  'июл', 'август', 'сентябр', 'октябр', 'ноябр', 'декабр',
+  'январ',
+  'феврал',
+  'март',
+  'апрел',
+  'ма',
+  'июн',
+  'июл',
+  'август',
+  'сентябр',
+  'октябр',
+  'ноябр',
+  'декабр',
 ];
 
 const pad = (n: number): string => String(n).padStart(2, '0');
@@ -51,7 +62,7 @@ function parseDate(raw: string, now: Date): Date | null {
   if (iso !== null) {
     return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
   }
-  const dotted = /^(\d{1,2})[.\/](\d{1,2})[.\/](\d{2,4})$/.exec(raw.trim());
+  const dotted = /^(\d{1,2})[./](\d{1,2})[./](\d{2,4})$/.exec(raw.trim());
   if (dotted !== null) {
     const year = Number(dotted[3]);
     return new Date(year < 100 ? 2000 + year : year, Number(dotted[2]) - 1, Number(dotted[1]));
@@ -89,7 +100,24 @@ export function normalizeValue(
   if (raw === null || raw === undefined || raw === '') {
     return { status: 'ok', value: null, note: null };
   }
-  const asText = typeof raw === 'string' ? raw.trim() : String(raw);
+  // Объект или массив в ячейку не пишем: `String({})` даёт «[object Object]», и это
+  // уехало бы в таблицу молча. Нашёл гейт линтера (no-base-to-string).
+  if (typeof raw === 'object' || typeof raw === 'function' || typeof raw === 'symbol') {
+    throw gcError('bad_request', {
+      detail:
+        `В колонку «${column.name}» передано значение типа ${typeof raw}, ` +
+        'а в ячейку пишется одно простое значение. Разложи его по колонкам.',
+      cause: 'non_primitive_value',
+    });
+  }
+  // Приведение по типу, а не общий String(): так линтер (и читатель) видит, что
+  // «[object Object]» в ячейку попасть не может ни при каком входе.
+  const asText =
+    typeof raw === 'string'
+      ? raw.trim()
+      : typeof raw === 'number' || typeof raw === 'bigint' || typeof raw === 'boolean'
+        ? String(raw)
+        : '';
 
   if (column.enumValues !== null && column.enumValues.length > 0) {
     const target = normalizeName(asText);

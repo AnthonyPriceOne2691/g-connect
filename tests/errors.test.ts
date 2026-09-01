@@ -50,7 +50,10 @@ describe('ошибки Google API → коды ядра', () => {
   });
 
   it('403 про scope → scope_missing, а не forbidden: действия разные', () => {
-    const scope = fromGoogleError({ code: 403, message: 'Request had insufficient authentication scopes' });
+    const scope = fromGoogleError({
+      code: 403,
+      message: 'Request had insufficient authentication scopes',
+    });
     const denied = fromGoogleError({ code: 403, message: 'The caller does not have permission' });
     expect(scope.payload.code).toBe('scope_missing');
     expect(denied.payload.code).toBe('forbidden');
@@ -65,8 +68,12 @@ describe('ошибки Google API → коды ядра', () => {
   });
 
   it('обрыв сети → offline, а не internal', () => {
-    expect(fromGoogleError({ code: 'ECONNRESET', message: 'socket hang up' }).payload.code).toBe('offline');
-    expect(fromGoogleError(new Error('getaddrinfo ENOTFOUND oauth2.googleapis.com')).payload.code).toBe('offline');
+    expect(fromGoogleError({ code: 'ECONNRESET', message: 'socket hang up' }).payload.code).toBe(
+      'offline',
+    );
+    expect(
+      fromGoogleError(new Error('getaddrinfo ENOTFOUND oauth2.googleapis.com')).payload.code,
+    ).toBe('offline');
   });
 
   it('уже разобранная ошибка ядра не переоборачивается', () => {

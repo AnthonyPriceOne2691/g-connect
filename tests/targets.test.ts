@@ -38,7 +38,9 @@ describe('резолв цели', () => {
   });
 
   it('произвольная ссылка даёт только чтение, даже если ID тот же (§11.2)', () => {
-    const target = resolveTarget(`https://docs.google.com/spreadsheets/d/UNLISTED0000000000000/edit`);
+    const target = resolveTarget(
+      `https://docs.google.com/spreadsheets/d/UNLISTED0000000000000/edit`,
+    );
     expect(target.allow).toBe('read');
     expect(() => {
       assertWritable(target);

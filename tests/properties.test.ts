@@ -19,7 +19,12 @@ import { buildSheetData, buildSheetMap } from '../src/core/sheets/map.ts';
 import { upsertRow } from '../src/core/sheets/rows.ts';
 import { assertWritable, parseTargetUrl, resolveTarget } from '../src/core/targets.ts';
 import { normalizeValue } from '../src/core/values.ts';
-import { FakeSheetsClient, MutableSheetsClient, STATUS_VALUES, snapshot } from './fixtures/sheet.ts';
+import {
+  FakeSheetsClient,
+  MutableSheetsClient,
+  STATUS_VALUES,
+  snapshot,
+} from './fixtures/sheet.ts';
 
 /** Алфавит ID файлов Google. */
 const fileId = fc
@@ -197,7 +202,9 @@ describe('инварианты профилей', () => {
           expect((await stat(join(profileDir(account), 'token.json'))).mode & 0o777).toBe(0o600);
 
           const status = await profileStatus(account);
-          expect(status.scopes).toEqual(scopeWords.map((w) => `https://www.googleapis.com/auth/${w}`));
+          expect(status.scopes).toEqual(
+            scopeWords.map((w) => `https://www.googleapis.com/auth/${w}`),
+          );
           // Инвариант §13.5: статус наружу — без секретов, при любых входных данных.
           expect(JSON.stringify(status)).not.toContain('refresh_token');
         },
@@ -220,7 +227,9 @@ describe('инварианты профилей', () => {
         if (dir && token) await writeToken({ access_token: 'a', refresh_token: 'r' }, account);
 
         const status = await profileStatus(account);
-        expect(['no_profile', 'no_credentials', 'needs_reauth', 'connected']).toContain(status.state);
+        expect(['no_profile', 'no_credentials', 'needs_reauth', 'connected']).toContain(
+          status.state,
+        );
         if (status.state === 'connected') {
           expect(status.hasCredentials && status.hasToken).toBe(true);
         }
@@ -279,15 +288,11 @@ describe('инварианты карты, резолвера и записи', 
   it('значение из enum в любом регистре приводится к каноническому', () => {
     const status = columnsOf().find((c) => c.name === 'Статус')!;
     fc.assert(
-      fc.property(
-        fc.constantFrom(...STATUS_VALUES),
-        fc.boolean(),
-        (value, upper) => {
-          const outcome = normalizeValue(upper ? value.toUpperCase() : value, status);
-          expect(outcome.status).toBe('ok');
-          if (outcome.status === 'ok') expect(outcome.value).toBe(value);
-        },
-      ),
+      fc.property(fc.constantFrom(...STATUS_VALUES), fc.boolean(), (value, upper) => {
+        const outcome = normalizeValue(upper ? value.toUpperCase() : value, status);
+        expect(outcome.status).toBe('ok');
+        if (outcome.status === 'ok') expect(outcome.value).toBe(value);
+      }),
     );
   });
 
@@ -314,17 +319,29 @@ describe('инварианты карты, резолвера и записи', 
         fc.constantFrom(...STATUS_VALUES),
         async (hours, status) => {
           const client = new MutableSheetsClient(snapshot());
-          const key = { 'Дата': '2026-09-01', 'Проект': 'G connect' };
-          const values = { 'Часы': hours, 'Статус': status };
+          const key = { Дата: '2026-09-01', Проект: 'G connect' };
+          const values = { Часы: hours, Статус: status };
 
-          const first = await upsertRow(client, buildSheetData(await client.getSpreadsheet()), key, values, {
-            dryRun: false,
-          });
+          const first = await upsertRow(
+            client,
+            buildSheetData(await client.getSpreadsheet()),
+            key,
+            values,
+            {
+              dryRun: false,
+            },
+          );
           expect(first.status).toBe('ok');
 
-          const second = await upsertRow(client, buildSheetData(await client.getSpreadsheet()), key, values, {
-            dryRun: false,
-          });
+          const second = await upsertRow(
+            client,
+            buildSheetData(await client.getSpreadsheet()),
+            key,
+            values,
+            {
+              dryRun: false,
+            },
+          );
           expect(second.changes).toHaveLength(0);
 
           // И строк по-прежнему две: правили, а не добавляли.
@@ -341,8 +358,8 @@ describe('инварианты карты, резолвера и записи', 
         const outcome = await upsertRow(
           new FakeSheetsClient(),
           buildSheetData(snapshot()),
-          { 'Дата': '2026-09-01', 'Проект': 'G connect' },
-          { 'Часы': hours },
+          { Дата: '2026-09-01', Проект: 'G connect' },
+          { Часы: hours },
         );
         for (const change of outcome.changes) {
           expect(String(change.before ?? '')).not.toBe(String(change.after ?? ''));
@@ -362,8 +379,8 @@ describe('инварианты карты, резолвера и записи', 
           await upsertRow(
             client,
             buildSheetData(snapshot()),
-            { 'Дата': '2026-09-01', 'Проект': 'G connect' },
-            { 'Часы': hours, 'Статус': status },
+            { Дата: '2026-09-01', Проект: 'G connect' },
+            { Часы: hours, Статус: status },
           );
           expect(client.writes).toHaveLength(0);
         },

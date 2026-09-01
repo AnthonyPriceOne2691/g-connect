@@ -7,9 +7,9 @@
  */
 
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { profilesHome } from './env.ts';
 import { gcError } from './errors.ts';
 
 export const DEFAULT_ACCOUNT = 'default';
@@ -42,9 +42,7 @@ export interface ProfileStatus {
 }
 
 export function profilesRoot(): string {
-  const override = process.env['GCONNECT_HOME'];
-  if (override !== undefined && override.trim() !== '') return override;
-  return join(homedir(), '.gconnect');
+  return profilesHome();
 }
 
 export function profileDir(account: string = DEFAULT_ACCOUNT): string {
@@ -82,7 +80,10 @@ async function readJson<T>(path: string): Promise<T | null> {
 export async function listProfiles(): Promise<string[]> {
   try {
     const entries = await readdir(profilesRoot(), { withFileTypes: true });
-    return entries.filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    return entries
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort();
   } catch {
     return [];
   }

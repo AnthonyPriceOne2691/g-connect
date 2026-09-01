@@ -1,0 +1,15 @@
+# complexity_baseline.txt — снимок нарушений сложности ФУНКЦИЙ по файлам.
+# Формат: <число нарушений>:<путь>. Половины, снявшие снимок: ts
+# ts: eslint {"complexity":["error",10],"max-depth":["error",4],"max-params":["error",8],"max-statements":["error",50]} (порог у гейта, env LINT_TS_COMPLEXITY_RULES).
+# Снимок только ТАЕТ: тронул файл — раздели функцию и пере-сними вниз.
+2:src/cli/manual.ts
+1:src/core/auth.ts
+1:src/core/google/exchanger.ts
+2:src/core/google/sheets.ts
+2:src/core/profiles.ts
+2:src/core/resolver.ts
+1:src/core/retry.ts
+2:src/core/sheets/map.ts
+2:src/core/sheets/rows.ts
+1:src/core/targets.ts
+2:src/core/values.ts

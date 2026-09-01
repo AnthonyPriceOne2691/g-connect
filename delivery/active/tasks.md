@@ -31,6 +31,19 @@
 - [x] T12: `src/core/sheets/rows.ts` — `appendRow` / `upsertRow` / `setCells` → A2, A3, A10
 - [x] T13: тест «в коде нет имён листов и колонок» (грепом по `src/`)
 
+## Slice 3.5 — ② CQG (по эскалации и плану фазы 1)
+
+- [x] T18: 35 скриптов гейтов + `merge_guard.sh` из payload канона
+- [x] T19: eslint (typed rules) + prettier + dependency-cruiser + jscpd, конфиги под TS
+- [x] T20: `check_grep_gate_ts.sh` — шесть правил под инварианты ядра, механика ратчета
+- [x] T21: `not-applicable.json` (13 причин) и `canaries.json` (6 своих канареек)
+- [x] T22: `.pre-commit-config.yaml` — 23 хука на коммит, 2 на push; env в каждом `entry:`
+- [x] T23: `.secrets.baseline`, `detect-secrets` зелёный
+- [x] T24: `quality.yml` — 8 шагов, все `if: always()`; `ci.yml` заменён им
+- [x] T25: приёмка: gate-coverage OK, pre-commit 23/23, contour_doctor **DEAD 0**
+- [x] T26: карта ролей в `STACK-ACCEPTANCE.md`, `shape-oracles: cqg-deployed`, waiver снят
+- [ ] T27: Stryker (роль «тесты утверждают») — вынесено в фазу 2, остаток назван
+
 ## Slice 3 — реальный путь
 
 - [x] T14: `src/core/auth.ts` — OAuth, redirect `127.0.0.1:3333`, refresh, сообщение про смену scopes

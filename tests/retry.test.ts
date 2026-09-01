@@ -42,10 +42,15 @@ describe('withRetry', () => {
 
   it('исчерпав попытки, отдаёт ошибку ядра, а не сырую', async () => {
     await expect(
-      withRetry(async () => { throw { code: 503, message: 'Backend error' }; }, {
-        maxRetries: 2,
-        sleep: noSleep,
-      }),
+      withRetry(
+        async () => {
+          throw { code: 503, message: 'Backend error' };
+        },
+        {
+          maxRetries: 2,
+          sleep: noSleep,
+        },
+      ),
     ).rejects.toMatchObject({ payload: { code: 'google_unavailable', retryable: true } });
   });
 
