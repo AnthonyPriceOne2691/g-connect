@@ -1,43 +1,33 @@
 # Active delivery status
 
-- **slug:** bootstrap-delivery-contour
+- **slug:** core-phase-1
 - **stack:** delivery@1.84, cqg@absent, okf@absent
-- **class:** S
-- **kind:** bootstrap
-- **repro_test:** n/a reason=kind=bootstrap, не багфикс
-- **diagnosis:** n/a reason=kind=bootstrap, дефекта не разбирали
-- **phase:** verify
+- **class:** L
+- **kind:** feature
+- **repro_test:** n/a reason=kind=feature
+- **diagnosis:** n/a reason=kind=feature, дефекта не разбирали
+- **phase:** specify
 - **builder:** agent:claude-opus-5
 - **verifier:** human:anton
-- **human_ok_spec:** n/a reason=class=S, mini-spec живёт в tasks.md (§2.2)
-- **human_ok_plan:** n/a reason=class=S
+- **human_ok_spec:** deferred (reason=спека и acceptance-примеры написаны, ждут прочтения владельцем; §2.2b — работа идёт под запись долга, на handoff требуется yes, at=2026-09-01)
+- **human_ok_plan:** deferred (reason=класс L требует подтверждения плана; план написан, ждёт прочтения, at=2026-09-01)
 - **shape-oracles:** weak
-- **behavior-oracles:** weak reason=кода продукта ещё нет; дёшево и не сделано — тестов нет, потому что нет модулей. Контур проверяется delivery_check и чеклистом §7.3
-- **artifact_oracle:** n/a reason=проект пока ничего не собирает; TS-сборка появится в фазе 1
+- **behavior-oracles:** tests-present
+- **artifact_oracle:** n/a reason=фаза 1 — библиотека без сборки артефакта; `tsc --noEmit` относится к shape-оракулам, сборка `dist/` появится в фазе 2 вместе с MCP-сервером
 - **ci-oracles:** weak
-- **worktree:** none (S)
+- **worktree:** none reason=однопользовательский репозиторий, параллельных поставок нет; worktree заводится при первой параллельной работе (§5.1)
 - **hooks:** not-deployed
-- **blockers:** none
+- **blockers:** ci-oracles weak на классе L — нужен waiver человека или минимальная CI-джоба; решение и два варианта с ценой в active/escalation.md (§12.3)
 - **waivers:** none
-- **new_dependency:** none
-- **runtime_paths:** none reason=контур — markdown и python-проверки; путей, чей отказ не виден ни сборке, ни тестам, в нём нет. При появлении Google-API появятся: OAuth-вход, запись в живой документ
-- **model_surface:** n/a reason=продукт пока не вызывает модель; поверхность появится вместе с рецептами (DESIGN.md §13, §14)
+- **new_dependency:** typescript reason=ядро на TS по D-1, компилятор нужен как devDependency by=agent:claude-opus-5
+- **new_dependency:** zod reason=схемы операций gc_apply валидируются до вызова Google API (§3, ops.ts); ручные проверки на 30 типов операций разъедутся by=agent:claude-opus-5
+- **new_dependency:** vitest reason=тестовый раннер для TS без отдельной сборки; behavior-оракулы фазы 1 живут в нём by=agent:claude-opus-5
+- **new_dependency:** googleapis reason=клиенты Drive/Docs/Sheets; та же библиотека, что в переносимом run.js (^144) by=agent:claude-opus-5
+- **runtime_paths:** src/core/auth.ts,src/core/profiles.ts reason=OAuth-вход и работа с файлами профиля: отказ здесь платформа отдаёт не кодом ошибки, а невозможностью получить токен (браузер, redirect-порт, права на файл) — тестами это не воспроизводится
+- **model_surface:** n/a reason=фаза 1 не вызывает модель; поверхность появится в фазе 4 вместе с раннером (§12.2)
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** delivery_check зелёный на чистом клоне + чеклист §7.3 закрыт целиком + следующая поставка (ядро, класс L) стартует с непустым spec из DESIGN.md
-- **observe_until:** 2026-09-15
-- **circuit_breakers:** defaults from AGENT_DELIVERY_HARNESS.md §3.4 (kind=bootstrap: объём breaker'ом не мерится, §3.4)
-
-## Развёрнуто и что осталось
-
-| Слой | Состояние | Момент развёртывания |
-|---|---|---|
-| ① Delivery | deployed | сейчас |
-| ② CQG + гейт мержа | absent | конец фазы 1 (есть core — ратчету есть что мерить) |
-| ③ OKF | absent | после фазы 2 (модули устоялись) |
-| ④ CI | absent | вместе с ② |
-
-Почему не всё сразу: на нуле кода гейты CQG просматривают ноль файлов и выходят
-зелёными — ровно тот фальшивый зелёный, против которого канон и написан
-(AGENT_STACK §2 A′ п.1). Решение записано в `decisions.md`.
+- **observe_signal:** заполняется на handoff
+- **observe_until:** 2026-09-30
+- **circuit_breakers:** defaults from AGENT_DELIVERY_HARNESS.md §3.4

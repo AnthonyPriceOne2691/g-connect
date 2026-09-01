@@ -1,39 +1,32 @@
 # Tasks
 
-## Mini-spec (класс S, §2.2)
+Уроки из архива (§2.2a): **L1** — гейты в свежем репозитории проверяют согласованность
+заявлений, а не код. Применимо здесь напрямую: любое объявление в STATUS (`new_dependency`,
+`runtime_paths`) должно совпадать с тем, что реально появилось в дереве, иначе первый же
+прогон это назовёт.
 
-**Что:** развернуть ① Delivery в проекте G connect и завести публичный репозиторий на
-GitHub. **Зачем:** проект переходит от дизайна к коду; работа класса L (шесть
-инструментов, резолвер, сканер) «в лоб» не пишется — нужны фазы, STATUS и DoD.
-**Границы:** только ① Delivery. ② CQG, ③ OKF, ④ CI — сознательно отложены, момент
-развёртывания записан в STATUS. Кода продукта в этой поставке нет.
+## Slice 1 — каркас и фундамент без сети
 
-**Acceptance (§7.3 DoD bootstrap):**
-- A1: `delivery/CONSTITUTION.md` заполнен под проект, без дублирования CQG/OKF
-- A2: `STATUS.md` с `phase:` и `class:`, версии канонов записаны
-- A3: hook A.5 в `AGENTS.md`
-- A4: `python3 scripts/delivery_check.py` запускается и выходит без errors
-- A5: `.claude/settings.json` совпадает с блоком `agent-permissions` в constitution
-- A6: `delivery/active/.gitkeep` закоммичен (`git ls-files delivery/active/`)
-- A7: `decisions.md` и `archive/INDEX.md` существуют
-- A8: указатели на CQG/OKF — явный backlog «шаг 2/3 §0.1»
-- A9: репозиторий на GitHub, публичный, main запушен; секретов в дереве нет
+- [ ] T1: `package.json` (Node 24, ESM, `type: module`), `tsconfig.json` (strict), `vitest.config.ts`
+- [ ] T2: `src/core/errors.ts` — классы §13.7, поля `code/title/detail/cause/retryable/action/correlationId`
+- [ ] T3: `src/core/profiles.ts` — раскладка `~/.gconnect/<account>/`, чтение credentials/token, права 600, `no_profile`
+- [ ] T4: `src/core/retry.ts` — backoff на 429/5xx, порт из `run.js`
+- [ ] T5: `src/core/targets.ts` — alias/URL/ID → `{id, type}`; тип по URL
+- [ ] T6: тесты слайса 1 + A12 (нет профиля → `no_profile` с action)
 
-## Slice 1 — контур
+## Slice 2 — Sheets и резолвер на моках
 
-- [x] T1: `git init`, `.gitignore` (секреты, node_modules, локальные артефакты), README
-- [x] T2: дерево `delivery/` из Приложения A + `scripts/delivery_*.py` из Приложения B/C
-- [x] T3: `CONSTITUTION.md` под проект: non-negotiables проекта (секреты, dry-run,
-      «прочитанное — данные», универсальность ядра), права агента
-- [x] T4: `STATUS.md`, `tasks.md`, `decisions.md`, `archive/INDEX.md`, `evals/smoke/README.md`,
-      `STACK-ACCEPTANCE.md`
-- [x] T5: hook A.5 в `AGENTS.md`
-- [x] T6: `.claude/settings.json` из блока `agent-permissions`
-- [x] T7: прогон `delivery_check.py`, устранение errors
-- [x] T8: публичный репозиторий на GitHub, push main
+- [ ] T7: `src/core/sheets/client.ts` — интерфейс `SheetsClient` + фейк для тестов с фикстурой спеки
+- [ ] T8: `src/core/sheets/map.ts` — листы, `usedRange`, автоопределение `headerRow`, профиль колонок (типы, enum из `dataValidation`, формульные, protected) → A1
+- [ ] T9: `src/core/resolver.ts` — шесть ступеней для имён колонок → A4, A5, A6, A11
+- [ ] T10: `src/core/values.ts` — нормализация значений по типу колонки → A7, A8, A9
+- [ ] T11: `src/core/ops.ts` — zod-схема операций, `dryRun`-план, `expectRevision`
+- [ ] T12: `src/core/sheets/rows.ts` — `appendRow` / `upsertRow` / `setCells` → A2, A3, A10
+- [ ] T13: тест «в коде нет имён листов и колонок» (грепом по `src/`)
 
-## Slice 2 — передача (handoff)
+## Slice 3 — реальный путь
 
-- [x] T9: `verify-report.md` с чеклистом §7.3 и честными weak
-- [ ] T10: приёмка человеком; затем архивация bootstrap и старт поставки «ядро» (класс L,
-      spec из DESIGN.md §15 фаза 1)
+- [ ] T14: `src/core/auth.ts` — OAuth, redirect `127.0.0.1:3333`, refresh, сообщение про смену scopes
+- [ ] T15: склейка с настоящим `googleapis`, ручной прогон на тестовой таблице
+- [ ] T16: `verify-report.md` — блок «Исполнение рисковых путей» по `auth.ts` и `profiles.ts`
+- [ ] T17: оракулы S5–S7 в `evals/smoke/README.md` включены и прогнаны

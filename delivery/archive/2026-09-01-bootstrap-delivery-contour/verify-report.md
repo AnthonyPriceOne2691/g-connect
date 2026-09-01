@@ -4,7 +4,7 @@
 **Verifier:** human:anton
 **asserts_reviewed_by:** n/a (класс S; уровень 3 §3.1d обязателен для M/L, здесь acceptance-примеры A1–A9 живут в tasks.md и проверяются командами ниже)
 **CI run:** n/a — CI не развёрнут, `ci-oracles: weak` объявлено в STATUS; DoD этой поставки закрывается чеклистом §7.3 + приёмкой человеком
-**Commit:** заполняется на приёмке (проверяющий — не builder, §5.2)
+**Commit:** 3d93014 (последний коммит bootstrap до архивации; проверяющий — human:anton, §5.2)
 
 ## Shape oracles
 - [x] n/a — CQG не развёрнут (`shape-oracles: weak`), момент развёртывания в STATUS
