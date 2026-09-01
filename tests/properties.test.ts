@@ -239,6 +239,109 @@ describe('инварианты правил (D-12)', () => {
   });
 });
 
+describe('инварианты разбора значений', () => {
+  const dateColumn = {
+    name: 'Дата',
+    letter: 'A',
+    index: 0,
+    type: 'date' as const,
+    dateFormat: 'iso' as const,
+    enumValues: null,
+    enumSource: null,
+    filled: 1,
+    unique: 1,
+    hasFormula: false,
+    protected: false,
+  };
+
+  const MONTHS_RU = [
+    'января',
+    'февраля',
+    'марта',
+    'апреля',
+    'мая',
+    'июня',
+    'июля',
+    'августа',
+    'сентября',
+    'октября',
+    'ноября',
+    'декабря',
+  ];
+
+  // Нашёл мутационный гейт: строки месяцев можно было заменить пустыми, и ни один
+  // тест не замечал — проверялся только сентябрь. Свойство закрывает все двенадцать.
+  it('«<день> <месяц>» разбирается в правильный месяц для всех двенадцати', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 0, max: 11 }),
+        fc.integer({ min: 1, max: 28 }),
+        (index, day) => {
+          const outcome = normalizeValue(`${day} ${MONTHS_RU[index]!}`, dateColumn, {
+            now: new Date(2026, 0, 15),
+          });
+          expect(outcome.status).toBe('ok');
+          if (outcome.status === 'ok') {
+            const expected = `2026-${String(index + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            expect(outcome.value).toBe(expected);
+          }
+        },
+      ),
+    );
+  });
+
+  it('«сегодня», «вчера» и «завтра» считаются от переданного времени, а не от системного', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 2, max: 27 }),
+        fc.constantFrom('сегодня', 'вчера', 'завтра'),
+        (day, word) => {
+          const now = new Date(2026, 5, day);
+          const shift = word === 'вчера' ? -1 : word === 'завтра' ? 1 : 0;
+          const outcome = normalizeValue(word, dateColumn, { now });
+          expect(outcome.status).toBe('ok');
+          if (outcome.status === 'ok') {
+            expect(outcome.value).toBe(`2026-06-${String(day + shift).padStart(2, '0')}`);
+          }
+        },
+      ),
+    );
+  });
+
+  it('формат колонки уважается: точки там, где в колонке точки', () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 28 }), (day) => {
+        const dotted = { ...dateColumn, dateFormat: 'dotted' as const };
+        const outcome = normalizeValue(`${day} марта 2026`, dotted, { now: new Date(2026, 0, 1) });
+        if (outcome.status === 'ok') {
+          expect(outcome.value).toBe(`${String(day).padStart(2, '0')}.03.2026`);
+        }
+      }),
+    );
+  });
+
+  it('«да/нет/true/false» в логической колонке дают boolean, мусор — вопрос', () => {
+    const boolColumn = { ...dateColumn, type: 'boolean' as const, dateFormat: null };
+    for (const [raw, expected] of [
+      ['да', true],
+      ['ДА', true],
+      ['нет', false],
+      ['true', true],
+      ['false', false],
+      ['1', true],
+      ['0', false],
+    ] as const) {
+      const outcome = normalizeValue(raw, boolColumn);
+      expect(outcome.status, raw).toBe('ok');
+      if (outcome.status === 'ok') expect(outcome.value, raw).toBe(expected);
+    }
+    // Не логическое значение в логической колонке остаётся текстом, а не превращается в false.
+    const other = normalizeValue('может быть', boolColumn);
+    expect(other.status).toBe('ok');
+    if (other.status === 'ok') expect(other.value).toBe('может быть');
+  });
+});
+
 describe('инвариант отката (§10)', () => {
   it('запись → undo возвращает лист к прежнему состоянию при любых значениях', async () => {
     await fc.assert(

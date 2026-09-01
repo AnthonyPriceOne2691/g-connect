@@ -117,6 +117,14 @@
       "kind": "invariant",
       "enforced_in": "src/core/google/drive.ts (search)",
       "probe": "запрос содержит supportsAllDrives и includeItemsFromAllDrives"
+    },
+    {
+      "id": "tests.mutation-threshold",
+      "title": "Тесты должны убивать мутантов: порог объявлен и проверяется прогоном",
+      "kind": "limit",
+      "value": 50,
+      "enforced_in": "src/core/policy.ts (limitOf) + stryker.config.json (thresholds.break)",
+      "probe": "порог из правила совпадает с порогом, на котором падает мутационный прогон"
     }
   ]
 }

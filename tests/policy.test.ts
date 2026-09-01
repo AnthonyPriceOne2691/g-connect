@@ -159,6 +159,16 @@ const probes: Record<string, () => Promise<void>> = {
     expect(listParams({ scope: 'sharedDrives' }, 10)['corpora']).toBe('allDrives');
   },
 
+  'tests.mutation-threshold': async () => {
+    // Порог живёт в правиле, а конфиг Stryker обязан его повторять: иначе «порог есть»
+    // означает «порог где-то есть», и понизить его можно молча.
+    const { readFileSync } = await import('node:fs');
+    const config = JSON.parse(readFileSync('stryker.config.json', 'utf8')) as {
+      thresholds: { break: number };
+    };
+    expect(config.thresholds.break).toBe(limitOf('tests.mutation-threshold', -1));
+  },
+
   'audit.write-is-logged': async () => {
     const written: unknown[] = [];
     const c = client();

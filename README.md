@@ -33,6 +33,32 @@ IDE (Claude Code, Cursor, Claude Desktop — модель у клиента, д�
 - [delivery/](delivery/) — процессный контур поставки (Agent Delivery Harness).
 - [AGENTS.md](AGENTS.md) — что читать агенту перед работой.
 
+## Подключение
+
+Сначала собрать: `npm ci && npm run build`. Профиль Google уже должен существовать
+(`~/.gconnect/<account>/` с `credentials.json`; вход — `npm run gc -- login`).
+
+**Cursor / Claude Code / VS Code** — конфиг уже в репозитории: [.mcp.json](.mcp.json).
+Открой проект и перезапусти клиент.
+
+**Claude Desktop** — в `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "g-connect": {
+      "command": "node",
+      "args": ["/абсолютный/путь/к/G connect/dist/mcp/server.js"],
+      "env": { "GCONNECT_ACCOUNT": "default" }
+    }
+  }
+}
+```
+
+Проверка, что клиент видит сервер: в списке инструментов должно быть ровно шесть —
+`gc_targets`, `gc_read`, `gc_search`, `gc_scan`, `gc_apply`, `gc_undo`, — и ресурс
+`policy://rules` с правилами работы с документами.
+
 ## Состояние
 
 Фаза 0 — развёрнут контур поставки. Кода ядра пока нет; порядок работ — DESIGN.md §15.

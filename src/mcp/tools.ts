@@ -17,6 +17,7 @@ import type { DriveClient, SearchQuery } from '../core/google/drive.js';
 import type { JournalSink, JournalSource } from '../core/journal.js';
 import { operationJsonSchema, parseOperation } from '../core/ops.js';
 import { limitOf, policyText, policyRules } from '../core/policy.js';
+import { renderPreview, writeReport } from '../core/report/html.js';
 import { listProfiles, profileStatus } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
 import { appendRow, setCells, upsertRow, type ApplyOutcome } from '../core/sheets/rows.js';
@@ -255,6 +256,32 @@ function applyHint(status: ApplyOutcome['status']): string | undefined {
   return undefined;
 }
 
+/** Отчёт файлом, если попросили. Вынесено: ветка в обработчике поднимала сложность до 11. */
+async function maybeReport(
+  wanted: boolean,
+  outcome: ApplyOutcome,
+  meta: {
+    spreadsheet: string;
+    sheet: string;
+    alias: string | null;
+    revision: string | null;
+    op: string;
+  },
+): Promise<string | null> {
+  if (!wanted) return null;
+  const applied = outcome.status === 'ok';
+  return writeReport(
+    renderPreview(outcome, {
+      title: `${applied ? 'Записано' : 'Превью'}: ${meta.op}`,
+      spreadsheet: meta.spreadsheet,
+      sheet: meta.sheet,
+      alias: meta.alias,
+      revision: meta.revision,
+    }),
+    applied ? 'applied' : 'preview',
+  );
+}
+
 export const gcApply: ToolDefinition = {
   name: 'gc_apply',
   title: 'Записать в таблицу (по умолчанию — превью)',
@@ -265,6 +292,8 @@ export const gcApply: ToolDefinition = {
     'status=needs_clarification с вариантами: спроси, не угадывай.',
   input: {
     op: z.enum(['appendRow', 'upsertRow', 'setCells']),
+    /** Превью файлом: широкую таблицу в терминале не читают (§13.3, ступень 0). */
+    report: z.boolean().default(false).describe('Дополнительно записать превью HTML-файлом'),
     target: targetArg,
     sheet: z.string().min(1).optional(),
     headerRow: z.number().int().positive().optional(),
@@ -306,10 +335,20 @@ export const gcApply: ToolDefinition = {
       outcome = await setCells(client, data, operation.where, operation.values, options);
     }
 
+    // Отчёт файлом — по запросу: писать его на каждый вызов значит копить мусор.
+    const reportPath = await maybeReport(args['report'] === true, outcome, {
+      spreadsheet: data.map.spreadsheetTitle,
+      sheet: data.map.sheet,
+      alias: resolved.alias,
+      revision: data.map.revisionId,
+      op: operation.op,
+    });
+
     return {
       ...outcome,
       target: { id: resolved.id, alias: resolved.alias, sheet: data.map.sheet },
       hint: applyHint(outcome.status),
+      ...(reportPath === null ? {} : { reportFile: reportPath }),
     };
   },
 };

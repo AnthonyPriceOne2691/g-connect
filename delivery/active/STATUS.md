@@ -20,6 +20,8 @@
 - **blockers:** none
 - **waivers:** none
 - **new_dependency:** @modelcontextprotocol/sdk reason=официальный TS-SDK MCP: транспорт stdio, схемы инструментов и ресурсов; писать протокол руками значит поддерживать его самому by=agent:claude-opus-5
+- **new_dependency:** @stryker-mutator/core reason=роль «тесты действительно утверждают» (CQG §3) — единственный оракул на вопрос «утверждают ли тесты хоть что-нибудь»; остаток фазы 1 закрывается здесь by=agent:claude-opus-5
+- **new_dependency:** @stryker-mutator/vitest-runner reason=мутационный прогон должен гонять наш сьют, а раннер у нас vitest by=agent:claude-opus-5
 - **runtime_paths:** src/mcp/server.ts reason=stdio-транспорт: отказ виден не тестами, а тем, что клиент (Cursor/Claude Desktop) не видит инструментов; проверяется живым подключением
 - **model_surface:** src/policy/rules.md,src/policy/rules.json reason=§12.4: правила работы с документами уходят в модель через instructions сервера и MCP-ресурс — правка одной строки меняет поведение продукта при нетронутом коде
 - **canon_drift_waiver:** no
