@@ -20,3 +20,7 @@ audit/
 # Python
 __pycache__/
 *.pyc
+
+# Артефакты прогонов гейтов
+coverage/
+.stryker-tmp/

@@ -23,6 +23,13 @@
 - **new_dependency:** zod reason=схемы операций gc_apply валидируются до вызова Google API (§3, ops.ts); ручные проверки на 30 типов операций разъедутся by=agent:claude-opus-5
 - **new_dependency:** vitest reason=тестовый раннер для TS без отдельной сборки; behavior-оракулы фазы 1 живут в нём by=agent:claude-opus-5
 - **new_dependency:** googleapis reason=клиенты Drive/Docs/Sheets; та же библиотека, что в переносимом run.js (^144) by=agent:claude-opus-5
+- **new_dependency:** eslint reason=роль «сложность функций под контролем» и «ошибки не молчат» на TS: канонический гейт зовёт именно eslint (CQG §3, три несущие роли на TS поставляются готовыми) by=agent:claude-opus-5
+- **new_dependency:** @eslint/js reason=базовый набор правил для flat-config eslint 10; без него конфиг пуст by=agent:claude-opus-5
+- **new_dependency:** typescript-eslint reason=типизированные правила (no-floating-promises, no-misused-promises) — они держат роль «event loop не голодает» вместо python-гейта cpu-in-async by=agent:claude-opus-5
+- **new_dependency:** prettier reason=форма кода отдельно от смысла: без форматтера eslint-правила стиля пришлось бы держать вручную by=agent:claude-opus-5
+- **new_dependency:** dependency-cruiser reason=роль «направление зависимостей»: канонический layers-гейт зовёт его половиной ts; альтернатива (import-linter) только для Python by=agent:claude-opus-5
+- **new_dependency:** jscpd reason=роль «копипаст не растёт» (CQG §3); он же в каноническом check_jscpd_gate.sh, умеет ~150 языков by=agent:claude-opus-5
+- **new_dependency:** @vitest/coverage-v8 reason=роль «покрытие изменённого кода»: канонический diff-coverage python-only, TS-половину держит vitest --coverage by=agent:claude-opus-5
 - **new_dependency:** fast-check reason=реляционные оракулы класса L (§6.5): инварианты «ссылка без реестра не пишет», round-trip ID→URL→ID, идемпотентность повторов; в них нельзя спрятать неверное ожидание by=agent:claude-opus-5
 - **runtime_paths:** src/core/auth.ts,src/core/profiles.ts reason=OAuth-вход и работа с файлами профиля: отказ здесь платформа отдаёт не кодом ошибки, а невозможностью получить токен (браузер, redirect-порт, права на файл) — тестами это не воспроизводится
 - **model_surface:** n/a reason=фаза 1 не вызывает модель; поверхность появится в фазе 4 вместе с раннером (§12.2)
