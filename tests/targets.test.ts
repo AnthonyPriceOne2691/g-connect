@@ -5,7 +5,7 @@ import {
   parseTargetUrl,
   resolveTarget,
   type Registry,
-} from '../src/core/targets.ts';
+} from '../src/core/targets.js';
 
 const ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
 

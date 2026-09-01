@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { ERROR_CATALOG, type ErrorCode } from '../src/core/error-catalog.ts';
-import { fromGoogleError, gcError, isGcError } from '../src/core/errors.ts';
+import { ERROR_CATALOG, type ErrorCode } from '../src/core/error-catalog.js';
+import { fromGoogleError, gcError, isGcError } from '../src/core/errors.js';
 
 describe('каталог ошибок', () => {
   const codes = Object.keys(ERROR_CATALOG) as ErrorCode[];

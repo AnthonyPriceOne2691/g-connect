@@ -7,9 +7,9 @@
 
 import { google, type sheets_v4 } from 'googleapis';
 
-import { fromGoogleError, gcError } from '../errors.ts';
-import { limitOf } from '../policy.ts';
-import { withRetry } from '../retry.ts';
+import { fromGoogleError, gcError } from '../errors.js';
+import { limitOf } from '../policy.js';
+import { withRetry } from '../retry.js';
 import type {
   Cell,
   CellValue,
@@ -18,7 +18,7 @@ import type {
   SheetsClient,
   SpreadsheetSnapshot,
   ValidationRule,
-} from '../sheets/types.ts';
+} from '../sheets/types.js';
 
 /** Источник истины — правило `read.max-rows` в rules.json; число здесь только страховка. */
 export const DEFAULT_MAX_ROWS = limitOf('read.max-rows', 500);

@@ -9,7 +9,7 @@
 
 import { z } from 'zod';
 
-import { gcError } from './errors.ts';
+import { gcError } from './errors.js';
 
 /** Значение ячейки, как его может прислать клиент. */
 const cellValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);

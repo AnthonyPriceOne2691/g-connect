@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { gcError } from '../src/core/errors.ts';
-import { withRetry } from '../src/core/retry.ts';
+import { gcError } from '../src/core/errors.js';
+import { withRetry } from '../src/core/retry.js';
 
 const noSleep = async (): Promise<void> => undefined;
 

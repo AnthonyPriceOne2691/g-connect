@@ -6,7 +6,7 @@
  * прячет проблему за задержкой.
  */
 
-import { fromGoogleError, isGcError } from './errors.ts';
+import { fromGoogleError, isGcError } from './errors.js';
 
 export interface RetryOptions {
   readonly maxRetries?: number;

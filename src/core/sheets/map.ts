@@ -7,7 +7,7 @@
  * невидимой порчей данных.
  */
 
-import { gcError } from '../errors.ts';
+import { gcError } from '../errors.js';
 import {
   columnLetter,
   type Cell,
@@ -19,7 +19,7 @@ import {
   type SheetMap,
   type SheetSnapshot,
   type SpreadsheetSnapshot,
-} from './types.ts';
+} from './types.js';
 
 const HEADER_SEARCH_DEPTH = 8;
 const SAMPLE_ROWS = 3;

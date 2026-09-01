@@ -9,7 +9,7 @@ import type {
   SheetSnapshot,
   SpreadsheetSnapshot,
   SheetsClient,
-} from '../../src/core/sheets/types.ts';
+} from '../../src/core/sheets/types.js';
 
 const cell = (value: CellValue, formula?: string): Cell =>
   formula === undefined ? { value } : { value, formula };

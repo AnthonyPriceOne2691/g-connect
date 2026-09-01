@@ -6,7 +6,7 @@
  * и от запуска к запуску.
  */
 
-import type { ColumnProfile } from './sheets/types.ts';
+import type { ColumnProfile } from './sheets/types.js';
 
 export type ResolveStep = 'exact' | 'normalized' | 'alias' | 'fuzzy' | 'ambiguous' | 'missing';
 

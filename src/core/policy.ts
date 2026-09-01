@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { gcError } from './errors.ts';
+import { gcError } from './errors.js';
 
 export type RuleKind = 'deny' | 'limit' | 'ask' | 'default' | 'invariant';
 

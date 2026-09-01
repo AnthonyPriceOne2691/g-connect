@@ -25,12 +25,12 @@
 
 ## Slice 3 — сервер
 
-- [ ] T9: `@modelcontextprotocol/sdk`, `src/mcp/server.ts`, stdio
-- [ ] T10: шесть инструментов; JSON-схемы генерируются из zod, а не пишутся вторым текстом
-- [ ] T11: ресурс `policy://rules` + `instructions` собирается из `rules.md` → B8
-- [ ] T12: единый перехват ошибок на границе: `GcError` → payload, не стектрейс
-- [ ] T13: сборка `dist/`; снять `allowImportingTsExtensions` (риск из фазы 1)
-- [ ] T14: тесты B1, B2, B8, B12
+- [x] T9: `@modelcontextprotocol/sdk`, `src/mcp/server.ts`, stdio
+- [x] T10: шесть инструментов; JSON-схемы генерируются из zod, а не пишутся вторым текстом
+- [x] T11: ресурс `policy://rules` + `instructions` собирается из `rules.md` → B8
+- [x] T12: единый перехват ошибок на границе: `GcError` → payload, не стектрейс
+- [x] T13: сборка `dist/`; снять `allowImportingTsExtensions` (риск из фазы 1)
+- [x] T14: тесты B1, B2, B8, B12
 
 ## Slice 4 — живая проверка и передача
 

@@ -102,6 +102,21 @@
       "kind": "deny",
       "enforced_in": "src/core/undo.ts (assertSafeToUndo)",
       "probe": "undo при сдвинувшейся ревизии → revision_conflict, ни одной записи не сделано"
+    },
+    {
+      "id": "scan.max-files",
+      "title": "Сканирование и поиск ограничены числом файлов за вызов",
+      "kind": "limit",
+      "value": 500,
+      "enforced_in": "src/core/google/drive.ts (search) + src/core/policy.ts (limitOf)",
+      "probe": "лимит поиска берётся из правила, а не из числа в коде"
+    },
+    {
+      "id": "search.all-drives-params",
+      "title": "Поиск всегда шлёт параметры общих дисков — иначе список неполон молча",
+      "kind": "invariant",
+      "enforced_in": "src/core/google/drive.ts (search)",
+      "probe": "запрос содержит supportsAllDrives и includeItemsFromAllDrives"
     }
   ]
 }

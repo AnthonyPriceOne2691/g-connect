@@ -10,9 +10,9 @@
  * откат не выполняется молча.
  */
 
-import { gcError, newCorrelationId } from './errors.ts';
-import { lastUndoable, type JournalSink, type JournalSource, type WriteRecord } from './journal.ts';
-import type { SheetsClient } from './sheets/types.ts';
+import { gcError, newCorrelationId } from './errors.js';
+import { lastUndoable, type JournalSink, type JournalSource, type WriteRecord } from './journal.js';
+import type { SheetsClient } from './sheets/types.js';
 
 export interface UndoOptions {
   readonly account?: string;

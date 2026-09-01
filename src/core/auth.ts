@@ -9,7 +9,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 
-import { gcError } from './errors.ts';
+import { gcError } from './errors.js';
 import {
   DEFAULT_ACCOUNT,
   missingScopes,
@@ -19,7 +19,7 @@ import {
   writeToken,
   type OAuthClient,
   type StoredToken,
-} from './profiles.ts';
+} from './profiles.js';
 
 /**
  * Набор прав MVP (§11.7). `forms.body.readonly` сознательно НЕ входит: лишний scope —

@@ -7,8 +7,8 @@
 import { describe, expect, it } from 'vitest';
 import type { sheets_v4 } from 'googleapis';
 
-import { toSpreadsheetSnapshot } from '../src/core/google/sheets.ts';
-import { buildSheetMap } from '../src/core/sheets/map.ts';
+import { toSpreadsheetSnapshot } from '../src/core/google/sheets.js';
+import { buildSheetMap } from '../src/core/sheets/map.js';
 
 const cell = (partial: sheets_v4.Schema$CellData): sheets_v4.Schema$CellData => partial;
 

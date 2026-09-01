@@ -13,7 +13,7 @@ import {
   readToken,
   requireProfile,
   writeToken,
-} from '../src/core/profiles.ts';
+} from '../src/core/profiles.js';
 
 let home: string;
 const original = process.env['GCONNECT_HOME'];

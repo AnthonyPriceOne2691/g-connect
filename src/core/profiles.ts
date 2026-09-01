@@ -9,8 +9,8 @@
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { profilesHome } from './env.ts';
-import { gcError } from './errors.ts';
+import { profilesHome } from './env.js';
+import { gcError } from './errors.js';
 
 export const DEFAULT_ACCOUNT = 'default';
 

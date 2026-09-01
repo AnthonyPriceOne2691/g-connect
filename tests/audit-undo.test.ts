@@ -12,12 +12,12 @@ import {
   auditFile,
   fileJournalSource,
   recentRecords,
-} from '../src/core/audit.ts';
-import { lastUndoable, noopJournal, type WriteRecord } from '../src/core/journal.ts';
-import { buildSheetData, buildSheetMap } from '../src/core/sheets/map.ts';
-import { upsertRow } from '../src/core/sheets/rows.ts';
-import { undoLast } from '../src/core/undo.ts';
-import { FakeSheetsClient, MutableSheetsClient, snapshot } from './fixtures/sheet.ts';
+} from '../src/core/audit.js';
+import { lastUndoable, noopJournal, type WriteRecord } from '../src/core/journal.js';
+import { buildSheetData, buildSheetMap } from '../src/core/sheets/map.js';
+import { upsertRow } from '../src/core/sheets/rows.js';
+import { undoLast } from '../src/core/undo.js';
+import { FakeSheetsClient, MutableSheetsClient, snapshot } from './fixtures/sheet.js';
 
 const original = process.env['GCONNECT_HOME'];
 

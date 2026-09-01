@@ -5,9 +5,9 @@
 
 import { google } from 'googleapis';
 
-import { fromGoogleError } from '../errors.ts';
-import type { OAuthClient, StoredToken } from '../profiles.ts';
-import type { TokenExchanger } from '../auth.ts';
+import { fromGoogleError } from '../errors.js';
+import type { OAuthClient, StoredToken } from '../profiles.js';
+import type { TokenExchanger } from '../auth.js';
 
 /** То, что мы читаем из ответа Google. Нужен свой тип: `Credentials` из googleapis
  *  не имеет индексной подписи, а приведение к `Record` — лишнее звено. */

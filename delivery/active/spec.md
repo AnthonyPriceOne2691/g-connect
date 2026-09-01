@@ -51,7 +51,8 @@
 | B3 | `gc_read {target, mode: "map"}` | карта: `headerRow: 2`, колонки с типами и enum, `sampleRows` ≤ 3, `warnings` |
 | B4 | `gc_apply {op: upsertRow, key, values}` без `dryRun` | `status: "preview"`, план изменений, в таблицу ничего не записано |
 | B5 | `gc_apply` с `values: {Бюджет: 100}` | `status: "needs_clarification"`, `questions[0].available` — все колонки листа |
-| B6 | `gc_apply {op: "удалиВсё"}` (нет такой операции) | ошибка `bad_request` со списком допустимых операций; zod отклоняет до вызова Google |
+| B6 | `gc_apply {op: "удалиВсё"}` (нет такой операции) | вызов отклонён ДО обращения к Google, в тексте перечислены допустимые операции. **Уточнено по живой пробе:** SDK валидирует вход по объявленной схеме раньше обработчика, поэтому такая ошибка приходит протокольной (`-32602`, с перечислением значений), а не типизированным payload. Схему сознательно оставляем строгой: агент видит допустимые значения в `tools/list` и не совершает ошибку вовсе |
+| B6b | `gc_apply {op: "upsertRow", target: <не в реестре>, dryRun: false}` | `policy_denied` с `cause: write.allowlist` **без единого обращения к Google**: право проверяется до сети |
 | B7 | `gc_apply {dryRun: false}` на цель вне реестра | `policy_denied` с названием правила из `rules.json` |
 | B8 | `resources/read policy://rules` | содержимое `rules.md`; тот же текст виден в `instructions` сервера |
 | B9 | запись, затем `gc_undo {last: 1}` | значения вернулись; в аудит-логе две записи с ревизиями до/после |

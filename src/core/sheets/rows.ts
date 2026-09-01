@@ -6,12 +6,12 @@
  * указывает не туда.
  */
 
-import { gcError } from '../errors.ts';
-import { newCorrelationId } from '../errors.ts';
-import type { JournalSink } from '../journal.ts';
-import { assertChangeBudget } from '../policy.ts';
-import { needsClarification, resolveColumn, type ResolveOptions } from '../resolver.ts';
-import { normalizeValue } from '../values.ts';
+import { gcError } from '../errors.js';
+import { newCorrelationId } from '../errors.js';
+import type { JournalSink } from '../journal.js';
+import { assertChangeBudget } from '../policy.js';
+import { needsClarification, resolveColumn, type ResolveOptions } from '../resolver.js';
+import { normalizeValue } from '../values.js';
 import {
   columnLetter,
   type CellValue,
@@ -19,7 +19,7 @@ import {
   type SheetData,
   type SheetMap,
   type SheetsClient,
-} from './types.ts';
+} from './types.js';
 
 export type RowValues = Readonly<Record<string, unknown>>;
 

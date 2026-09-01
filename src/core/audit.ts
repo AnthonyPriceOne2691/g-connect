@@ -12,9 +12,9 @@
 import { appendFile, chmod, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { gcError } from './errors.ts';
-import { profilesRoot } from './profiles.ts';
-import type { JournalSink, JournalSource, WriteRecord } from './journal.ts';
+import { gcError } from './errors.js';
+import { profilesRoot } from './profiles.js';
+import type { JournalSink, JournalSource, WriteRecord } from './journal.js';
 
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;

@@ -6,7 +6,7 @@
  * а не первый экран человека.
  */
 
-import { ERROR_CATALOG, type ActionKind, type ErrorCode } from './error-catalog.ts';
+import { ERROR_CATALOG, type ActionKind, type ErrorCode } from './error-catalog.js';
 
 export interface GcAction {
   readonly kind: Exclude<ActionKind, null>;

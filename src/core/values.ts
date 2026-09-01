@@ -6,9 +6,9 @@
  * не опечатка, а решение человека, и решать его за него нельзя.
  */
 
-import { gcError } from './errors.ts';
-import { normalizeName } from './resolver.ts';
-import type { CellValue, ColumnProfile } from './sheets/types.ts';
+import { gcError } from './errors.js';
+import { normalizeName } from './resolver.js';
+import type { CellValue, ColumnProfile } from './sheets/types.js';
 
 export type ValueOutcome =
   | { readonly status: 'ok'; readonly value: CellValue; readonly note: string | null }

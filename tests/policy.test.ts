@@ -15,22 +15,23 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { appendRecord } from '../src/core/audit.ts';
-import { DEFAULT_MAX_ROWS } from '../src/core/google/sheets.ts';
-import { parseOperation, OPERATION_NAMES } from '../src/core/ops.ts';
-import { asData, limitOf, policyRules, policyText, ruleById } from '../src/core/policy.ts';
-import { profileStatus, writeToken } from '../src/core/profiles.ts';
-import { buildSheetData } from '../src/core/sheets/map.ts';
-import { setCells, upsertRow } from '../src/core/sheets/rows.ts';
-import { assertWritable, resolveTarget } from '../src/core/targets.ts';
-import { undoLast } from '../src/core/undo.ts';
+import { appendRecord } from '../src/core/audit.js';
+import { clampLimit, listParams } from '../src/core/google/drive.js';
+import { DEFAULT_MAX_ROWS } from '../src/core/google/sheets.js';
+import { parseOperation, OPERATION_NAMES } from '../src/core/ops.js';
+import { asData, limitOf, policyRules, policyText, ruleById } from '../src/core/policy.js';
+import { profileStatus, writeToken } from '../src/core/profiles.js';
+import { buildSheetData } from '../src/core/sheets/map.js';
+import { setCells, upsertRow } from '../src/core/sheets/rows.js';
+import { assertWritable, resolveTarget } from '../src/core/targets.js';
+import { undoLast } from '../src/core/undo.js';
 import {
   FakeSheetsClient,
   formulaSheet,
   protectedSheet,
   snapshot,
   wideSheet,
-} from './fixtures/sheet.ts';
+} from './fixtures/sheet.js';
 
 const data = () => buildSheetData(snapshot());
 const client = () => new FakeSheetsClient();
@@ -137,6 +138,25 @@ const probes: Record<string, () => Promise<void>> = {
     expect(wrapped.origin).toBe('Лист1!A1');
     // Обёртка не исполняема и ничего не инициирует: это структура, а не команда.
     expect(typeof (wrapped as unknown as { call?: unknown }).call).toBe('undefined');
+  },
+
+  'scan.max-files': async () => {
+    const max = limitOf('scan.max-files', -1);
+    expect(max).toBeGreaterThan(0);
+    // Запрошенное больше бюджета срезается до бюджета, а не игнорируется.
+    expect(clampLimit(max * 10)).toBe(max);
+    expect(clampLimit(5)).toBe(5);
+    expect(clampLimit(undefined)).toBeLessThanOrEqual(max);
+  },
+
+  'search.all-drives-params': async () => {
+    // Инвариант проверяется на параметрах запроса, а не на глазах читающего.
+    for (const scope of ['myDrive', 'sharedWithMe', 'sharedDrives', 'folder'] as const) {
+      const params = listParams({ scope }, 10);
+      expect(params['supportsAllDrives'], scope).toBe(true);
+      expect(params['includeItemsFromAllDrives'], scope).toBe(true);
+    }
+    expect(listParams({ scope: 'sharedDrives' }, 10)['corpora']).toBe('allDrives');
   },
 
   'audit.write-is-logged': async () => {

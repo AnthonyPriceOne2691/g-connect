@@ -2,15 +2,15 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { buildSheetData, buildSheetMap, detectHeaderRow } from '../src/core/sheets/map.ts';
-import { appendRow, setCells, upsertRow } from '../src/core/sheets/rows.ts';
+import { buildSheetData, buildSheetMap, detectHeaderRow } from '../src/core/sheets/map.js';
+import { appendRow, setCells, upsertRow } from '../src/core/sheets/rows.js';
 import {
   FakeSheetsClient,
   formulaSheet,
   instructionSheet,
   snapshot,
   twoDatesSheet,
-} from './fixtures/sheet.ts';
+} from './fixtures/sheet.js';
 
 const NOW = new Date(2026, 8, 1, 10, 0, 0);
 const data = () => buildSheetData(snapshot());

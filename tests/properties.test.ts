@@ -10,25 +10,25 @@ import { join } from 'node:path';
 import fc from 'fast-check';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { ERROR_CATALOG, type ErrorCode } from '../src/core/error-catalog.ts';
-import { gcError } from '../src/core/errors.ts';
-import { profileDir, profileStatus, readToken, writeToken } from '../src/core/profiles.ts';
-import { withRetry } from '../src/core/retry.ts';
-import { isSilent, needsClarification, resolveColumn } from '../src/core/resolver.ts';
-import { buildSheetData, buildSheetMap } from '../src/core/sheets/map.ts';
-import type { WriteRecord } from '../src/core/journal.ts';
-import { limitOf } from '../src/core/policy.ts';
-import { appendRow, setCells, upsertRow } from '../src/core/sheets/rows.ts';
-import { assertWritable, parseTargetUrl, resolveTarget } from '../src/core/targets.ts';
-import { undoLast } from '../src/core/undo.ts';
-import { normalizeValue } from '../src/core/values.ts';
+import { ERROR_CATALOG, type ErrorCode } from '../src/core/error-catalog.js';
+import { gcError } from '../src/core/errors.js';
+import { profileDir, profileStatus, readToken, writeToken } from '../src/core/profiles.js';
+import { withRetry } from '../src/core/retry.js';
+import { isSilent, needsClarification, resolveColumn } from '../src/core/resolver.js';
+import { buildSheetData, buildSheetMap } from '../src/core/sheets/map.js';
+import type { WriteRecord } from '../src/core/journal.js';
+import { limitOf } from '../src/core/policy.js';
+import { appendRow, setCells, upsertRow } from '../src/core/sheets/rows.js';
+import { assertWritable, parseTargetUrl, resolveTarget } from '../src/core/targets.js';
+import { undoLast } from '../src/core/undo.js';
+import { normalizeValue } from '../src/core/values.js';
 import {
   FakeSheetsClient,
   MutableSheetsClient,
   STATUS_VALUES,
   snapshot,
   wideSheet,
-} from './fixtures/sheet.ts';
+} from './fixtures/sheet.js';
 
 /** Алфавит ID файлов Google. */
 const fileId = fc

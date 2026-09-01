@@ -9,9 +9,9 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { gcError } from './errors.ts';
-import { denyByRule } from './policy.ts';
-import { DEFAULT_ACCOUNT, profileDir } from './profiles.ts';
+import { gcError } from './errors.js';
+import { denyByRule } from './policy.js';
+import { DEFAULT_ACCOUNT, profileDir } from './profiles.js';
 
 export type TargetType = 'doc' | 'sheet' | 'folder' | 'form' | 'unknown';
 export type Permission = 'read' | 'write';

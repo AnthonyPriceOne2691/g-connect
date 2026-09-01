@@ -11,15 +11,15 @@
 
 import { execFileSync } from 'node:child_process';
 
-import { ensureAccessToken, login } from '../core/auth.ts';
-import { defaultAccount } from '../core/env.ts';
-import { gcError, isGcError } from '../core/errors.ts';
-import { googleExchanger } from '../core/google/exchanger.ts';
-import { GoogleSheetsClient } from '../core/google/sheets.ts';
-import { profileStatus } from '../core/profiles.ts';
-import { buildSheetData } from '../core/sheets/map.ts';
-import { upsertRow } from '../core/sheets/rows.ts';
-import { assertWritable, loadRegistry, resolveTarget } from '../core/targets.ts';
+import { ensureAccessToken, login } from '../core/auth.js';
+import { defaultAccount } from '../core/env.js';
+import { gcError, isGcError } from '../core/errors.js';
+import { googleExchanger } from '../core/google/exchanger.js';
+import { GoogleSheetsClient } from '../core/google/sheets.js';
+import { profileStatus } from '../core/profiles.js';
+import { buildSheetData } from '../core/sheets/map.js';
+import { upsertRow } from '../core/sheets/rows.js';
+import { assertWritable, loadRegistry, resolveTarget } from '../core/targets.js';
 
 const ACCOUNT = defaultAccount();
 

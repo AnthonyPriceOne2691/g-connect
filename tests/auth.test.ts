@@ -10,9 +10,9 @@ import {
   ensureAccessToken,
   login,
   waitForCode,
-} from '../src/core/auth.ts';
-import { profileDir, readToken, writeToken } from '../src/core/profiles.ts';
-import type { OAuthClient, StoredToken } from '../src/core/profiles.ts';
+} from '../src/core/auth.js';
+import { profileDir, readToken, writeToken } from '../src/core/profiles.js';
+import type { OAuthClient, StoredToken } from '../src/core/profiles.js';
 
 const CLIENT: OAuthClient = {
   clientId: 'id.apps.googleusercontent.com',
