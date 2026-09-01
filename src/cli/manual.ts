@@ -35,14 +35,21 @@ const openInBrowser = (url: string): void => {
   }
 };
 
-const pairs = (text: string): Record<string, string> =>
-  Object.fromEntries(
-    text
-      .split(',')
-      .map((part) => part.split('='))
-      .filter((kv) => kv.length === 2)
-      .map(([k, v]) => [(k ?? '').trim(), (v ?? '').trim()]),
-  );
+/**
+ * `ключ=значение` через `;` (или `,`, если точек с запятой нет). Делим по ПЕРВОМУ `=`:
+ * значения содержат ссылки с `=` внутри, и наивный split их выбрасывал молча —
+ * первый живой прогон записал только ключ, а остальные поля пропали.
+ */
+const pairs = (text: string): Record<string, string> => {
+  const separator = text.includes(';') ? ';' : ',';
+  const out: Record<string, string> = {};
+  for (const part of text.split(separator)) {
+    const at = part.indexOf('=');
+    if (at <= 0) continue;
+    out[part.slice(0, at).trim()] = part.slice(at + 1).trim();
+  }
+  return out;
+};
 
 async function client(): Promise<GoogleSheetsClient> {
   const accessToken = await ensureAccessToken({ account: ACCOUNT, exchanger: googleExchanger });
