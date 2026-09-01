@@ -36,7 +36,19 @@ export interface FoundFile {
   readonly type: 'sheet' | 'doc' | 'folder' | 'other';
   readonly modifiedTime: string | null;
   readonly owner: string | null;
+  /** `true` — файл на общем диске; для «моих» и «расшаренных мне» пусто. */
+  readonly sharedDrive: boolean;
   readonly url: string;
+}
+
+export interface SearchResult {
+  readonly files: readonly FoundFile[];
+  /**
+   * Чего этот поиск НЕ увидит. Не оговорка ради вежливости: файл, расшаренный ссылкой и
+   * ни разу не открытый в Drive, отсутствует в выдаче `files.list` при том, что читается
+   * по ID. Замерено на цели из реестра: `gc_read` её открывает, поиск — не находит.
+   */
+  readonly incompleteBecause: readonly string[];
 }
 
 const MIME: Readonly<Record<string, 'sheet' | 'doc' | 'folder'>> = {
@@ -55,6 +67,10 @@ const escape = (value: string): string => value.replace(/'/g, "\\'");
 
 export function buildQuery(query: SearchQuery): string {
   const parts = ['trashed = false'];
+  // Область РЕАЛЬНО сужается, а не только объявляется. Нашла живая проба: без этих
+  // условий `myDrive` и `sharedDrives` возвращали один и тот же список, включая чужие
+  // файлы — то есть параметр был декорацией.
+  if (query.scope === 'myDrive') parts.push("'me' in owners");
   if (query.scope === 'sharedWithMe') parts.push('sharedWithMe');
   if (query.folderId !== undefined) parts.push(`'${escape(query.folderId)}' in parents`);
   if (query.nameContains !== undefined) parts.push(`name contains '${escape(query.nameContains)}'`);
@@ -82,8 +98,9 @@ export function clampLimit(requested: number | undefined): number {
 export function listParams(query: SearchQuery, limit: number): Record<string, unknown> {
   return {
     q: buildQuery(query),
-    pageSize: Math.min(limit, 1000),
-    fields: 'files(id,name,mimeType,modifiedTime,owners(emailAddress))',
+    // Берём с запасом: у области `sharedDrives` часть выдачи отфильтруется по driveId.
+    pageSize: Math.min(Math.max(limit * 2, limit), 1000),
+    fields: 'files(id,name,mimeType,modifiedTime,driveId,owners(emailAddress))',
     orderBy: 'modifiedTime desc',
     supportsAllDrives: true,
     includeItemsFromAllDrives: true,
@@ -108,12 +125,27 @@ function toFoundFile(file: drive_v3.Schema$File): FoundFile {
     type,
     modifiedTime: file.modifiedTime ?? null,
     owner: file.owners?.[0]?.emailAddress ?? null,
+    sharedDrive: file.driveId !== undefined && file.driveId !== null,
     url: urlFor(type, id),
   };
 }
 
+/** Чем область поиска ограничена — говорится всегда, а не когда результат пуст. */
+export function incompletenessNotes(scope: SearchScope | undefined): string[] {
+  const notes = [
+    'Файл, расшаренный ссылкой и ни разу не открытый в Drive, в выдачу не попадает, ' +
+      'хотя читается по ID: проверь gc_targets — цели реестра могут не находиться поиском.',
+  ];
+  if (scope === 'myDrive') notes.push('Область «мои файлы»: чужие и расшаренные не входят.');
+  if (scope === 'sharedWithMe') notes.push('Область «доступные мне»: свои файлы не входят.');
+  if (scope === 'sharedDrives') {
+    notes.push('Область «общие диски»: файлы с личного Диска отфильтрованы.');
+  }
+  return notes;
+}
+
 export interface DriveClient {
-  search(query: SearchQuery): Promise<readonly FoundFile[]>;
+  search(query: SearchQuery): Promise<SearchResult>;
 }
 
 export class GoogleDriveClient implements DriveClient {
@@ -125,12 +157,19 @@ export class GoogleDriveClient implements DriveClient {
     this.drive = google.drive({ version: 'v3', auth });
   }
 
-  async search(query: SearchQuery): Promise<readonly FoundFile[]> {
+  async search(query: SearchQuery): Promise<SearchResult> {
     const limit = clampLimit(query.limit);
     try {
       const response = await withRetry(() => this.drive.files.list(listParams(query, limit)));
 
-      return (response.data.files ?? []).slice(0, limit).map(toFoundFile);
+      const all = (response.data.files ?? []).map(toFoundFile);
+      // «Общие диски» означает именно их: файл без driveId живёт на личном Диске,
+      // и оставлять его в этой области значит врать про область.
+      const scoped = query.scope === 'sharedDrives' ? all.filter((f) => f.sharedDrive) : all;
+      return {
+        files: scoped.slice(0, limit),
+        incompleteBecause: incompletenessNotes(query.scope),
+      };
     } catch (error) {
       throw fromGoogleError(error, 'Поиск по Drive не удался.');
     }

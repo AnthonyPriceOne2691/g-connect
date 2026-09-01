@@ -484,11 +484,13 @@ describe('инварианты карты, резолвера и записи', 
     );
   });
 
-  it('ступень missing всегда отдаёт полный список колонок — выбирать из того, что есть', () => {
+  it('на ступени missing кандидатов НЕТ: полный список живёт у вопроса, не в кандидатах', () => {
     fc.assert(
       fc.property(fc.stringMatching(/^[a-z]{6,12}$/), (requested) => {
         const result = resolveColumn(requested, columnsOf());
-        if (result.step === 'missing') expect([...result.candidates]).toEqual([...names]);
+        // `candidates` значит «похожие, выбери из них». Когда похожих нет — он пуст,
+        // иначе агенту в контекст падает вся шапка (нашла живая проба).
+        if (result.step === 'missing') expect(result.candidates).toHaveLength(0);
       }),
     );
   });

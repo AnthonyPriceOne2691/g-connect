@@ -52,10 +52,14 @@ export function buildAuthUrl(
   url.searchParams.set('redirect_uri', client.redirectUri);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('scope', scopes.join(' '));
-  // Без этих двух refresh_token не приходит на повторных входах, и «подключено»
+  // Без `offline` refresh_token не приходит на повторных входах, и «подключено»
   // разваливается через час без объяснимой причины.
   url.searchParams.set('access_type', 'offline');
-  url.searchParams.set('prompt', 'consent');
+  // `select_account` — из живого промаха: при одном залогиненном аккаунте Google не
+  // показывает выбор, и человек подтверждает доступ НЕ тем аккаунтом, даже не заметив.
+  // Для инструмента, у которого профиль = аккаунт, это не мелочь: цена ошибки —
+  // токен чужой личности в профиле.
+  url.searchParams.set('prompt', 'select_account consent');
   if (state !== undefined) url.searchParams.set('state', state);
   return url.toString();
 }

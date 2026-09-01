@@ -37,7 +37,8 @@ const preview: ApplyOutcome = {
   assumptions: ['«Статус проекта» → колонка «Статус»'],
   notes: ['«3ч» разобрано как 3'],
   questions: [],
-  revisionId: 'rev-1',
+  baseRevision: 'rev-1',
+  revisionAfter: null,
 };
 
 describe('B12 — HTML-превью', () => {
@@ -74,7 +75,8 @@ describe('B12 — HTML-превью', () => {
             available: [],
           },
         ],
-        revisionId: null,
+        baseRevision: null,
+        revisionAfter: null,
       },
       meta,
     );

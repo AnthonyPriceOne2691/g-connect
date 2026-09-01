@@ -158,14 +158,18 @@ export const gcSearch: ToolDefinition = {
   async handle(args, deps) {
     const input: SearchQuery = z.object(searchInput).parse(args);
     const drive = await deps.drive();
-    const files = await drive.search(input);
+    const { files, incompleteBecause } = await drive.search(input);
     return {
       files,
       found: files.length,
-      note:
-        files.length === 0
-          ? 'Ничего не найдено. Причина может быть в области поиска: проверь scope и folderId.'
-          : undefined,
+      // Ограничения области печатаются ВСЕГДА, а не только при пустом результате:
+      // «ничего не найдено» без причины — тот же молчаливый успех (§13.7 п.4).
+      incompleteBecause,
+      ...(files.length === 0
+        ? {
+            note: 'Пусто. Это может быть область поиска, а не отсутствие файлов — см. incompleteBecause.',
+          }
+        : {}),
     };
   },
 };
@@ -188,7 +192,7 @@ export const gcScan: ToolDefinition = {
   async handle(args, deps) {
     const input = z.object(scanInput).parse(args);
     const drive = await deps.drive();
-    const inventory = await drive.search({
+    const { files: inventory, incompleteBecause } = await drive.search({
       scope: input.scope,
       folderId: input.folderId,
       nameContains: input.nameContains,
@@ -197,7 +201,12 @@ export const gcScan: ToolDefinition = {
     });
 
     if (input.depth !== 'map') {
-      return { depth: 'inventory', files: inventory, found: inventory.length };
+      return {
+        depth: 'inventory',
+        files: inventory,
+        found: inventory.length,
+        incompleteBecause,
+      };
     }
 
     const client = await deps.sheets();
@@ -223,7 +232,7 @@ export const gcScan: ToolDefinition = {
         });
       }
     }
-    return { depth: 'map', found: inventory.length, sheets: maps };
+    return { depth: 'map', found: inventory.length, sheets: maps, incompleteBecause };
   },
 };
 

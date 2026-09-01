@@ -226,7 +226,7 @@ const probes: Record<string, () => Promise<void>> = {
               },
             ]),
         },
-        { currentRevision: 'rev-99' },
+        {},
       ),
     ).rejects.toMatchObject({ payload: { code: 'revision_conflict' } });
     expect(c.writes).toHaveLength(0);

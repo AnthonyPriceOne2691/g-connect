@@ -63,7 +63,9 @@ describe('ссылка на согласие', () => {
   it('несёт scopes MVP, offline-доступ и state; forms там нет (§11.7)', () => {
     const url = new URL(buildAuthUrl(CLIENT, MVP_SCOPES, 'abc'));
     expect(url.searchParams.get('access_type')).toBe('offline');
-    expect(url.searchParams.get('prompt')).toBe('consent');
+    // Оба значения обязательны: `consent` даёт refresh_token, `select_account`
+    // заставляет Google показать выбор аккаунта — иначе вход уходит не туда.
+    expect(url.searchParams.get('prompt')).toBe('select_account consent');
     expect(url.searchParams.get('state')).toBe('abc');
     expect(url.searchParams.get('redirect_uri')).toBe('http://localhost:3333');
     const scopes = (url.searchParams.get('scope') ?? '').split(' ');

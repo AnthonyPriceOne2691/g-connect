@@ -49,7 +49,14 @@ export interface ApplyOutcome {
   /** Нормализации значений — «3ч» → 3, приведение регистра. */
   readonly notes: readonly string[];
   readonly questions: readonly Question[];
-  readonly revisionId: string | null;
+  /**
+   * Ревизия, на которой построен план. Названа явно: поле `revisionId` в ответе на
+   * успешную запись читалось как «ревизия сейчас», а было «ревизия до» — агент, взявший
+   * его для следующего `expectRevision`, получал ложную проверку. Нашла живая проба.
+   */
+  readonly baseRevision: string | null;
+  /** Ревизия после записи; `null` для превью и когда её не читали. */
+  readonly revisionAfter: string | null;
 }
 
 export interface RowOptions extends ResolveOptions {
@@ -188,7 +195,8 @@ const clarify = (questions: readonly Question[], map: SheetMap): ApplyOutcome =>
   assumptions: [],
   notes: [],
   questions,
-  revisionId: map.revisionId,
+  baseRevision: map.revisionId,
+  revisionAfter: null,
 });
 
 async function writeCells(
@@ -219,11 +227,12 @@ async function finish(
     assumptions: prepared.assumptions,
     notes: prepared.notes,
     questions: [] as readonly Question[],
-    revisionId: map.revisionId,
+    baseRevision: map.revisionId,
   };
-  if (options.dryRun !== false) return { status: 'preview', ...base };
+  if (options.dryRun !== false) return { status: 'preview', ...base, revisionAfter: null };
 
   await writeCells(client, map, changes);
+  const revisionAfter = (await options.readRevision?.()) ?? null;
 
   // Журнал пишется ПОСЛЕ успешной записи и до возврата: если журналирование упало,
   // вызывающий обязан узнать об этом — «записали, но не знаем что» хуже отказа.
@@ -242,12 +251,12 @@ async function finish(
         after: c.after,
       })),
       revisionBefore: map.revisionId,
-      revisionAfter: (await options.readRevision?.()) ?? null,
+      revisionAfter,
       correlationId: newCorrelationId(),
     });
   }
 
-  return { status: 'ok', ...base };
+  return { status: 'ok', ...base, revisionAfter };
 }
 
 /** Дописать строку в конец. Дубликаты допустимы — там, где они осмысленны (§5). */

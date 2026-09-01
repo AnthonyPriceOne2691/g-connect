@@ -109,7 +109,6 @@ export function resolveColumn(
   columns: readonly ColumnProfile[],
   options: ResolveOptions = {},
 ): ResolveResult {
-  const all = columns.map((c) => c.name);
   const empty = { column: null, assumption: null } as const;
 
   // Ступень 1 — точное совпадение.
@@ -163,8 +162,10 @@ export function resolveColumn(
     return { step: 'ambiguous', ...empty, candidates: scored.map((s) => s.column.name) };
   }
 
-  // Ступень 6 — ничего похожего: вопрос со полным списком, колонку не создаём.
-  return { step: 'missing', ...empty, candidates: all };
+  // Ступень 6 — ничего похожего. Кандидатов НЕТ: `candidates` значит «похожие, выбери
+  // из них», а полный список колонок живёт в `available` у вопроса. Нашла живая проба:
+  // дублирование всей шапки в кандидатах ничего не сужало и падало агенту в контекст.
+  return { step: 'missing', ...empty, candidates: [] };
 }
 
 /** Ступени 1–3 идут молча, 4 — с оговоркой в превью, 5–6 — вопросом. */

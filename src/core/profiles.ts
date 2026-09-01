@@ -77,13 +77,29 @@ async function readJson<T>(path: string): Promise<T | null> {
   }
 }
 
+/**
+ * Служебные каталоги внутри `~/.gconnect/` — не аккаунты. Нашла живая проба: каталог
+ * отчётов `reports` приходил агенту как аккаунт «no_credentials», то есть ядро
+ * сообщало о профиле, которого нет.
+ */
+const RESERVED_DIRS = new Set(['audit', 'reports', 'index', 'cache', 'tmp']);
+
 export async function listProfiles(): Promise<string[]> {
   try {
     const entries = await readdir(profilesRoot(), { withFileTypes: true });
-    return entries
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name)
-      .sort();
+    const dirs = entries.filter((e) => e.isDirectory() && !RESERVED_DIRS.has(e.name));
+    // Профиль — каталог, в котором есть креды или токен. Пустая папка профилем не
+    // считается: иначе любой каталог рядом становится «аккаунтом».
+    const checked = await Promise.all(
+      dirs.map(async (dir) => {
+        const path = join(profilesRoot(), dir.name);
+        const hasAny =
+          (await exists(join(path, 'credentials.json'))) ||
+          (await exists(join(path, 'token.json')));
+        return hasAny ? dir.name : null;
+      }),
+    );
+    return checked.filter((name): name is string => name !== null).sort();
   } catch {
     return [];
   }

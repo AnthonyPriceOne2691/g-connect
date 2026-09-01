@@ -98,10 +98,10 @@
     },
     {
       "id": "undo.revision-guard",
-      "title": "Откат не выполняется, если после записи документ правили",
+      "title": "Откат не выполняется, если записанные нами ячейки изменили после записи",
       "kind": "deny",
       "enforced_in": "src/core/undo.ts (assertSafeToUndo)",
-      "probe": "undo при сдвинувшейся ревизии → revision_conflict, ни одной записи не сделано"
+      "probe": "undo при изменённой нашей ячейке → revision_conflict, ни одной записи не сделано"
     },
     {
       "id": "scan.max-files",

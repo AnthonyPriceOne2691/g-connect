@@ -20,7 +20,7 @@ import {
   serverInstructions,
   type ToolDeps,
 } from '../src/mcp/tools.js';
-import { FakeSheetsClient, snapshot } from './fixtures/sheet.js';
+import { FakeSheetsClient, MutableSheetsClient, snapshot } from './fixtures/sheet.js';
 
 const SHEET_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
 
@@ -54,7 +54,8 @@ const harness = (over: Partial<ToolDeps> = {}): Harness => {
   const deps: ToolDeps = {
     account: 'default',
     sheets: () => Promise.resolve(client),
-    drive: () => Promise.resolve({ search: () => Promise.resolve([]) }),
+    drive: () =>
+      Promise.resolve({ search: () => Promise.resolve({ files: [], incompleteBecause: [] }) }),
     registry: () => Promise.resolve(registry),
     journal: async (record) => {
       journalled.push(record);
@@ -286,7 +287,10 @@ describe('gc_read — карта как первый шаг', () => {
 
 describe('gc_undo через инструмент', () => {
   it('откат после записи возвращает значения и сообщает, что откатил', async () => {
-    const { deps, journalled } = harness();
+    // Изменяемый клиент обязателен: сверка отката смотрит на ЖИВЫЕ значения ячеек,
+    // а фейк записи не применяет — с ним любая проверка выглядела бы как чужая правка.
+    const applied = new MutableSheetsClient(snapshot());
+    const { deps, journalled } = harness({ sheets: () => Promise.resolve(applied) });
     await runTool(
       gcApply,
       {

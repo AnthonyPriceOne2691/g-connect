@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   listProfiles,
+  profilesRoot,
   missingScopes,
   profileDir,
   profileStatus,
@@ -125,6 +126,16 @@ describe('профили', () => {
     await writeCredentials('default');
     await writeCredentials('work');
     expect(await listProfiles()).toEqual(['default', 'work']);
+  });
+
+  it('служебные каталоги и пустые папки аккаунтами не считаются', async () => {
+    await writeCredentials('default');
+    // Каталоги отчётов и аудита лежат рядом с профилями — и раньше каталог `reports`
+    // приходил агенту как аккаунт «no_credentials» (нашла живая проба).
+    await mkdir(join(profilesRoot(), 'reports'), { recursive: true });
+    await mkdir(join(profilesRoot(), 'audit'), { recursive: true });
+    await mkdir(join(profilesRoot(), 'пустой'), { recursive: true });
+    expect(await listProfiles()).toEqual(['default']);
   });
 
   it('missingScopes называет ровно недостающие права', async () => {

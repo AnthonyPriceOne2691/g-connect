@@ -200,24 +200,6 @@ describe('B9 — откат возвращает значения', () => {
 });
 
 describe('B10 — откат при чужих правках', () => {
-  it('ревизия сдвинулась после записи → revision_conflict, откат не выполнен', async () => {
-    const client = new FakeSheetsClient();
-    await expect(
-      undoLast(
-        client,
-        'SHEET1',
-        { recent: () => Promise.resolve([record()]) },
-        {
-          currentRevision: 'rev-99',
-          journal: noopJournal,
-        },
-      ),
-    ).rejects.toMatchObject({
-      payload: { code: 'revision_conflict', cause: 'revision_moved_after_write' },
-    });
-    expect(client.writes).toHaveLength(0);
-  });
-
   it('с явным force человек берёт ответственность — откат идёт', async () => {
     const client = new FakeSheetsClient();
     const outcome = await undoLast(

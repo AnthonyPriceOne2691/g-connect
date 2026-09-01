@@ -12,15 +12,15 @@
 
 import { gcError, newCorrelationId } from './errors.js';
 import { lastUndoable, type JournalSink, type JournalSource, type WriteRecord } from './journal.js';
-import type { SheetsClient } from './sheets/types.js';
+import type { CellValue, SheetsClient, SheetSnapshot } from './sheets/types.js';
 
 export interface UndoOptions {
   readonly account?: string;
   /** Сколько последних записей откатить. Больше одной — редкий случай, но он законен. */
   readonly last?: number;
-  /** Ревизия таблицы сейчас: если не совпала с той, что была после записи, откат опасен. */
+  /** Ревизия сейчас — только для записи в журнал; решение об откате принимается по ячейкам. */
   readonly currentRevision?: string | null;
-  /** Откатить, даже если документ правили после записи. Только по явному решению человека. */
+  /** Откатить, даже если наши ячейки изменили. Только по явному решению человека. */
   readonly force?: boolean;
   readonly journal?: JournalSink;
 }
@@ -37,22 +37,57 @@ export interface UndoOutcome {
   readonly at: string | null;
 }
 
+/** `Лист1!D3` → лист и индексы. Нужен, чтобы сверить именно наши ячейки. */
+export function parseA1(a1: string): { sheet: string; row: number; column: number } | null {
+  const match = /^(.+)!([A-Z]+)(\d+)$/.exec(a1);
+  if (match === null) return null;
+  const letters = match[2] ?? '';
+  let column = 0;
+  for (const ch of letters) column = column * 26 + (ch.charCodeAt(0) - 64);
+  return { sheet: match[1] ?? '', row: Number(match[3]), column: column - 1 };
+}
+
+function valueAt(
+  snapshot: { sheets: readonly SheetSnapshot[] },
+  a1: string,
+): CellValue | undefined {
+  const parsed = parseA1(a1);
+  if (parsed === null) return undefined;
+  const sheet = snapshot.sheets.find((s) => s.title === parsed.sheet);
+  return sheet?.rows[parsed.row - 1]?.[parsed.column]?.value ?? null;
+}
+
+const same = (a: CellValue | undefined, b: CellValue | undefined): boolean =>
+  String(a ?? '').trim() === String(b ?? '').trim();
+
 /**
- * Ревизия после записи и ревизия сейчас должны совпадать. Расхождение значит, что
- * документ трогали после нас — и тогда решение принимает человек, а не ядро.
+ * Безопасен ли откат. Сверяем НАШИ ячейки, а не версию файла.
+ *
+ * Почему не версия: `version` Drive растёт и от нашей же записи (замерено: 16 → 17 → 18
+ * за один цикл), поэтому равенство версий почти никогда не выполнялось, и откат
+ * отказывал всегда — гейт, который срабатывает на всём, бесполезен так же, как гейт,
+ * который не срабатывает никогда. Содержательный вопрос другой: изменил ли кто-то то,
+ * что мы записали. На него и отвечаем.
  */
-function assertSafeToUndo(record: WriteRecord, options: UndoOptions): void {
+async function assertSafeToUndo(
+  client: SheetsClient,
+  targetId: string,
+  record: WriteRecord,
+  options: UndoOptions,
+): Promise<void> {
   if (options.force === true) return;
-  const then = record.revisionAfter;
-  const now = options.currentRevision;
-  if (then === null || now === null || now === undefined) return;
-  if (then === now) return;
-  throw gcError('revision_conflict', {
-    detail:
-      `После этой записи таблицу правили (ревизия была ${then}, стала ${now}). ` +
-      'Откат перетрёт чужие правки, поэтому не выполнен: перечитай документ и реши, что вернуть.',
-    cause: 'revision_moved_after_write',
-  });
+  const snapshot = await client.getSpreadsheet(targetId, { sheet: record.sheet });
+  for (const change of record.changes) {
+    const current = valueAt(snapshot, change.a1);
+    if (same(current, change.after)) continue;
+    throw gcError('revision_conflict', {
+      detail:
+        `Ячейку ${change.a1} (${change.column}) после записи изменили: мы записали ` +
+        `«${String(change.after ?? '')}», сейчас там «${String(current ?? '')}». Откат перетёр бы ` +
+        'чужую правку, поэтому не выполнен: перечитай документ и реши, что вернуть.',
+      cause: 'cell_changed_after_write',
+    });
+  }
 }
 
 export async function undoLast(
@@ -68,7 +103,7 @@ export async function undoLast(
   if (record === null) {
     return { status: 'nothing_to_undo', restored: [], undoneCorrelationId: null, at: null };
   }
-  assertSafeToUndo(record, options);
+  await assertSafeToUndo(client, targetId, record, options);
 
   const restored: { a1: string; column: string; value: string | number | boolean | null }[] = [];
   // В обратном порядке: если одна операция трогала ячейку дважды, вернуть надо
