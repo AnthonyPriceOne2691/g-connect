@@ -541,7 +541,10 @@ describe('инварианты карты, резолвера и записи', 
               dryRun: false,
             },
           );
-          expect(first.status).toBe('ok');
+          // Генератор может выдать ровно то, что в фикстуре уже стоит (Часы 2, «в работе») —
+          // тогда первая запись сама ничего не меняет. До разбора живого прогона B13 такой
+          // случай возвращал `ok` без строки журнала, и этот тест его же и закреплял.
+          expect(['ok', 'no_change']).toContain(first.status);
 
           const second = await upsertRow(
             client,
@@ -553,6 +556,8 @@ describe('инварианты карты, резолвера и записи', 
             },
           );
           expect(second.changes).toHaveLength(0);
+          // Второй прогон обязан назвать себя: «ничего не изменилось», а не «записано».
+          expect(second.status).toBe('no_change');
 
           // И строк по-прежнему две: правили, а не добавляли.
           expect(buildSheetMap(await client.getSpreadsheet()).dataRowCount).toBe(2);

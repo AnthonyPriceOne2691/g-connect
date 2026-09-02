@@ -1,6 +1,6 @@
 /** Примеры B1, B2, B5, B6, B7, B8 спеки фазы 2: набор инструментов и граница ошибок. */
 
-import { mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { WriteRecord } from '../src/core/journal.js';
 import { noopJournal } from '../src/core/journal.js';
+import { profileDir } from '../src/core/profiles.js';
 import type { Registry } from '../src/core/targets.js';
 import {
   EXPECTED_TOOL_COUNT,
@@ -20,7 +21,13 @@ import {
   serverInstructions,
   type ToolDeps,
 } from '../src/mcp/tools.js';
-import { FakeSheetsClient, MutableSheetsClient, snapshot } from './fixtures/sheet.js';
+import {
+  FakeSheetsClient,
+  MutableSheetsClient,
+  instructionSheet,
+  reportSheet,
+  snapshot,
+} from './fixtures/sheet.js';
 
 const SHEET_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
 
@@ -314,10 +321,13 @@ describe('gc_undo через инструмент', () => {
     const { deps } = harness({ journalSource: { recent: () => Promise.resolve([]) } });
     const data = (await runTool(gcUndo, { target: 'log' }, deps)).data as {
       status: string;
+      reason?: string;
       hint?: string;
     };
     expect(data.status).toBe('nothing_to_undo');
-    expect(data.hint).toContain('откатывать нечего');
+    expect(data.hint?.toLowerCase()).toContain('откатывать нечего');
+    // Причина обязательна: без неё модель её выдумывает (живой прогон B13).
+    expect(data.reason).toBe('journal_empty');
   });
 
   it('откат по read-only цели запрещён', async () => {
@@ -343,5 +353,129 @@ describe('noopJournal не мешает', () => {
     );
     expect((result.data as { status: string }).status).toBe('ok');
     expect(client.writes).toHaveLength(1);
+  });
+});
+
+/** Оракулы на дефекты живого прогона B13 в Cursor (2026-09-02). */
+describe('живой прогон B13 — что он нашёл', () => {
+  it('gc_targets не отдаёт expiresAt: агент читал его как «срок входа истёк»', async () => {
+    // Профиль нужен настоящий, иначе accounts пуст и оракул проходит вхолостую.
+    await mkdir(profileDir('default'), { recursive: true });
+    await writeFile(
+      join(profileDir('default'), 'credentials.json'),
+      JSON.stringify({ web: { client_id: 'id', client_secret: 's', redirect_uris: ['http://x'] } }),
+    );
+    const { deps } = harness();
+    const data = (await runTool(gcTargets, {}, deps)).data as {
+      accounts: { account: string; state: string }[];
+    };
+    expect(data.accounts).toHaveLength(1);
+    expect(data.accounts[0]?.state).toBeTypeOf('string');
+    expect(JSON.stringify(data)).not.toContain('expiresAt');
+  });
+
+  it('gc_apply на «значение уже такое» не выглядит выполненной записью', async () => {
+    const { deps, client, journalled } = harness();
+    const result = await runTool(
+      gcApply,
+      {
+        target: 'log',
+        op: 'upsertRow',
+        key: { Проект: 'G connect' },
+        values: { Статус: 'в работе' },
+        dryRun: false,
+      },
+      deps,
+    );
+    expect(result.ok).toBe(true);
+    const data = result.data as { status: string; hint?: string };
+    expect(data.status).toBe('no_change');
+    expect(data.hint).toContain('не выдавай');
+    expect(client.writes).toHaveLength(0);
+    expect(journalled).toHaveLength(0);
+  });
+
+  it('лист и шапка берутся из реестра, когда вызов их не задал', async () => {
+    // Книга как у владельца: первым листом идёт «Инструкция», рабочий лист — второй.
+    const book = () =>
+      Promise.resolve(new FakeSheetsClient(snapshot([instructionSheet(), reportSheet()])));
+    const withSheet: Registry = {
+      targets: [
+        { alias: 'log', id: SHEET_ID, type: 'sheet', allow: 'write', sheet: 'Лист1', headerRow: 2 },
+      ],
+    };
+
+    const fromRegistry = (
+      await runTool(
+        gcRead,
+        { target: 'log' },
+        harness({ sheets: book, registry: () => Promise.resolve(withSheet) }).deps,
+      )
+    ).data as { sheet: string; headerRow: number };
+    expect(fromRegistry.sheet).toBe('Лист1');
+    expect(fromRegistry.headerRow).toBe(2);
+
+    // Явный аргумент вызова старше реестра.
+    const explicit = (
+      await runTool(
+        gcRead,
+        { target: 'log', sheet: 'Инструкция' },
+        harness({ sheets: book, registry: () => Promise.resolve(withSheet) }).deps,
+      )
+    ).data as { sheet: string };
+    expect(explicit.sheet).toBe('Инструкция');
+
+    // Без листа в реестре остаётся прежнее поведение — первый лист книги.
+    const noDefault: Registry = { targets: [{ alias: 'log', id: SHEET_ID, type: 'sheet' }] };
+    const first = (
+      await runTool(
+        gcRead,
+        { target: 'log' },
+        harness({ sheets: book, registry: () => Promise.resolve(noDefault) }).deps,
+      )
+    ).data as { sheet: string };
+    expect(first.sheet).toBe('Инструкция');
+  });
+
+  it('gc_apply тоже уважает лист из реестра: план не уходит на чужой лист', async () => {
+    const withSheet: Registry = {
+      targets: [
+        {
+          alias: 'log',
+          id: SHEET_ID,
+          type: 'sheet',
+          allow: 'write',
+          sheet: 'Лист1',
+          headerRow: 2,
+          key: ['Проект'],
+        },
+      ],
+    };
+    const { deps } = harness({
+      sheets: () =>
+        Promise.resolve(new FakeSheetsClient(snapshot([instructionSheet(), reportSheet()]))),
+      registry: () => Promise.resolve(withSheet),
+    });
+    const result = await runTool(
+      gcApply,
+      { target: 'log', op: 'upsertRow', key: { Проект: 'G connect' }, values: { Часы: 4 } },
+      deps,
+    );
+    const data = result.data as {
+      status: string;
+      changes: { a1: string }[];
+      target: { sheet?: string };
+    };
+    expect(data.status).toBe('preview');
+    expect(data.changes[0]?.a1).toContain('Лист1!');
+  });
+
+  it('gc_undo не утверждает «журнал пуст», а называет причину из ядра', async () => {
+    const { deps } = harness();
+    const result = await runTool(gcUndo, { target: 'log' }, deps);
+    const data = result.data as { status: string; reason?: string; hint?: string };
+    expect(data.status).toBe('nothing_to_undo');
+    expect(data.reason).toBe('journal_empty');
+    expect(data.hint).toContain('журнала нет');
   });
 });

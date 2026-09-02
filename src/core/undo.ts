@@ -28,6 +28,13 @@ export interface UndoOptions {
   readonly journal?: JournalSink;
 }
 
+/**
+ * Почему откатывать нечего. Три разных состояния раньше выглядели снаружи одинаково,
+ * и модель дописывала причину сама: в живом прогоне B13 она сказала «журнал пуст»,
+ * когда в журнале лежали четыре строки, просто все записи были уже откачены.
+ */
+export type NothingToUndoReason = 'journal_empty' | 'all_undone' | 'id_not_found';
+
 export interface UndoOutcome {
   readonly status: 'ok' | 'nothing_to_undo';
   /** Что вернули: те же ячейки, но значения из снимка «до». */
@@ -38,6 +45,36 @@ export interface UndoOutcome {
   }[];
   readonly undoneCorrelationId: string | null;
   readonly at: string | null;
+  /** Заполнено только при `nothing_to_undo`. */
+  readonly reason?: NothingToUndoReason;
+  /** Причина человеческим текстом — её показывают, а не ветвят. */
+  readonly detail?: string;
+}
+
+function reasonFor(history: readonly WriteRecord[], options: UndoOptions): NothingToUndoReason {
+  if (options.correlationId !== undefined) return 'id_not_found';
+  return history.length === 0 ? 'journal_empty' : 'all_undone';
+}
+
+function nothingToUndo(
+  reason: NothingToUndoReason,
+  seen: number,
+  correlationId: string | undefined,
+): UndoOutcome {
+  const detail =
+    reason === 'journal_empty'
+      ? 'По этой цели журнала нет: ни одной записи через ядро не проходило.'
+      : reason === 'all_undone'
+        ? `В журнале по этой цели записей: ${seen}, и все уже откачены — возвращать нечего.`
+        : `Записи с id ${correlationId ?? '—'} среди последних ${seen} по этой цели нет.`;
+  return {
+    status: 'nothing_to_undo',
+    restored: [],
+    undoneCorrelationId: null,
+    at: null,
+    reason,
+    detail,
+  };
 }
 
 /** `Лист1!D3` → лист и индексы. Нужен, чтобы сверить именно наши ячейки. */
@@ -130,7 +167,7 @@ export async function undoLast(
       : (history.find((r) => r.correlationId === options.correlationId) ?? null);
 
   if (record === null) {
-    return { status: 'nothing_to_undo', restored: [], undoneCorrelationId: null, at: null };
+    return nothingToUndo(reasonFor(history, options), history.length, options.correlationId);
   }
   assertRecent(record, options);
   await assertSafeToUndo(client, targetId, record, options);

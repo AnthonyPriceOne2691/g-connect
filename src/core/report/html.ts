@@ -118,7 +118,9 @@ export function renderPreview(outcome: ApplyOutcome, meta: PreviewMeta): string 
       ? 'План: ничего ещё не записано'
       : outcome.status === 'ok'
         ? 'Записано'
-        : 'Нужен ответ человека';
+        : outcome.status === 'no_change'
+          ? 'Без изменений: значения уже такие, записи не было'
+          : 'Нужен ответ человека';
 
   return `<!doctype html>
 <html lang="ru"><head><meta charset="utf-8">
