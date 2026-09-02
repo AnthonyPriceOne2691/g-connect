@@ -108,6 +108,10 @@ pre-push, `quality.yml` из 8 шагов, `contour_doctor` DEAD 0, мутаци
   печатает `incompleteBecause`.
 - **macOS даёт bash 3.2:** ни `mapfile`, ни ассоциативных массивов — `check_grep_gate_ts.sh`
   написан портируемо.
+- **Новый файл на языке вне масок гейтов — ложь контура.** `scripts/probe_mcp.mjs` не
+  видел ни один гейт (маска длины была `*.ts *.py`), CI на main покраснел на
+  `contour_doctor`: DEAD 1. Маски задаются env в `.pre-commit-config.yaml`
+  (`LINT_LENGTH_GLOBS`), доктор это и проверяет — добавил `*.mjs`.
 - **Коммит проверять по `git log`, а не по числу строк «Passed»**: хуки печатают успех
   своих шагов, а сам коммит при этом может не пройти.
 - Секреты только в `~/.gconnect/<account>/` с правами 600. В `.gitignore` есть маска

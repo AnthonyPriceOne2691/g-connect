@@ -72,7 +72,10 @@ repos:
         name: длина файлов под контролем
         language: system
         pass_filenames: false
-        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && LINT_LENGTH_GLOBS="*.ts *.py" MAX_LINES_PROD=500 MAX_LINES_TESTS=1000 bash scripts/lint/check_file_length.sh'
+        # `*.mjs` в маске не для красоты: `scripts/probe_mcp.mjs` (артефакт-оракул) не видел
+        # НИ ОДИН гейт, и contour_doctor назвал это ложью контура — роль объявлена закрытой,
+        # а файл вне всех масок. Появится второй .mjs — он тоже под контролем сразу.
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && LINT_LENGTH_GLOBS="*.ts *.py *.mjs" MAX_LINES_PROD=500 MAX_LINES_TESTS=1000 bash scripts/lint/check_file_length.sh'
 
       - id: jscpd-dry-gate
         name: копипаст не растёт
