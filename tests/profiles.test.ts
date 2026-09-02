@@ -1,9 +1,10 @@
-import { mkdtemp, mkdir, writeFile, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { profilesHome } from '../src/core/env.js';
 import {
   listProfiles,
   profilesRoot,
@@ -42,6 +43,46 @@ const writeCredentials = async (account = 'default'): Promise<void> => {
     }),
   );
 };
+
+describe('изоляция тестов от реального профиля', () => {
+  /**
+   * Оракул на дефект 2026-09-02: мутационный прогон сломал перенаправление `GCONNECT_HOME`,
+   * и тесты записали фикстуры в РЕАЛЬНЫЙ `~/.gconnect`, снеся токен и файл OAuth-клиента.
+   * Теперь отсутствие переменной под тест-раннером — отказ, а не путь в домашний каталог.
+   */
+  it('без GCONNECT_HOME под тест-раннером profilesHome отказывает, а не идёт в ~/.gconnect', () => {
+    const saved = process.env['GCONNECT_HOME'];
+    delete process.env['GCONNECT_HOME'];
+    try {
+      let thrown: { payload: { cause?: string; detail?: string } } | null = null;
+      try {
+        profilesHome();
+      } catch (error) {
+        thrown = error as { payload: { cause?: string; detail?: string } };
+      }
+      expect(
+        thrown,
+        'без GCONNECT_HOME путь в реальный профиль обязан быть отказом',
+      ).not.toBeNull();
+      expect(thrown?.payload.cause).toBe('test_home_not_isolated');
+      expect(thrown?.payload.detail).toContain('GCONNECT_HOME');
+    } finally {
+      if (saved !== undefined) process.env['GCONNECT_HOME'] = saved;
+    }
+  });
+
+  it('env.ts исключён из области мутаций, и причина записана в конфиге', async () => {
+    const config = JSON.parse(await readFile('stryker.config.json', 'utf8')) as {
+      mutate: string[];
+      _comment: string;
+    };
+    // Мутант в модуле изоляции превращает сьют в разрушительный инструмент: мутировать
+    // его нельзя, и снять исключение молча тоже — эта проба покраснеет.
+    expect(config.mutate).toContain('!src/core/env.ts');
+    expect(config._comment).toMatch(/env\.ts/);
+    expect(config._comment).toMatch(/~\/\.gconnect|реальный/);
+  });
+});
 
 describe('профили', () => {
   // Пример A12 спеки: нет профиля → внятная ошибка с действием, а не ENOENT.

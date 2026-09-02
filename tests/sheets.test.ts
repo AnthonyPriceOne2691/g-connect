@@ -5,9 +5,14 @@ import { describe, expect, it } from 'vitest';
 import { buildSheetData, buildSheetMap, detectHeaderRow } from '../src/core/sheets/map.js';
 import { appendRow, setCells, upsertRow } from '../src/core/sheets/rows.js';
 import type { WriteRecord } from '../src/core/journal.js';
+import type { CellValue, SpreadsheetSnapshot } from '../src/core/sheets/types.js';
 import {
-  FakeSheetsClient,
+  MutableSheetsClient,
+  appendConfirmed,
   formulaSheet,
+  setCellsConfirmed,
+  upsertConfirmed,
+  FakeSheetsClient,
   instructionSheet,
   snapshot,
   twoDatesSheet,
@@ -68,7 +73,7 @@ describe('A1 — карта листа', () => {
 describe('A2, A3 — upsert правит строку, а не плодит дубликаты', () => {
   it('A2: существующий ключ → одна правка D3, новых строк нет', async () => {
     const client = new FakeSheetsClient();
-    const outcome = await upsertRow(
+    const outcome = await upsertConfirmed(
       client,
       data(),
       { Дата: '2026-09-01', Проект: 'G connect' },
@@ -84,7 +89,7 @@ describe('A2, A3 — upsert правит строку, а не плодит ду
 
   it('A3: нового ключа нет → добавляется строка 5', async () => {
     const client = new FakeSheetsClient();
-    const outcome = await upsertRow(
+    const outcome = await upsertConfirmed(
       client,
       data(),
       { Дата: '2026-09-02', Проект: 'G connect' },
@@ -190,7 +195,7 @@ describe('A5, A6 — неоднозначность и отсутствие сп
 
   it('A6: колонки нет → вопрос со полным списком, колонка не создана', async () => {
     const client = new FakeSheetsClient();
-    const outcome = await setCells(
+    const outcome = await setCellsConfirmed(
       client,
       data(),
       { Проект: 'G connect' },
@@ -307,7 +312,7 @@ describe('A10, A11 — блокировки и похожие ключи', () =>
 
   it('ревизия изменилась с момента чтения → revision_conflict, а не слепая запись', async () => {
     await expect(
-      upsertRow(
+      upsertConfirmed(
         new FakeSheetsClient(),
         data(),
         { Проект: 'G connect' },
@@ -332,13 +337,13 @@ describe('A10, A11 — блокировки и похожие ключи', () =>
       ]),
     );
     await expect(
-      upsertRow(new FakeSheetsClient(), many, { Проект: 'G connect' }, { Часы: 5 }),
+      upsertConfirmed(new FakeSheetsClient(), many, { Проект: 'G connect' }, { Часы: 5 }),
     ).rejects.toMatchObject({ payload: { code: 'ambiguous_target' } });
   });
 
   it('appendRow пишет дубликат осознанно — там это законно', async () => {
     const client = new FakeSheetsClient();
-    const outcome = await appendRow(
+    const outcome = await appendConfirmed(
       client,
       data(),
       { Дата: '2026-09-01', Проект: 'G connect', Часы: 2 },
@@ -469,7 +474,7 @@ describe('нулевое изменение — не выполненная за
     const client = new FakeSheetsClient();
     const journalled: WriteRecord[] = [];
     let revisionReads = 0;
-    const outcome = await upsertRow(
+    const outcome = await upsertConfirmed(
       client,
       data(),
       { Проект: 'G connect' },
@@ -492,5 +497,341 @@ describe('нулевое изменение — не выполненная за
     expect(journalled).toHaveLength(0);
     // Ни одного лишнего обращения к Google: ревизию после записи читать незачем.
     expect(revisionReads).toBe(0);
+  });
+});
+
+/**
+ * Предусловие записи (D-17, фаза 2.6): в ячейке всё ещё то, что показывало превью.
+ *
+ * План строится из снимка `data()`, а клиент перед записью отдаёт ДРУГОЙ снимок — так
+ * выглядит правка человеком между «покажи план» и «пиши».
+ */
+class AlteredClient extends FakeSheetsClient {
+  constructor(private readonly altered: () => SpreadsheetSnapshot) {
+    super();
+  }
+  override async getSpreadsheet(): Promise<SpreadsheetSnapshot> {
+    return this.altered();
+  }
+}
+
+const withRow = (index: number, cells: CellValue[]): SpreadsheetSnapshot => {
+  const s = snapshot();
+  const sheet = s.sheets[0]!;
+  const rows = sheet.rows.map((r) => [...r]);
+  rows[index] = cells.map((value) => ({ value }));
+  return { ...s, sheets: [{ ...sheet, rows }] };
+};
+
+type Thrown = { payload: { code: string; cause?: string; detail: string } };
+const thrown = async (run: Promise<unknown>): Promise<Thrown> =>
+  run.then(
+    () => {
+      throw new Error('ожидался отказ, а вызов прошёл');
+    },
+    (e: unknown) => e as Thrown,
+  );
+
+describe('запись не идёт на изменившееся значение', () => {
+  const statusChanged = () => withRow(2, ['2026-09-01', 'G connect', 'пауза', 2]);
+
+  it('превью отдаёт код плана и значения «до» по каждой ячейке', async () => {
+    const outcome = await upsertRow(
+      new FakeSheetsClient(),
+      data(),
+      { Проект: 'G connect' },
+      { Часы: 4 },
+      { now: NOW, aliases },
+    );
+    expect(outcome.status).toBe('preview');
+    expect(outcome.planId).toMatch(/^[0-9a-f]{6}$/);
+    expect(outcome.changes[0]?.before).toBe(2);
+  });
+
+  it('значение изменилось после превью → stale_value, ни одной записи', async () => {
+    const client = new AlteredClient(statusChanged);
+    const failure = await thrown(
+      upsertConfirmed(
+        client,
+        data(),
+        { Проект: 'G connect' },
+        { Статус: 'готово' },
+        {
+          now: NOW,
+          aliases,
+          dryRun: false,
+        },
+      ),
+    );
+    expect(failure.payload.code).toBe('stale_value');
+    expect(failure.payload.cause).toBe('value_changed_after_preview');
+    expect(client.writes).toHaveLength(0);
+  });
+
+  it('отказ называет ячейку, прежнее и текущее значение', async () => {
+    const failure = await thrown(
+      upsertConfirmed(
+        new AlteredClient(statusChanged),
+        data(),
+        { Проект: 'G connect' },
+        { Статус: 'готово' },
+        {
+          now: NOW,
+          aliases,
+          dryRun: false,
+        },
+      ),
+    );
+    expect(failure.payload.detail).toContain('Лист1!C3');
+    expect(failure.payload.detail).toContain('в работе');
+    expect(failure.payload.detail).toContain('пауза');
+  });
+
+  it('appendRow не затирает строку, которую занял кто-то другой между превью и записью', async () => {
+    const occupied = () => withRow(4, ['2026-09-02', 'чужая строка', null, 1]);
+    const client = new AlteredClient(occupied);
+    const failure = await thrown(
+      appendConfirmed(
+        client,
+        data(),
+        { Проект: 'новый', Часы: 1 },
+        { now: NOW, aliases, dryRun: false },
+      ),
+    );
+    expect(failure.payload.code).toBe('stale_value');
+    expect(client.writes).toHaveLength(0);
+  });
+});
+
+/** Подтверждение как подпись (D-16): слайсы 2 и 3. */
+describe('запись идёт только по коду плана', () => {
+  const key = { Проект: 'G connect' };
+
+  it('B15 — без кода плана запись не проходит, и это отказ с действием', async () => {
+    const client = new FakeSheetsClient();
+    const failure = await thrown(
+      upsertRow(client, data(), key, { Часы: 7 }, { now: NOW, aliases, dryRun: false }),
+    );
+    expect(failure.payload.code).toBe('confirm_required');
+    expect(failure.payload.cause).toBe('write.plan-confirmation');
+    expect(client.writes).toHaveLength(0);
+  });
+
+  it('B16 — код от другого плана: записи нет, в ответе новый план и его код', async () => {
+    const client = new FakeSheetsClient();
+    const outcome = await upsertRow(
+      client,
+      data(),
+      key,
+      { Часы: 7 },
+      {
+        now: NOW,
+        aliases,
+        dryRun: false,
+        confirm: 'ffffff',
+      },
+    );
+    expect(outcome.status).toBe('plan_mismatch');
+    expect(outcome.planId).toMatch(/^[0-9a-f]{6}$/);
+    expect(outcome.planId).not.toBe('ffffff');
+    expect(outcome.changes).toHaveLength(1);
+    expect(outcome.notes.join(' ')).toContain('ffffff');
+    expect(client.writes).toHaveLength(0);
+  });
+
+  it('B19 — в журнал уходят ровно ячейки плана и его код', async () => {
+    const client = new FakeSheetsClient();
+    const journalled: WriteRecord[] = [];
+    const preview = await upsertRow(client, data(), key, { Часы: 7 }, { now: NOW, aliases });
+    const outcome = await upsertRow(
+      client,
+      data(),
+      key,
+      { Часы: 7 },
+      {
+        now: NOW,
+        aliases,
+        dryRun: false,
+        confirm: preview.planId ?? '',
+        journal: async (r) => {
+          journalled.push(r);
+        },
+      },
+    );
+    expect(outcome.status).toBe('ok');
+    expect(journalled[0]?.planId).toBe(preview.planId);
+    expect(journalled[0]?.changes.map((c) => c.a1)).toEqual(preview.changes.map((c) => c.a1));
+  });
+
+  it('B20 — тот же план второй раз: отказ, второй строки нет', async () => {
+    const client = new FakeSheetsClient();
+    const journalled: WriteRecord[] = [];
+    const options = {
+      now: NOW,
+      aliases,
+      journal: async (r: WriteRecord) => {
+        journalled.push(r);
+      },
+      journalSource: { recent: () => Promise.resolve(journalled) },
+    };
+    const preview = await appendRow(client, data(), { Проект: 'ещё один', Часы: 1 }, options);
+    const code = preview.planId ?? '';
+    const first = await appendRow(
+      client,
+      data(),
+      { Проект: 'ещё один', Часы: 1 },
+      {
+        ...options,
+        dryRun: false,
+        confirm: code,
+      },
+    );
+    expect(first.status).toBe('ok');
+    const failure = await thrown(
+      appendRow(
+        client,
+        data(),
+        { Проект: 'ещё один', Часы: 1 },
+        {
+          ...options,
+          dryRun: false,
+          confirm: code,
+        },
+      ),
+    );
+    expect(failure.payload.code).toBe('plan_already_applied');
+    expect(failure.payload.cause).toBe('write.plan-once');
+    // Записи ровно одна порция ячеек, второй строки нет.
+    expect(journalled).toHaveLength(1);
+  });
+
+  it('после откатa тот же план снова законен: повтор осознанного действия не запрещён', async () => {
+    const client = new FakeSheetsClient();
+    const journalled: WriteRecord[] = [
+      {
+        at: NOW.toISOString(),
+        account: 'default',
+        targetId: 'SHEET1',
+        alias: 'log',
+        sheet: 'Лист1',
+        op: 'upsertRow',
+        changes: [{ a1: 'Лист1!D3', column: 'Часы', before: 2, after: 7 }],
+        revisionBefore: 'rev-1',
+        revisionAfter: 'rev-2',
+        correlationId: 'gc-first',
+        planId: 'abc123',
+      },
+      {
+        at: NOW.toISOString(),
+        account: 'default',
+        targetId: 'SHEET1',
+        alias: 'log',
+        sheet: 'Лист1',
+        op: 'undo',
+        changes: [{ a1: 'Лист1!D3', column: 'Часы', before: 7, after: 2 }],
+        revisionBefore: 'rev-2',
+        revisionAfter: null,
+        correlationId: 'gc-undo',
+        undoOf: 'gc-first',
+        planId: 'abc123',
+      },
+    ];
+    const preview = await upsertRow(client, data(), key, { Часы: 7 }, { now: NOW, aliases });
+    const outcome = await upsertRow(
+      client,
+      data(),
+      key,
+      { Часы: 7 },
+      {
+        now: NOW,
+        aliases,
+        dryRun: false,
+        confirm: preview.planId ?? '',
+        journalSource: {
+          recent: () =>
+            Promise.resolve(journalled.map((r) => ({ ...r, planId: preview.planId ?? 'abc123' }))),
+        },
+      },
+    );
+    expect(outcome.status).toBe('ok');
+  });
+});
+
+/** B18: `force` перестаёт быть самоподтверждением модели. */
+describe('force работает только вместе с кодом плана', () => {
+  const formulaData = () => buildSheetData(snapshot([formulaSheet()]));
+  const write = { Итого: 42 };
+  const key = { Проект: 'G connect' };
+
+  it('без force запись в формульную колонку блокируется и в превью', async () => {
+    const failure = await thrown(upsertRow(new FakeSheetsClient(), formulaData(), key, write));
+    expect(failure.payload.code).toBe('write_blocked');
+  });
+
+  it('force без кода плана не проходит: модель не подтверждает сама за человека', async () => {
+    const client = new FakeSheetsClient(snapshot([formulaSheet()]));
+    const failure = await thrown(
+      upsertRow(client, formulaData(), key, write, { dryRun: false, force: true }),
+    );
+    expect(failure.payload.code).toBe('confirm_required');
+    expect(client.writes).toHaveLength(0);
+  });
+
+  it('force с кодом плана проходит, и код помнит, что план лез в формулы', async () => {
+    const client = new FakeSheetsClient(snapshot([formulaSheet()]));
+    const preview = await upsertRow(client, formulaData(), key, write, { force: true });
+    expect(preview.status).toBe('preview');
+    const outcome = await upsertRow(client, formulaData(), key, write, {
+      dryRun: false,
+      force: true,
+      confirm: preview.planId ?? '',
+    });
+    expect(outcome.status).toBe('ok');
+    expect(client.writes).toHaveLength(1);
+    // Тот же набор ячеек без пометки «формула» дал бы другой код — оракул в plan.test.ts.
+    expect(outcome.planId).toBe(preview.planId);
+  });
+});
+
+/**
+ * Порядок веток в `finish` закрепляем оракулом, а не оставляем случайным.
+ *
+ * Живой прогон 2026-09-02: второе «пиши» с тем же кодом дало `no_change`, а не
+ * `plan_already_applied` — потому что после первой записи значение уже целевое, и план
+ * пуст. Это верно: менять нечего, и говорить «план уже записан» было бы менее точно.
+ * `write.plan-once` остаётся достижимым там, где повтор ВСЁ ЕЩЁ меняет лист, — у
+ * `appendRow`, ради которого правило и написано.
+ */
+describe('повтор подтверждённой правки', () => {
+  it('тот же код на уже применённом значении даёт no_change, а не plan_already_applied', async () => {
+    const client = new MutableSheetsClient();
+    const journalled: WriteRecord[] = [];
+    const options = {
+      journal: async (r: WriteRecord) => {
+        journalled.push(r);
+      },
+      journalSource: { recent: () => Promise.resolve(journalled) },
+    };
+    const key = { Проект: 'G connect' };
+    const values = { Статус: 'готово' };
+    const first = await upsertConfirmed(
+      client,
+      buildSheetData(await client.getSpreadsheet()),
+      key,
+      values,
+      options,
+    );
+    expect(first.status).toBe('ok');
+
+    const again = await upsertRow(
+      client,
+      buildSheetData(await client.getSpreadsheet()),
+      key,
+      values,
+      { ...options, dryRun: false, confirm: first.planId ?? '' },
+    );
+    expect(again.status).toBe('no_change');
+    // Главное: второй записи нет — гарантия та же, что дало бы plan_already_applied.
+    expect(journalled).toHaveLength(1);
   });
 });

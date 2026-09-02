@@ -13,7 +13,8 @@
 import { gcError, newCorrelationId } from './errors.js';
 import { limitOf } from './policy.js';
 import { lastUndoable, type JournalSink, type JournalSource, type WriteRecord } from './journal.js';
-import type { CellValue, SheetsClient, SheetSnapshot } from './sheets/types.js';
+import { parseA1, sameCell, valueAt } from './sheets/a1.js';
+import type { SheetsClient } from './sheets/types.js';
 
 export interface UndoOptions {
   readonly account?: string;
@@ -77,28 +78,9 @@ function nothingToUndo(
   };
 }
 
-/** `Лист1!D3` → лист и индексы. Нужен, чтобы сверить именно наши ячейки. */
-export function parseA1(a1: string): { sheet: string; row: number; column: number } | null {
-  const match = /^(.+)!([A-Z]+)(\d+)$/.exec(a1);
-  if (match === null) return null;
-  const letters = match[2] ?? '';
-  let column = 0;
-  for (const ch of letters) column = column * 26 + (ch.charCodeAt(0) - 64);
-  return { sheet: match[1] ?? '', row: Number(match[3]), column: column - 1 };
-}
+export { parseA1 };
 
-function valueAt(
-  snapshot: { sheets: readonly SheetSnapshot[] },
-  a1: string,
-): CellValue | undefined {
-  const parsed = parseA1(a1);
-  if (parsed === null) return undefined;
-  const sheet = snapshot.sheets.find((s) => s.title === parsed.sheet);
-  return sheet?.rows[parsed.row - 1]?.[parsed.column]?.value ?? null;
-}
-
-const same = (a: CellValue | undefined, b: CellValue | undefined): boolean =>
-  String(a ?? '').trim() === String(b ?? '').trim();
+const same = sameCell;
 
 /**
  * Безопасен ли откат. Сверяем НАШИ ячейки, а не версию файла.
@@ -198,6 +180,9 @@ export async function undoLast(
     revisionAfter: null,
     correlationId: newCorrelationId(),
     undoOf: record.correlationId,
+    // Код плана откаченной записи: по нему видно, ЧТО именно вернули, и по нему же
+    // проверка однократности снова разрешает эту правку (B20, B21).
+    ...(record.planId === undefined ? {} : { planId: record.planId }),
   });
 
   return { status: 'ok', restored, undoneCorrelationId: record.correlationId, at: record.at };

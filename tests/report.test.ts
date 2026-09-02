@@ -39,9 +39,14 @@ const preview: ApplyOutcome = {
   questions: [],
   baseRevision: 'rev-1',
   revisionAfter: null,
+  planId: 'a1b2c3',
 };
 
 describe('B12 — HTML-превью', () => {
+  it('код плана виден человеку: им он и подтверждает запись', () => {
+    expect(renderPreview(preview, meta)).toContain('код плана a1b2c3');
+  });
+
   it('показывает было → станет по каждой ячейке', () => {
     const html = renderPreview(preview, meta);
     expect(html).toContain('Лист1!D3');
@@ -77,6 +82,7 @@ describe('B12 — HTML-превью', () => {
         ],
         baseRevision: null,
         revisionAfter: null,
+        planId: null,
       },
       meta,
     );

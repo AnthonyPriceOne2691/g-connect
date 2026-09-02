@@ -7,10 +7,10 @@
  */
 
 import { gcError } from '../errors.js';
+import { planId as planCode, type PlanShape, type PlanTouch } from '../plan.js';
 import { newCorrelationId } from '../errors.js';
-import type { JournalSink } from '../journal.js';
 import { assertChangeBudget } from '../policy.js';
-import { needsClarification, resolveColumn, type ResolveOptions } from '../resolver.js';
+import { needsClarification, resolveColumn } from '../resolver.js';
 import { normalizeValue } from '../values.js';
 import {
   columnLetter,
@@ -20,131 +20,124 @@ import {
   type SheetMap,
   type SheetsClient,
 } from './types.js';
+import { assertBeforeValues, assertPlanNotApplied, confirmationOutcome } from './write-guards.js';
+import {
+  NO_CHANGE_NOTE,
+  type OperationKind,
+  type ApplyOutcome,
+  type PlannedChange,
+  type Question,
+  type RowOptions,
+  type RowValues,
+} from './write-types.js';
 
-export type RowValues = Readonly<Record<string, unknown>>;
-
-export interface Question {
-  readonly field: string;
-  readonly reason:
-    'ambiguous' | 'no_match' | 'not_in_enum' | 'not_a_number' | 'not_a_date' | 'key_not_found';
-  readonly detail: string;
-  readonly candidates: readonly string[];
-  /** Полный список доступного — чтобы человек выбирал из того, что есть (§8.2). */
-  readonly available: readonly string[];
-}
-
-export interface PlannedChange {
-  readonly kind: 'set' | 'addRow';
-  readonly a1: string;
-  readonly column: string;
-  readonly before: CellValue;
-  readonly after: CellValue;
-}
-
-/**
- * Текст статуса `no_change`. Живёт константой: его читает человек, и он же проверяется
- * оракулом — «пустой результат объясняет причину» (§13.7).
- */
-export const NO_CHANGE_NOTE =
-  'Ничего не изменится: в целевых ячейках уже такие значения. ' +
-  'Записи не было и строки журнала тоже — это не выполненная правка.';
-
-export interface ApplyOutcome {
-  readonly status: 'ok' | 'preview' | 'no_change' | 'needs_clarification';
-  readonly changes: readonly PlannedChange[];
-  /** Ступень 4 резолвера: что именно мы поняли по-своему (§8.2). */
-  readonly assumptions: readonly string[];
-  /** Нормализации значений — «3ч» → 3, приведение регистра. */
-  readonly notes: readonly string[];
-  readonly questions: readonly Question[];
-  /**
-   * Ревизия, на которой построен план. Названа явно: поле `revisionId` в ответе на
-   * успешную запись читалось как «ревизия сейчас», а было «ревизия до» — агент, взявший
-   * его для следующего `expectRevision`, получал ложную проверку. Нашла живая проба.
-   */
-  readonly baseRevision: string | null;
-  /** Ревизия после записи; `null` для превью и когда её не читали. */
-  readonly revisionAfter: string | null;
-}
-
-export interface RowOptions extends ResolveOptions {
-  readonly dryRun?: boolean;
-  /** Куда писать в журнал. Не задан — записи не журналируются (превью и тесты). */
-  readonly journal?: JournalSink;
-  /** Имя профиля для журнала: в журнал уходит ИМЯ, не креды. */
-  readonly account?: string;
-  /** Алиас цели из реестра, если он есть — по нему потом читают историю глазами. */
-  readonly alias?: string | null;
-  /**
-   * Ревизия ПОСЛЕ записи. Отдельным колбэком, потому что API её не возвращает, а undo
-   * без неё не может отличить «после нас никто не трогал» от «трогали» (§10.3).
-   */
-  readonly readRevision?: () => Promise<string | null>;
-  readonly now?: Date;
-  /** Осознанное подтверждение записи в формульную/защищённую колонку (§8.1). */
-  readonly force?: boolean;
-  /** Ревизия, на которой строилась карта: защита от гонки с живой правкой (§3). */
-  readonly expectRevision?: string;
-}
+// Типы пишущего контура живут в `write-types.ts`, но исторический адрес импорта — этот
+// модуль: внешние вызовы (MCP-слой, CLI, тесты) берут их отсюда.
+export type {
+  ApplyOutcome,
+  PlannedChange,
+  Question,
+  RowOptions,
+  RowValues,
+} from './write-types.js';
+export { NO_CHANGE_NOTE } from './write-types.js';
 
 interface Prepared {
   readonly resolved: { column: ColumnProfile; value: CellValue }[];
   readonly assumptions: string[];
   readonly notes: string[];
   readonly questions: Question[];
+  /** Формульные и защищённые колонки в плане — уезжают в код плана (D-16). */
+  readonly touches: PlanTouch[];
 }
 
 const names = (map: SheetMap): readonly string[] => map.columns.map((c) => c.name);
 
-function prepare(map: SheetMap, values: RowValues, options: RowOptions): Prepared {
-  const out: Prepared = { resolved: [], assumptions: [], notes: [], questions: [] };
+/** Вопрос про колонку: ступени резолвера 5 и 6 (§8.2). Текст рядом с причиной. */
+function columnQuestion(
+  requested: string,
+  resolution: ReturnType<typeof resolveColumn>,
+  map: SheetMap,
+): Question {
+  return {
+    field: requested,
+    reason: resolution.step === 'ambiguous' ? 'ambiguous' : 'no_match',
+    detail:
+      resolution.step === 'ambiguous'
+        ? `«${requested}» подходит сразу нескольким колонкам — какую имел в виду?`
+        : `Колонки «${requested}» в листе «${map.sheet}» нет. Создавать её сама не буду.`,
+    candidates: resolution.candidates,
+    available: names(map),
+  };
+}
 
-  for (const [requested, raw] of Object.entries(values)) {
-    const resolution = resolveColumn(requested, map.columns, options);
-    if (needsClarification(resolution.step) || resolution.column === null) {
-      out.questions.push({
-        field: requested,
-        reason: resolution.step === 'ambiguous' ? 'ambiguous' : 'no_match',
-        detail:
-          resolution.step === 'ambiguous'
-            ? `«${requested}» подходит сразу нескольким колонкам — какую имел в виду?`
-            : `Колонки «${requested}» в листе «${map.sheet}» нет. Создавать её сама не буду.`,
-        candidates: resolution.candidates,
-        available: names(map),
-      });
-      continue;
-    }
-    if (resolution.assumption !== null) out.assumptions.push(resolution.assumption);
+/**
+ * Формульная и защищённая колонка: отметить в плане и не пустить без `force`.
+ *
+ * Отметка уезжает в код плана (D-16) — подтверждая код, человек подтверждает и то, что
+ * правка лезет в такую колонку. Раньше `force` был решением одной модели.
+ */
+function guardColumn(column: ColumnProfile, out: Prepared, options: RowOptions): void {
+  if (column.hasFormula && !out.touches.includes('formula')) out.touches.push('formula');
+  if (column.protected && !out.touches.includes('protected')) out.touches.push('protected');
+  if (!column.hasFormula && !column.protected) return;
+  if (options.force === true) return;
+  throw gcError('write_blocked', {
+    detail: column.hasFormula
+      ? `Колонка «${column.name}» содержит формулы — запись значения их затрёт.`
+      : `Колонка «${column.name}» в защищённом диапазоне.`,
+    cause: column.hasFormula ? 'formula_column' : 'protected_range',
+  });
+}
 
-    const column = resolution.column;
-    if ((column.hasFormula || column.protected) && options.force !== true) {
-      throw gcError('write_blocked', {
-        detail: column.hasFormula
-          ? `Колонка «${column.name}» содержит формулы — запись значения их затрёт.`
-          : `Колонка «${column.name}» в защищённом диапазоне.`,
-        cause: column.hasFormula ? 'formula_column' : 'protected_range',
-      });
-    }
-
-    const normalized = normalizeValue(
-      raw,
-      column,
-      options.now === undefined ? {} : { now: options.now },
-    );
-    if (normalized.status === 'clarify') {
-      out.questions.push({
-        field: column.name,
-        reason: normalized.reason,
-        detail: normalized.detail,
-        candidates: normalized.candidates,
-        available: normalized.candidates.length > 0 ? normalized.candidates : names(map),
-      });
-      continue;
-    }
-    if (normalized.note !== null) out.notes.push(normalized.note);
-    out.resolved.push({ column, value: normalized.value });
+/** Одно значение: колонка, отметки риска, нормализация. Возвращает вопрос, если нужен. */
+function prepareOne(
+  requested: string,
+  raw: unknown,
+  map: SheetMap,
+  out: Prepared,
+  options: RowOptions,
+): void {
+  const resolution = resolveColumn(requested, map.columns, options);
+  if (needsClarification(resolution.step) || resolution.column === null) {
+    out.questions.push(columnQuestion(requested, resolution, map));
+    return;
   }
+  if (resolution.assumption !== null) out.assumptions.push(resolution.assumption);
 
+  const column = resolution.column;
+  guardColumn(column, out, options);
+
+  const normalized = normalizeValue(
+    raw,
+    column,
+    options.now === undefined ? {} : { now: options.now },
+  );
+  if (normalized.status === 'clarify') {
+    out.questions.push({
+      field: column.name,
+      reason: normalized.reason,
+      detail: normalized.detail,
+      candidates: normalized.candidates,
+      available: normalized.candidates.length > 0 ? normalized.candidates : names(map),
+    });
+    return;
+  }
+  if (normalized.note !== null) out.notes.push(normalized.note);
+  out.resolved.push({ column, value: normalized.value });
+}
+
+function prepare(map: SheetMap, values: RowValues, options: RowOptions): Prepared {
+  const out: Prepared = {
+    resolved: [],
+    assumptions: [],
+    notes: [],
+    questions: [],
+    touches: [],
+  };
+  for (const [requested, raw] of Object.entries(values)) {
+    prepareOne(requested, raw, map, out, options);
+  }
   return out;
 }
 
@@ -205,6 +198,7 @@ const clarify = (questions: readonly Question[], map: SheetMap): ApplyOutcome =>
   questions,
   baseRevision: map.revisionId,
   revisionAfter: null,
+  planId: null,
 });
 
 async function writeCells(
@@ -221,26 +215,96 @@ async function writeCells(
  * Общий финал всех трёх операций: превью или запись. Был скопирован трижды —
  * гейт дублей (jscpd) это и нашёл, а вместе с копией уезжала бы и логика dryRun.
  */
+type Base = Omit<ApplyOutcome, 'status' | 'revisionAfter'>;
+
+/** План как данные: из него считается код (D-16) и с ним сверяется журнал (B19). */
+function planOf(
+  map: SheetMap,
+  changes: readonly PlannedChange[],
+  prepared: Prepared,
+  op: OperationKind,
+): PlanShape {
+  return {
+    targetId: map.spreadsheetId,
+    sheet: map.sheet,
+    op,
+    revision: map.revisionId,
+    cells: changes.map((c) => ({
+      a1: c.a1,
+      column: c.column,
+      before: c.before,
+      after: c.after,
+    })),
+    touches: prepared.touches,
+  };
+}
+
+/**
+ * Собственно запись: охранники, ячейки, ревизия, журнал.
+ *
+ * Отделено от `finish`, который остался диспетчером «вопрос / нулевое изменение / превью /
+ * запись»: гейт сложности отклонил их совместное житьё, и по делу — это разные вопросы.
+ */
+async function commit(
+  client: SheetsClient,
+  map: SheetMap,
+  changes: readonly PlannedChange[],
+  base: Base,
+  options: RowOptions,
+  op: OperationKind,
+): Promise<ApplyOutcome> {
+  const mismatch = confirmationOutcome(base, options);
+  if (mismatch !== null) return mismatch;
+  await assertPlanNotApplied(options, base.planId, map.spreadsheetId);
+  await assertBeforeValues(client, map, changes);
+  await writeCells(client, map, changes);
+  const revisionAfter = (await options.readRevision?.()) ?? null;
+
+  // Журнал пишется ПОСЛЕ успешной записи и до возврата: если журналирование упало,
+  // вызывающий обязан узнать об этом — «записали, но не знаем что» хуже отказа.
+  await options.journal?.({
+    at: new Date().toISOString(),
+    account: options.account ?? 'default',
+    targetId: map.spreadsheetId,
+    alias: options.alias ?? null,
+    sheet: map.sheet,
+    op,
+    changes: changes.map((c) => ({
+      a1: c.a1,
+      column: c.column,
+      before: c.before,
+      after: c.after,
+    })),
+    revisionBefore: map.revisionId,
+    revisionAfter,
+    correlationId: newCorrelationId(),
+    ...(base.planId === null ? {} : { planId: base.planId }),
+  });
+
+  return { status: 'ok', ...base, revisionAfter };
+}
+
 async function finish(
   client: SheetsClient,
   map: SheetMap,
   changes: readonly PlannedChange[],
   prepared: Prepared,
   options: RowOptions,
-  op: 'appendRow' | 'upsertRow' | 'setCells',
+  op: OperationKind,
 ): Promise<ApplyOutcome> {
   assertChangeBudget(changes.length);
-  const base = {
+  const base: Base = {
     changes,
     assumptions: prepared.assumptions,
     notes: prepared.notes,
     questions: [] as readonly Question[],
     baseRevision: map.revisionId,
+    planId: changes.length === 0 ? null : planCode(planOf(map, changes, prepared, op)),
   };
-  // Нулевое изменение — отдельный статус, а не «ok» и не пустое превью. Раньше
-  // `dryRun:false` на «значение уже такое» возвращал `ok` БЕЗ строки журнала: человек
-  // читал «готово» при пустом факте, а превью выглядело как обычный план без строк.
-  // Нашёл живой прогон B13 в Cursor 2026-09-02.
+
+  // Нулевое изменение — отдельный статус, а не «ok» и не пустое превью: раньше
+  // `dryRun:false` на «значение уже такое» возвращал `ok` БЕЗ строки журнала, и человек
+  // читал «готово» при пустом факте (живой прогон B13, 2026-09-02).
   if (changes.length === 0) {
     return {
       status: 'no_change',
@@ -249,35 +313,8 @@ async function finish(
       revisionAfter: null,
     };
   }
-
   if (options.dryRun !== false) return { status: 'preview', ...base, revisionAfter: null };
-
-  await writeCells(client, map, changes);
-  const revisionAfter = (await options.readRevision?.()) ?? null;
-
-  // Журнал пишется ПОСЛЕ успешной записи и до возврата: если журналирование упало,
-  // вызывающий обязан узнать об этом — «записали, но не знаем что» хуже отказа.
-  if (options.journal !== undefined && changes.length > 0) {
-    await options.journal({
-      at: new Date().toISOString(),
-      account: options.account ?? 'default',
-      targetId: map.spreadsheetId,
-      alias: options.alias ?? null,
-      sheet: map.sheet,
-      op,
-      changes: changes.map((c) => ({
-        a1: c.a1,
-        column: c.column,
-        before: c.before,
-        after: c.after,
-      })),
-      revisionBefore: map.revisionId,
-      revisionAfter,
-      correlationId: newCorrelationId(),
-    });
-  }
-
-  return { status: 'ok', ...base, revisionAfter };
+  return commit(client, map, changes, base, options, op);
 }
 
 /** Дописать строку в конец. Дубликаты допустимы — там, где они осмысленны (§5). */

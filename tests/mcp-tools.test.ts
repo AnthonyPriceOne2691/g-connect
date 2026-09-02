@@ -74,6 +74,20 @@ const harness = (over: Partial<ToolDeps> = {}): Harness => {
   return { deps, client, journalled };
 };
 
+/** Превью → код плана → запись через инструмент: подпись человека имитируется (D-16). */
+const applyConfirmed = async (
+  args: Record<string, unknown>,
+  deps: ToolDeps,
+): ReturnType<typeof runTool> => {
+  const preview = await runTool(gcApply, { ...args, dryRun: true }, deps);
+  const { planId } = preview.data as { planId: string | null };
+  return runTool(
+    gcApply,
+    { ...args, dryRun: false, ...(planId === null ? {} : { confirm: planId }) },
+    deps,
+  );
+};
+
 describe('B1 — набор инструментов', () => {
   it('ровно шесть, и это требование §3, а не совпадение', () => {
     expect(TOOLS).toHaveLength(EXPECTED_TOOL_COUNT);
@@ -138,7 +152,9 @@ describe('B4, B5 — превью по умолчанию и вопрос вме
     );
     const data = result.data as { status: string; hint?: string };
     expect(data.status).toBe('preview');
-    expect(data.hint).toContain('Покажи его человеку');
+    expect(data.hint).toContain('Покажи человеку');
+    // Подсказка обязана требовать код плана: без этого агент «подтвердит» сам за человека.
+    expect(data.hint).toContain('confirm');
     expect(client.writes).toHaveLength(0);
     expect(journalled).toHaveLength(0);
   });
@@ -162,15 +178,8 @@ describe('B4, B5 — превью по умолчанию и вопрос вме
 
   it('с dryRun=false пишет и журналирует', async () => {
     const { deps, client, journalled } = harness();
-    const result = await runTool(
-      gcApply,
-      {
-        op: 'upsertRow',
-        target: 'log',
-        key: { Проект: 'G connect' },
-        values: { Часы: 5 },
-        dryRun: false,
-      },
+    const result = await applyConfirmed(
+      { op: 'upsertRow', target: 'log', key: { Проект: 'G connect' }, values: { Часы: 5 } },
       deps,
     );
     expect((result.data as { status: string }).status).toBe('ok');
@@ -298,15 +307,8 @@ describe('gc_undo через инструмент', () => {
     // а фейк записи не применяет — с ним любая проверка выглядела бы как чужая правка.
     const applied = new MutableSheetsClient(snapshot());
     const { deps, journalled } = harness({ sheets: () => Promise.resolve(applied) });
-    await runTool(
-      gcApply,
-      {
-        op: 'upsertRow',
-        target: 'log',
-        key: { Проект: 'G connect' },
-        values: { Часы: 9 },
-        dryRun: false,
-      },
+    await applyConfirmed(
+      { op: 'upsertRow', target: 'log', key: { Проект: 'G connect' }, values: { Часы: 9 } },
       deps,
     );
     const result = await runTool(gcUndo, { target: 'log' }, deps);
@@ -340,15 +342,8 @@ describe('gc_undo через инструмент', () => {
 describe('noopJournal не мешает', () => {
   it('запись с noopJournal проходит и ничего не журналирует', async () => {
     const { deps, client } = harness({ journal: noopJournal });
-    const result = await runTool(
-      gcApply,
-      {
-        op: 'upsertRow',
-        target: 'log',
-        key: { Проект: 'G connect' },
-        values: { Часы: 3 },
-        dryRun: false,
-      },
+    const result = await applyConfirmed(
+      { op: 'upsertRow', target: 'log', key: { Проект: 'G connect' }, values: { Часы: 3 } },
       deps,
     );
     expect((result.data as { status: string }).status).toBe('ok');

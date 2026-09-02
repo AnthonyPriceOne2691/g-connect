@@ -120,7 +120,9 @@ export function renderPreview(outcome: ApplyOutcome, meta: PreviewMeta): string 
         ? 'Записано'
         : outcome.status === 'no_change'
           ? 'Без изменений: значения уже такие, записи не было'
-          : 'Нужен ответ человека';
+          : outcome.status === 'plan_mismatch'
+            ? 'Код не от этого плана: записи не было'
+            : 'Нужен ответ человека';
 
   return `<!doctype html>
 <html lang="ru"><head><meta charset="utf-8">
@@ -128,7 +130,9 @@ export function renderPreview(outcome: ApplyOutcome, meta: PreviewMeta): string 
 <title>${escapeHtml(meta.title)}</title><style>${STYLE}</style></head>
 <body><main>
   <h1>${escapeHtml(meta.title)}</h1>
-  <p class="meta">${escapeHtml(statusText)} · таблица «${escapeHtml(meta.spreadsheet)}»,
+  <p class="meta">${escapeHtml(statusText)}${
+    outcome.planId === null ? '' : ` · <strong>код плана ${escapeHtml(outcome.planId)}</strong>`
+  } · таблица «${escapeHtml(meta.spreadsheet)}»,
     лист «${escapeHtml(meta.sheet)}»${meta.alias === null ? '' : ` · цель «${escapeHtml(meta.alias)}»`}
     ${meta.revision === null ? '' : ` · ревизия ${escapeHtml(meta.revision)}`}</p>
   <div class="card">${changesTable(outcome.changes)}</div>

@@ -23,6 +23,7 @@ import { assertWritable, parseTargetUrl, resolveTarget } from '../src/core/targe
 import { undoLast } from '../src/core/undo.js';
 import { normalizeValue } from '../src/core/values.js';
 import {
+  upsertConfirmed,
   FakeSheetsClient,
   MutableSheetsClient,
   STATUS_VALUES,
@@ -357,7 +358,7 @@ describe('инвариант отката (§10)', () => {
 
           const rowsBefore = JSON.stringify(buildSheetData(await client.getSpreadsheet()).rows);
 
-          await upsertRow(
+          await upsertConfirmed(
             client,
             buildSheetData(await client.getSpreadsheet()),
             { Дата: '2026-09-01', Проект: 'G connect' },
@@ -532,7 +533,7 @@ describe('инварианты карты, резолвера и записи', 
           const key = { Дата: '2026-09-01', Проект: 'G connect' };
           const values = { Часы: hours, Статус: status };
 
-          const first = await upsertRow(
+          const first = await upsertConfirmed(
             client,
             buildSheetData(await client.getSpreadsheet()),
             key,
@@ -546,7 +547,7 @@ describe('инварианты карты, резолвера и записи', 
           // случай возвращал `ok` без строки журнала, и этот тест его же и закреплял.
           expect(['ok', 'no_change']).toContain(first.status);
 
-          const second = await upsertRow(
+          const second = await upsertConfirmed(
             client,
             buildSheetData(await client.getSpreadsheet()),
             key,

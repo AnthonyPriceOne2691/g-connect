@@ -6,7 +6,8 @@
  *
  *   npm run gc -- login
  *   npm run gc -- map <ссылка на таблицу> [имя листа]
- *   npm run gc -- upsert <ссылка> <лист> <ключ=значение,...> <поле=значение,...> [--write]
+ *   npm run gc -- upsert <ссылка> <лист> <ключ=значение,...> <поле=значение,...>
+ *                        [--write --confirm=<код плана>]
  */
 
 import { execFileSync } from 'node:child_process';
@@ -115,6 +116,7 @@ async function cmdUpsert(
   keyText: string,
   valueText: string,
   write: boolean,
+  confirm?: string,
 ): Promise<void> {
   const registry = await loadRegistry(ACCOUNT);
   const target = resolveTarget(ref, registry);
@@ -124,10 +126,18 @@ async function cmdUpsert(
   const data = buildSheetData(await api.getSpreadsheet(target.id, { sheet }), { sheet });
   const outcome = await upsertRow(api, data, pairs(keyText), pairs(valueText), {
     dryRun: !write,
+    ...(confirm === undefined ? {} : { confirm }),
     ...(target.entry?.aliases === undefined ? {} : { aliases: target.entry.aliases }),
   });
 
   console.log(`\nСтатус: ${outcome.status}`);
+  // Код плана печатаем и в CLI: без него `--write` теперь не проходит (D-16), а человек
+  // за терминалом — такой же человек, как в чате. Фаза 2.6 сначала сломала эту команду
+  // ровно потому, что кода тут было не передать.
+  if (outcome.planId !== null) {
+    console.log(`  код плана: ${outcome.planId}`);
+    if (!write) console.log(`  записать: тот же вызов с --write --confirm=${outcome.planId}`);
+  }
   for (const assumption of outcome.assumptions) console.log(`  допущение: ${assumption}`);
   for (const note of outcome.notes) console.log(`  значение: ${note}`);
   for (const question of outcome.questions) {
@@ -151,6 +161,7 @@ async function cmdUpsert(
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   const write = args.includes('--write');
+  const confirmFlag = args.find((a) => a.startsWith('--confirm='))?.slice('--confirm='.length);
   const rest = args.filter((a) => a !== '--write');
 
   switch (command) {
@@ -170,7 +181,7 @@ async function main(): Promise<void> {
             'Нужно: npm run gc -- upsert <ссылка> <лист> <ключ=знач,...> <поле=знач,...> [--write]',
         });
       }
-      await cmdUpsert(rest[0]!, rest[1]!, rest[2]!, rest[3]!, write);
+      await cmdUpsert(rest[0]!, rest[1]!, rest[2]!, rest[3]!, write, confirmFlag);
       return;
     case 'status': {
       const status = await profileStatus(ACCOUNT);
@@ -179,7 +190,8 @@ async function main(): Promise<void> {
     }
     default:
       console.log(
-        'Команды: login · status · map <ссылка> [лист] · upsert <ссылка> <лист> <ключ> <значения> [--write]',
+        'Команды: login · status · map <ссылка> [лист] · ' +
+          'upsert <ссылка> <лист> <ключ> <значения> [--write --confirm=<код>]',
       );
   }
 }

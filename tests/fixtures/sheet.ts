@@ -3,6 +3,8 @@
  * название отчёта в первой строке, шапка во второй.
  */
 
+import { appendRow, setCells, upsertRow } from '../../src/core/sheets/rows.js';
+import type { ApplyOutcome, RowOptions } from '../../src/core/sheets/rows.js';
 import type {
   CellValue,
   Cell,
@@ -205,3 +207,46 @@ export class MutableSheetsClient implements SheetsClient {
     throw new Error('не используется');
   }
 }
+
+/**
+ * Превью → код плана → запись: так работает человек (D-16), так же обязаны и тесты.
+ *
+ * Запись без кода плана теперь не проходит, и оракул, обходящий подтверждение, охранял бы
+ * контур, которого нет. Помощник берёт код из превью, построенного на том же снимке.
+ */
+export async function confirmedWrite(
+  run: (options: RowOptions) => Promise<ApplyOutcome>,
+  options: RowOptions = {},
+): Promise<ApplyOutcome> {
+  const preview = await run({ ...options, dryRun: true });
+  return run({
+    ...options,
+    dryRun: false,
+    ...(preview.planId === null ? {} : { confirm: preview.planId }),
+  });
+}
+
+/** Те же три операции, но через подтверждение кодом плана: подпись человека имитируется. */
+export const upsertConfirmed = (
+  client: SheetsClient,
+  data: Parameters<typeof upsertRow>[1],
+  key: Parameters<typeof upsertRow>[2],
+  values: Parameters<typeof upsertRow>[3],
+  options: RowOptions = {},
+): Promise<ApplyOutcome> => confirmedWrite((o) => upsertRow(client, data, key, values, o), options);
+
+export const appendConfirmed = (
+  client: SheetsClient,
+  data: Parameters<typeof appendRow>[1],
+  values: Parameters<typeof appendRow>[2],
+  options: RowOptions = {},
+): Promise<ApplyOutcome> => confirmedWrite((o) => appendRow(client, data, values, o), options);
+
+export const setCellsConfirmed = (
+  client: SheetsClient,
+  data: Parameters<typeof setCells>[1],
+  where: Parameters<typeof setCells>[2],
+  values: Parameters<typeof setCells>[3],
+  options: RowOptions = {},
+): Promise<ApplyOutcome> =>
+  confirmedWrite((o) => setCells(client, data, where, values, o), options);

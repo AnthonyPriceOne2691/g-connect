@@ -1,22 +1,26 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "_comment": "Мутационный гейт (CQG §3, роль «тесты действительно утверждают»). Область — модули, где живут решения: резолвер, значения, правила, журнал, откат, карта, строки. Адаптеры Google исключены: их шов проверяется тестом на ответ библиотеки, мутировать там нечего кроме маппинга.",
+  "_comment": "Мутационный гейт (CQG §3, роль «тесты действительно утверждают»). Область — маска, а не список: явный список молча устарел в фазе 2.6, и гейт не судил ни одной строки нового кода. ИСКЛЮЧЕНИЕ src/core/env.ts обязательно и не косметика: это единственный модуль, который отводит запись профилей в временный каталог через GCONNECT_HOME, и мутант, сломавший его, заставил тесты записать фикстуры в РЕАЛЬНЫЙ ~/.gconnect — снесло токен и файл OAuth-клиента владельца 2026-09-02. Мутировать модуль изоляции значит делать из сьюта разрушительный инструмент. Адаптеры Google исключены: их шов проверяется тестом на ответ библиотеки. Типы и каталоги данных исключены отдельно — мутировать литерал бессмысленно.",
   "packageManager": "npm",
   "testRunner": "vitest",
-  "reporters": ["clear-text", "progress"],
+  "reporters": [
+    "clear-text",
+    "progress"
+  ],
   "coverageAnalysis": "perTest",
   "mutate": [
-    "src/core/resolver.ts",
-    "src/core/values.ts",
-    "src/core/policy.ts",
-    "src/core/journal.ts",
-    "src/core/undo.ts",
-    "src/core/targets.ts",
-    "src/core/retry.ts",
-    "src/core/sheets/map.ts",
-    "src/core/sheets/rows.ts"
+    "src/core/**/*.ts",
+    "!src/core/google/**",
+    "!src/core/env.ts",
+    "!src/core/sheets/types.ts",
+    "!src/core/sheets/write-types.ts",
+    "!src/core/error-catalog.ts"
   ],
-  "thresholds": { "high": 80, "low": 60, "break": 50 },
+  "thresholds": {
+    "high": 80,
+    "low": 60,
+    "break": 50
+  },
   "timeoutMS": 20000,
   "concurrency": 4
 }

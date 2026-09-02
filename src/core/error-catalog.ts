@@ -21,6 +21,9 @@ export type ErrorCode =
   | 'policy_denied'
   | 'write_blocked'
   | 'revision_conflict'
+  | 'stale_value'
+  | 'confirm_required'
+  | 'plan_already_applied'
   | 'ambiguous_target'
   | 'bad_request'
   | 'internal';
@@ -132,6 +135,24 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, CatalogEntry>> = {
   },
   revision_conflict: {
     title: 'Документ изменился с момента чтения',
+    retryable: false,
+    action: 'reread_and_preview',
+    actionLabel: 'Перечитать и показать заново',
+  },
+  confirm_required: {
+    title: 'Запись требует кода плана',
+    retryable: false,
+    action: 'confirm_explicitly',
+    actionLabel: 'Показать план и подтвердить',
+  },
+  plan_already_applied: {
+    title: 'Этот план уже записан',
+    retryable: false,
+    action: 'reread_and_preview',
+    actionLabel: 'Перечитать и показать заново',
+  },
+  stale_value: {
+    title: 'Значение в ячейке изменилось после превью',
     retryable: false,
     action: 'reread_and_preview',
     actionLabel: 'Перечитать и показать заново',

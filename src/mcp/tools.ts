@@ -12,49 +12,19 @@
 
 import { z } from 'zod';
 
-import { gcError, isGcError, type GcErrorPayload } from '../core/errors.js';
-import type { DriveClient, SearchQuery } from '../core/google/drive.js';
-import type { JournalSink, JournalSource } from '../core/journal.js';
+import { gcError, isGcError } from '../core/errors.js';
+import type { SearchQuery } from '../core/google/drive.js';
 import { operationJsonSchema, parseOperation } from '../core/ops.js';
 import { limitOf, policyText, policyRules } from '../core/policy.js';
-import { renderPreview, writeReport } from '../core/report/html.js';
 import { listProfiles, profileStatus } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
 import { appendRow, setCells, upsertRow, type ApplyOutcome } from '../core/sheets/rows.js';
-import type { SheetsClient } from '../core/sheets/types.js';
-import {
-  assertWritable,
-  resolveTarget,
-  type Registry,
-  type RegistryEntry,
-} from '../core/targets.js';
+import { assertWritable, resolveTarget, type RegistryEntry } from '../core/targets.js';
 import { undoLast } from '../core/undo.js';
 
-export interface ToolDeps {
-  readonly account: string;
-  sheets(): Promise<SheetsClient>;
-  drive(): Promise<DriveClient>;
-  registry(): Promise<Registry>;
-  readonly journal: JournalSink;
-  readonly journalSource: JournalSource;
-  /** Ревизия таблицы сейчас — нужна журналу и откату (§10.3). */
-  revision(targetId: string): Promise<string | null>;
-}
-
-export interface ToolResult {
-  readonly ok: boolean;
-  readonly data?: unknown;
-  readonly error?: GcErrorPayload;
-}
-
-export interface ToolDefinition {
-  readonly name: string;
-  readonly title: string;
-  readonly description: string;
-  /** zod-форма входа: из неё же SDK собирает JSON-схему для `tools/list`. */
-  readonly input: z.ZodRawShape;
-  handle(args: Record<string, unknown>, deps: ToolDeps): Promise<unknown>;
-}
+export type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
+import type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
+import { applyHint, applyOptions, maybeReport } from './apply-support.js';
 
 const targetArg = z.string().min(1).describe('alias из реестра, ссылка на файл или его ID');
 
@@ -271,68 +241,6 @@ export const gcScan: ToolDefinition = {
   },
 };
 
-/** Опции записи из разобранной операции. Вынесено: в обработчике копило сложность. */
-function applyOptions(
-  deps: ToolDeps,
-  resolved: Awaited<ReturnType<typeof resolve>>,
-  operation: ReturnType<typeof parseOperation>,
-) {
-  return {
-    dryRun: operation.dryRun,
-    force: operation.force,
-    journal: deps.journal,
-    account: deps.account,
-    alias: resolved.alias,
-    readRevision: () => deps.revision(resolved.id),
-    ...(operation.expectRevision === undefined ? {} : { expectRevision: operation.expectRevision }),
-    ...(resolved.entry?.aliases === undefined ? {} : { aliases: resolved.entry.aliases }),
-  };
-}
-
-/** Что делать человеку дальше. Текст здесь, а не в обработчике: его читают, а не ветвят. */
-function applyHint(status: ApplyOutcome['status']): string | undefined {
-  if (status === 'preview') {
-    return 'Это план. Покажи его человеку; записывать — повторным вызовом с dryRun=false.';
-  }
-  if (status === 'no_change') {
-    return (
-      'Ничего не изменилось: значения уже такие, записи не было. Так и скажи человеку — ' +
-      'не выдавай это за выполненную правку.'
-    );
-  }
-  if (status === 'needs_clarification') {
-    return 'Спроси человека, выбрав из перечисленных вариантов. Не угадывай.';
-  }
-  return undefined;
-}
-
-/** Отчёт файлом, если попросили. Вынесено: ветка в обработчике поднимала сложность до 11. */
-async function maybeReport(
-  wanted: boolean,
-  outcome: ApplyOutcome,
-  meta: {
-    spreadsheet: string;
-    sheet: string;
-    alias: string | null;
-    revision: string | null;
-    op: string;
-  },
-): Promise<string | null> {
-  if (!wanted) return null;
-  const applied = outcome.status === 'ok';
-  const label = applied ? 'Записано' : outcome.status === 'no_change' ? 'Без изменений' : 'Превью';
-  return writeReport(
-    renderPreview(outcome, {
-      title: `${label}: ${meta.op}`,
-      spreadsheet: meta.spreadsheet,
-      sheet: meta.sheet,
-      alias: meta.alias,
-      revision: meta.revision,
-    }),
-    applied ? 'applied' : 'preview',
-  );
-}
-
 export const gcApply: ToolDefinition = {
   name: 'gc_apply',
   title: 'Записать в таблицу (по умолчанию — превью)',
@@ -353,7 +261,16 @@ export const gcApply: ToolDefinition = {
     values: z.record(z.string(), z.unknown()).describe('Имена колонок → значения'),
     dryRun: z.boolean().default(true),
     force: z.boolean().default(false),
-    expectRevision: z.string().min(1).optional(),
+    confirm: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Код плана из превью — им человек подтверждает ИМЕННО эту правку'),
+    expectRevision: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Ревизия для вызовов БЕЗ превью (CLI, раннер): у превью её несёт код плана'),
   },
   async handle(args, deps) {
     const operation = parseOperation(args);

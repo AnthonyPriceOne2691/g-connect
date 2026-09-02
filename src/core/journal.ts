@@ -26,6 +26,11 @@ export interface WriteRecord {
   readonly revisionBefore: string | null;
   readonly revisionAfter: string | null;
   readonly correlationId: string;
+  /**
+   * Код плана (D-16), которым человек подтвердил эту запись. По нему же ловится повторное
+   * «пиши»: тот же план дважды — не повтор, а вторая правка (B20).
+   */
+  readonly planId?: string;
   /** Для записи типа `undo` — correlationId той записи, которую откатили. */
   readonly undoOf?: string;
 }

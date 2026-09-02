@@ -17,7 +17,12 @@ import { lastUndoable, noopJournal, type WriteRecord } from '../src/core/journal
 import { buildSheetData, buildSheetMap } from '../src/core/sheets/map.js';
 import { upsertRow } from '../src/core/sheets/rows.js';
 import { undoLast } from '../src/core/undo.js';
-import { FakeSheetsClient, MutableSheetsClient, snapshot } from './fixtures/sheet.js';
+import {
+  FakeSheetsClient,
+  MutableSheetsClient,
+  snapshot,
+  upsertConfirmed,
+} from './fixtures/sheet.js';
 
 const original = process.env['GCONNECT_HOME'];
 
@@ -71,7 +76,7 @@ describe('B11 — аудит-лог', () => {
   it('запись через upsertRow с dryRun:false попадает в журнал целиком', async () => {
     const written: WriteRecord[] = [];
     const client = new FakeSheetsClient();
-    await upsertRow(
+    await upsertConfirmed(
       client,
       buildSheetData(snapshot()),
       { Проект: 'G connect' },
@@ -115,7 +120,7 @@ describe('B11 — аудит-лог', () => {
 
   it('пустой план не журналируется: «изменений нет» не событие', async () => {
     const written: WriteRecord[] = [];
-    await upsertRow(
+    await upsertConfirmed(
       new FakeSheetsClient(),
       buildSheetData(snapshot()),
       { Проект: 'G connect' },
@@ -157,7 +162,7 @@ describe('B9 — откат возвращает значения', () => {
     };
 
     const before = buildSheetMap(await client.getSpreadsheet()).sampleRows[0]?.['Часы'];
-    await upsertRow(
+    await upsertConfirmed(
       client,
       buildSheetData(await client.getSpreadsheet()),
       { Проект: 'G connect' },
@@ -273,6 +278,28 @@ describe('B10 — откат при чужих правках', () => {
  * дописала её сама — сказала «журнал пуст», когда в журнале лежали четыре строки, просто
  * все записи были уже откачены. Три состояния должны отличаться снаружи.
  */
+describe('B21 — откат помнит код плана', () => {
+  it('в записи undo лежит planId откаченной правки', async () => {
+    const client = new MutableSheetsClient();
+    const journalled: WriteRecord[] = [];
+    const journal = async (r: WriteRecord) => {
+      journalled.push(r);
+    };
+    const write = await upsertConfirmed(
+      client,
+      buildSheetData(await client.getSpreadsheet()),
+      { Проект: 'G connect' },
+      { Часы: 8 },
+      { journal },
+    );
+    expect(write.status).toBe('ok');
+    await undoLast(client, 'SHEET1', { recent: () => Promise.resolve(journalled) }, { journal });
+    const undo = journalled.find((r) => r.op === 'undo');
+    expect(undo?.planId).toBe(write.planId);
+    expect(undo?.undoOf).toBe(journalled[0]?.correlationId);
+  });
+});
+
 describe('nothing_to_undo называет причину', () => {
   const source = (records: readonly WriteRecord[]) => ({
     recent: () => Promise.resolve(records),

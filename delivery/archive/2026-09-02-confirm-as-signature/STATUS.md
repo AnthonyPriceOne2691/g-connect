@@ -1,0 +1,29 @@
+# Active delivery status
+
+- **slug:** confirm-as-signature
+- **stack:** delivery@1.84, cqg@2.32, okf@absent
+- **class:** M
+- **kind:** feature
+- **repro_test:** n/a reason=kind=feature; дыры найдены разбором, а не отказом в проде
+- **diagnosis:** n/a reason=kind=feature
+- **phase:** handoff
+- **builder:** agent:claude-opus-5
+- **verifier:** human:anton
+- **human_ok_spec:** yes (by=human:anton, at=2026-09-02) reason=примеры B14–B21 и три закрытых вопроса подписаны до первого коммита кода
+- **human_ok_plan:** yes (by=human:anton, at=2026-09-02) reason=путь пишущий, подпись плана взята сверх требований класса M
+- **shape-oracles:** cqg-deployed
+- **behavior-oracles:** tests-present
+- **artifact_oracle:** scripts/probe_mcp.mjs reason=сервер стартует из `dist/`, отвечает на `initialize`, отдаёт шесть инструментов и ресурс правил, а `gc_apply` объявляет `confirm`; в прогоне smoke это S11. Живой режим `--live` дополнительно берёт превью на цели реестра и проверяет, что код плана есть и что запись без кода отклонена — ничего не записывая
+- **ci-oracles:** tooling
+- **worktree:** ветка feat/phase-2.6-confirm reason=урок L2: работа прямо в main обнуляет метрики и оставляет merge_guard.sh без суждения; в фазе 2 мы его обошли вторым заходом и записали это в MEMORY
+- **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
+- **blockers:** none
+- **waivers:** none
+- **runtime_paths:** src/core/sheets/rows.ts reason=пишущий путь: отказ подтверждения виден не тестами, а тем, что человек сказал «пиши» про один план, а записался другой; проверяется живым прогоном в клиенте
+- **model_surface:** src/policy/rules.md,src/policy/rules.json reason=четыре новых правила уходят агенту через instructions и ресурс `policy://rules`: правка одной строки меняет поведение продукта при нетронутом коде
+- **canon_drift_waiver:** no
+- **baseline_growth_waiver:** no
+- **observability:** 1
+- **observe_signal:** подтверждение работает как подпись в живом клиенте: «пиши» без кода отказывает, агент код не подставляет, запись по коду даёт строку журнала с `planId`, откат несёт тот же код. Плюс мутационный гейт судит новый код (маска вместо списка): `write-guards.ts` 74.0%, `plan.ts` 68.2%, `a1.ts` 67.4%. Открытый сигнал прежний и не про код: семидневный предел доступа
+- **observe_until:** 2026-10-15
+- **circuit_breakers:** defaults from AGENT_DELIVERY_HARNESS.md §3.4

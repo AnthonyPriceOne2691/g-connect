@@ -22,10 +22,12 @@ import { parseOperation, OPERATION_NAMES } from '../src/core/ops.js';
 import { asData, limitOf, policyRules, policyText, ruleById } from '../src/core/policy.js';
 import { profileStatus, writeToken } from '../src/core/profiles.js';
 import { buildSheetData } from '../src/core/sheets/map.js';
-import { setCells, upsertRow } from '../src/core/sheets/rows.js';
+import type { WriteRecord } from '../src/core/journal.js';
+import { appendRow, setCells, upsertRow } from '../src/core/sheets/rows.js';
 import { assertWritable, resolveTarget } from '../src/core/targets.js';
 import { undoLast } from '../src/core/undo.js';
 import {
+  upsertConfirmed,
   FakeSheetsClient,
   formulaSheet,
   protectedSheet,
@@ -87,7 +89,7 @@ const probes: Record<string, () => Promise<void>> = {
 
   'write.revision-guard': async () => {
     await expect(
-      upsertRow(
+      upsertConfirmed(
         client(),
         data(),
         { Проект: 'G connect' },
@@ -172,7 +174,7 @@ const probes: Record<string, () => Promise<void>> = {
   'audit.write-is-logged': async () => {
     const written: unknown[] = [];
     const c = client();
-    await upsertRow(
+    await upsertConfirmed(
       c,
       data(),
       { Проект: 'G connect' },
@@ -215,6 +217,86 @@ const probes: Record<string, () => Promise<void>> = {
     const files = (await readdir(reportsDir())).filter((f) => f.endsWith('.html')).sort();
     expect(files).toHaveLength(keep);
     expect(files[0]).not.toContain('T00-00-00');
+  },
+
+  'write.plan-confirmation': async () => {
+    const c = client();
+    try {
+      await upsertRow(c, data(), { Проект: 'G connect' }, { Часы: 42 }, { dryRun: false });
+      expect.unreachable('запись без кода плана должна отказать');
+    } catch (error) {
+      const { payload } = error as { payload: { code: string; cause?: string } };
+      expect(payload.code).toBe('confirm_required');
+      expect(payload.cause).toBe('write.plan-confirmation');
+    }
+    expect(c.writes).toHaveLength(0);
+  },
+
+  'write.force-needs-plan': async () => {
+    const c = new FakeSheetsClient(snapshot([formulaSheet()]));
+    const formulaData = buildSheetData(snapshot([formulaSheet()]));
+    await expect(
+      upsertRow(
+        c,
+        formulaData,
+        { Проект: 'G connect' },
+        { Итого: 1 },
+        {
+          dryRun: false,
+          force: true,
+        },
+      ),
+    ).rejects.toMatchObject({ payload: { code: 'confirm_required' } });
+    expect(c.writes).toHaveLength(0);
+  },
+
+  'write.value-precondition': async () => {
+    const changed = () => {
+      const s = snapshot();
+      const sheet = s.sheets[0]!;
+      const rows = sheet.rows.map((r) => [...r]);
+      rows[2] = [{ value: '2026-09-01' }, { value: 'G connect' }, { value: 'пауза' }, { value: 2 }];
+      return { ...s, sheets: [{ ...sheet, rows }] };
+    };
+    const c = new FakeSheetsClient(changed());
+    const preview = await upsertRow(
+      client(),
+      data(),
+      { Проект: 'G connect' },
+      { Статус: 'готово' },
+    );
+    await expect(
+      upsertRow(
+        c,
+        data(),
+        { Проект: 'G connect' },
+        { Статус: 'готово' },
+        {
+          dryRun: false,
+          confirm: preview.planId ?? '',
+        },
+      ),
+    ).rejects.toMatchObject({ payload: { code: 'stale_value' } });
+    expect(c.writes).toHaveLength(0);
+  },
+
+  'write.plan-once': async () => {
+    const c = client();
+    const journalled: WriteRecord[] = [];
+    const options = {
+      journal: async (r: WriteRecord) => {
+        journalled.push(r);
+      },
+      journalSource: { recent: () => Promise.resolve(journalled) },
+    };
+    const values = { Проект: 'ещё один', Часы: 1 };
+    const preview = await appendRow(c, data(), values, options);
+    const confirm = preview.planId ?? '';
+    await appendRow(c, data(), values, { ...options, dryRun: false, confirm });
+    await expect(
+      appendRow(c, data(), values, { ...options, dryRun: false, confirm }),
+    ).rejects.toMatchObject({ payload: { code: 'plan_already_applied' } });
+    expect(journalled).toHaveLength(1);
   },
 
   'auth.testing-mode-warning': async () => {

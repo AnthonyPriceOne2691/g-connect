@@ -148,6 +148,34 @@
       "kind": "invariant",
       "enforced_in": "src/core/profiles.ts (profileStatus.warnings)",
       "probe": "профиль с токеном старше шести дней отдаёт предупреждение с указанием, что делать"
+    },
+    {
+      "id": "write.plan-confirmation",
+      "title": "Запись идёт только по коду плана из превью",
+      "kind": "ask",
+      "enforced_in": "src/core/sheets/write-guards.ts (confirmationOutcome) + src/core/ops.ts (confirm)",
+      "probe": "запись с dryRun:false без confirm отказывает кодом confirm_required и ничего не пишет"
+    },
+    {
+      "id": "write.force-needs-plan",
+      "title": "force принимается только вместе с кодом плана",
+      "kind": "deny",
+      "enforced_in": "src/core/sheets/write-guards.ts (confirmationOutcome) + src/core/sheets/rows.ts (guardColumn)",
+      "probe": "force:true без confirm не проходит: модель не подтверждает сама за человека"
+    },
+    {
+      "id": "write.value-precondition",
+      "title": "Перед записью значения в ячейках сверяются с превью",
+      "kind": "invariant",
+      "enforced_in": "src/core/sheets/write-guards.ts (assertBeforeValues)",
+      "probe": "значение, изменившееся после превью, даёт stale_value и ни одной записи"
+    },
+    {
+      "id": "write.plan-once",
+      "title": "Один план записывается один раз",
+      "kind": "deny",
+      "enforced_in": "src/core/sheets/write-guards.ts (assertPlanNotApplied)",
+      "probe": "повторная запись того же плана даёт plan_already_applied; после отката план снова законен"
     }
   ]
 }
