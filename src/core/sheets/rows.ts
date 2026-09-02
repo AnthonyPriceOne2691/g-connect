@@ -41,8 +41,16 @@ export interface PlannedChange {
   readonly after: CellValue;
 }
 
+/**
+ * Текст статуса `no_change`. Живёт константой: его читает человек, и он же проверяется
+ * оракулом — «пустой результат объясняет причину» (§13.7).
+ */
+export const NO_CHANGE_NOTE =
+  'Ничего не изменится: в целевых ячейках уже такие значения. ' +
+  'Записи не было и строки журнала тоже — это не выполненная правка.';
+
 export interface ApplyOutcome {
-  readonly status: 'ok' | 'preview' | 'needs_clarification';
+  readonly status: 'ok' | 'preview' | 'no_change' | 'needs_clarification';
   readonly changes: readonly PlannedChange[];
   /** Ступень 4 резолвера: что именно мы поняли по-своему (§8.2). */
   readonly assumptions: readonly string[];
@@ -229,6 +237,19 @@ async function finish(
     questions: [] as readonly Question[],
     baseRevision: map.revisionId,
   };
+  // Нулевое изменение — отдельный статус, а не «ok» и не пустое превью. Раньше
+  // `dryRun:false` на «значение уже такое» возвращал `ok` БЕЗ строки журнала: человек
+  // читал «готово» при пустом факте, а превью выглядело как обычный план без строк.
+  // Нашёл живой прогон B13 в Cursor 2026-09-02.
+  if (changes.length === 0) {
+    return {
+      status: 'no_change',
+      ...base,
+      notes: [...prepared.notes, NO_CHANGE_NOTE],
+      revisionAfter: null,
+    };
+  }
+
   if (options.dryRun !== false) return { status: 'preview', ...base, revisionAfter: null };
 
   await writeCells(client, map, changes);

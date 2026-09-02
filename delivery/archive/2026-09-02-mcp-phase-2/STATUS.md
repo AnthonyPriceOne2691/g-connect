@@ -6,17 +6,17 @@
 - **kind:** feature
 - **repro_test:** n/a reason=kind=feature
 - **diagnosis:** n/a reason=kind=feature, дефекта не разбирали
-- **phase:** specify
+- **phase:** handoff
 - **builder:** agent:claude-opus-5
 - **verifier:** human:anton
-- **human_ok_spec:** no
-- **human_ok_plan:** no
+- **human_ok_spec:** yes (by=human:anton, at=2026-09-02) reason=примеры B1–B13 подписаны вместе со спекой до кода (asserts_reviewed_by в verify-report, at=2026-09-01), подтверждено на handoff
+- **human_ok_plan:** yes (by=human:anton, at=2026-09-02)
 - **shape-oracles:** cqg-deployed
 - **behavior-oracles:** tests-present
 - **artifact_oracle:** n/a reason=пока библиотека; сборка `dist/` появится в этой фазе вместе с MCP-сервером — тогда артефакт-оракул станет «сервер стартует из dist и отвечает на initialize»
 - **ci-oracles:** tooling
 - **worktree:** ветка feat/phase-2-mcp reason=урок L2 фазы 1: работа прямо в main обнуляет метрики и оставляет merge_guard.sh без единого суждения
-- **hooks:** not-deployed
+- **hooks:** not-deployed reason=OKF не развёрнут (okf@absent); момент — после устоявшихся модулей
 - **blockers:** none
 - **waivers:** none
 - **new_dependency:** @modelcontextprotocol/sdk reason=официальный TS-SDK MCP: транспорт stdio, схемы инструментов и ресурсов; писать протокол руками значит поддерживать его самому by=agent:claude-opus-5
@@ -27,6 +27,6 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** заполняется на handoff
+- **observe_signal:** B1–B13 подтверждены в двух клиентах (Claude Code и Cursor), включая запись и откат живым клиентом: `upsertRow` с ревизиями 25 → 26 и `undo` с `undoOf` в журнале; smoke S1–S10 зелёный; мутационный счёт 63.09% при пороге 50. Открытый сигнал один и не про код: семидневный предел доступа (`auth.testing-mode-warning`) — проверяется не раньше 2026-09-08
 - **observe_until:** 2026-10-15
 - **circuit_breakers:** defaults from AGENT_DELIVERY_HARNESS.md §3.4

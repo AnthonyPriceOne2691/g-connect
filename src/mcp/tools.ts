@@ -22,7 +22,12 @@ import { listProfiles, profileStatus } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
 import { appendRow, setCells, upsertRow, type ApplyOutcome } from '../core/sheets/rows.js';
 import type { SheetsClient } from '../core/sheets/types.js';
-import { assertWritable, resolveTarget, type Registry } from '../core/targets.js';
+import {
+  assertWritable,
+  resolveTarget,
+  type Registry,
+  type RegistryEntry,
+} from '../core/targets.js';
 import { undoLast } from '../core/undo.js';
 
 export interface ToolDeps {
@@ -58,14 +63,34 @@ async function resolve(deps: ToolDeps, target: string) {
   return resolveTarget(target, await deps.registry());
 }
 
+/**
+ * Лист и строка шапки по умолчанию — из реестра, если вызов их не задал. Без этого
+ * `gc_targets` обещал агенту «лист по умолчанию: Проекты», а операция уходила на ПЕРВЫЙ
+ * лист книги (у владельца это «Инструкция»): нашла живая проба через протокол 2026-09-02.
+ * Порядок старшинства: явный аргумент вызова → реестр → эвристика ядра.
+ */
+const sheetDefaults = (
+  entry: RegistryEntry | null,
+  sheet: string | undefined,
+  headerRow: number | undefined,
+): { sheet?: string; headerRow?: number } => {
+  const wantedSheet = sheet ?? entry?.sheet;
+  const wantedHeaderRow = headerRow ?? entry?.headerRow;
+  return {
+    ...(wantedSheet === undefined ? {} : { sheet: wantedSheet }),
+    ...(wantedHeaderRow === undefined ? {} : { headerRow: wantedHeaderRow }),
+  };
+};
+
 const readSheet = async (deps: ToolDeps, target: string, sheet?: string, headerRow?: number) => {
   const resolved = await resolve(deps, target);
+  const wanted = sheetDefaults(resolved.entry, sheet, headerRow);
   const client = await deps.sheets();
-  const snapshot = await client.getSpreadsheet(resolved.id, sheet === undefined ? {} : { sheet });
-  const data = buildSheetData(snapshot, {
-    ...(sheet === undefined ? {} : { sheet }),
-    ...(headerRow === undefined ? {} : { headerRow }),
-  });
+  const snapshot = await client.getSpreadsheet(
+    resolved.id,
+    wanted.sheet === undefined ? {} : { sheet: wanted.sheet },
+  );
+  const data = buildSheetData(snapshot, wanted);
   return { resolved, client, data };
 };
 
@@ -86,15 +111,17 @@ export const gcTargets: ToolDefinition = {
         type: t.type,
         allow: t.allow ?? 'read',
         sheet: t.sheet ?? null,
+        headerRow: t.headerRow ?? null,
         key: t.key ?? null,
       })),
       accounts: accounts.map((a) => ({
         account: a.account,
         state: a.state,
         scopes: a.scopes.length,
-        expiresAt: a.expiresAt,
-        // Предупреждения профиля уходят агенту: «доступ кончится через день» полезно
-        // знать до того, как он кончится посреди работы.
+        // `expiresAt` (срок access-токена, час) агенту НЕ отдаём: в живом прогоне B13
+        // он был прочитан как «срок входа истёк 1 сентября», и агент посоветовал
+        // перелогиниться при refreshAgeDays=0 и пустых warnings. Актуальное про доступ
+        // живёт в warnings, срок access-токена человеку показывает `gc status`.
         ...(a.warnings.length > 0 ? { warnings: a.warnings } : {}),
       })),
       note:
@@ -128,12 +155,17 @@ export const gcRead: ToolDefinition = {
 
     if (input.mode === 'values') {
       const limit = Math.min(input.limit ?? 100, limitOf('read.max-rows', 500));
+      // Границу данных знает карта. Раньше `values` её игнорировал и отдавал строки до
+      // лимита: на таблице владельца это 100 строк, из которых 98 полностью пустые —
+      // мусор в контексте агента и `truncated`, посчитанный от пустоты. Нашла проба
+      // 2026-09-02 при проверке состояния листа после B13.
+      const withData = data.rows.slice(0, data.map.dataRowCount);
       return {
         sheet: data.map.sheet,
         headerRow: data.map.headerRow,
         columns: data.map.columns.map((c) => c.name),
-        rows: data.rows.slice(0, limit),
-        truncated: data.rows.length > limit,
+        rows: withData.slice(0, limit),
+        truncated: withData.length > limit,
         warnings: data.map.warnings,
       };
     }
@@ -262,6 +294,12 @@ function applyHint(status: ApplyOutcome['status']): string | undefined {
   if (status === 'preview') {
     return 'Это план. Покажи его человеку; записывать — повторным вызовом с dryRun=false.';
   }
+  if (status === 'no_change') {
+    return (
+      'Ничего не изменилось: значения уже такие, записи не было. Так и скажи человеку — ' +
+      'не выдавай это за выполненную правку.'
+    );
+  }
   if (status === 'needs_clarification') {
     return 'Спроси человека, выбрав из перечисленных вариантов. Не угадывай.';
   }
@@ -282,9 +320,10 @@ async function maybeReport(
 ): Promise<string | null> {
   if (!wanted) return null;
   const applied = outcome.status === 'ok';
+  const label = applied ? 'Записано' : outcome.status === 'no_change' ? 'Без изменений' : 'Превью';
   return writeReport(
     renderPreview(outcome, {
-      title: `${applied ? 'Записано' : 'Превью'}: ${meta.op}`,
+      title: `${label}: ${meta.op}`,
       spreadsheet: meta.spreadsheet,
       sheet: meta.sheet,
       alias: meta.alias,
@@ -327,14 +366,12 @@ export const gcApply: ToolDefinition = {
     if (operation.dryRun === false) assertWritable(resolved);
 
     const client = await deps.sheets();
+    const wanted = sheetDefaults(resolved.entry, operation.sheet, operation.headerRow);
     const snapshot = await client.getSpreadsheet(
       resolved.id,
-      operation.sheet === undefined ? {} : { sheet: operation.sheet },
+      wanted.sheet === undefined ? {} : { sheet: wanted.sheet },
     );
-    const data = buildSheetData(snapshot, {
-      ...(operation.sheet === undefined ? {} : { sheet: operation.sheet }),
-      ...(operation.headerRow === undefined ? {} : { headerRow: operation.headerRow }),
-    });
+    const data = buildSheetData(snapshot, wanted);
 
     const options = applyOptions(deps, resolved, operation);
 
@@ -392,9 +429,11 @@ export const gcUndo: ToolDefinition = {
     return {
       ...outcome,
       target: { id: resolved.id, alias: resolved.alias },
+      // Раньше здесь стояло «журнал по этой цели пуст» — утверждение, неверное в двух
+      // из трёх случаев (всё уже откачено; записи с таким id нет). Причину называет ядро.
       hint:
         outcome.status === 'nothing_to_undo'
-          ? 'Журнал по этой цели пуст: откатывать нечего.'
+          ? `Откатывать нечего. ${outcome.detail ?? ''}`.trim()
           : undefined,
     };
   },

@@ -267,3 +267,38 @@ describe('B10 — откат при чужих правках', () => {
     expect(history).toHaveLength(1);
   });
 });
+
+/**
+ * Оракул на дефект живого прогона B13: `nothing_to_undo` не называл причину, и модель
+ * дописала её сама — сказала «журнал пуст», когда в журнале лежали четыре строки, просто
+ * все записи были уже откачены. Три состояния должны отличаться снаружи.
+ */
+describe('nothing_to_undo называет причину', () => {
+  const source = (records: readonly WriteRecord[]) => ({
+    recent: () => Promise.resolve(records),
+  });
+
+  it('журнала по цели нет — journal_empty', async () => {
+    const outcome = await undoLast(new FakeSheetsClient(), 'SHEET1', source([]));
+    expect(outcome.status).toBe('nothing_to_undo');
+    expect(outcome.reason).toBe('journal_empty');
+    expect(outcome.detail).toContain('журнала нет');
+  });
+
+  it('записи есть, но все откачены — all_undone с их числом', async () => {
+    const written = record({ correlationId: 'gc-aaa' });
+    const undone = record({ op: 'undo', undoOf: 'gc-aaa', correlationId: 'gc-bbb' });
+    const outcome = await undoLast(new FakeSheetsClient(), 'SHEET1', source([written, undone]));
+    expect(outcome.reason).toBe('all_undone');
+    expect(outcome.detail).toContain('2');
+    expect(outcome.detail).toContain('откачены');
+  });
+
+  it('записи с таким id нет — id_not_found, и id назван', async () => {
+    const outcome = await undoLast(new FakeSheetsClient(), 'SHEET1', source([record()]), {
+      correlationId: 'gc-нет-такого',
+    });
+    expect(outcome.reason).toBe('id_not_found');
+    expect(outcome.detail).toContain('gc-нет-такого');
+  });
+});

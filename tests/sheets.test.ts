@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildSheetData, buildSheetMap, detectHeaderRow } from '../src/core/sheets/map.js';
 import { appendRow, setCells, upsertRow } from '../src/core/sheets/rows.js';
+import type { WriteRecord } from '../src/core/journal.js';
 import {
   FakeSheetsClient,
   formulaSheet,
@@ -211,7 +212,9 @@ describe('A7, A8, A9 — значения', () => {
       { Дата: '2026-09-01', Проект: 'G connect' },
       { Статус: 'В РАБОТЕ' },
     );
-    expect(outcome.status).toBe('preview');
+    // Было `preview` с нулём строк — то есть план, который ничего не меняет. После
+    // разбора живого прогона B13 такой ответ называется своим статусом.
+    expect(outcome.status).toBe('no_change');
     expect(outcome.changes).toHaveLength(0);
     expect(outcome.notes.join(' ')).toContain('приведено к «в работе»');
   });
@@ -437,5 +440,57 @@ describe('универсальность ядра (D-10)', () => {
         expect(code, `${file} зашивает «${word}» в код`).not.toContain(word);
       }
     }
+  });
+});
+
+/**
+ * Оракул на дефект живого прогона B13 (Cursor, 2026-09-02): «значение уже такое»
+ * возвращалось как обычное превью, а с `dryRun:false` — как `ok` без строки журнала.
+ * Человек читал «готово» при пустом факте.
+ */
+describe('нулевое изменение — не выполненная запись', () => {
+  const noChange = () =>
+    upsertRow(
+      new FakeSheetsClient(),
+      data(),
+      { Проект: 'G connect' },
+      { Статус: 'в работе' },
+      { now: NOW, aliases },
+    );
+
+  it('превью получает статус no_change и объясняет причину', async () => {
+    const outcome = await noChange();
+    expect(outcome.status).toBe('no_change');
+    expect(outcome.changes).toHaveLength(0);
+    expect(outcome.notes.join(' ')).toContain('уже такие значения');
+  });
+
+  it('запись нулевого плана не идёт в Google, не журналируется и не зовётся ok', async () => {
+    const client = new FakeSheetsClient();
+    const journalled: WriteRecord[] = [];
+    let revisionReads = 0;
+    const outcome = await upsertRow(
+      client,
+      data(),
+      { Проект: 'G connect' },
+      { Статус: 'в работе' },
+      {
+        now: NOW,
+        aliases,
+        dryRun: false,
+        journal: async (record) => {
+          journalled.push(record);
+        },
+        readRevision: async () => {
+          revisionReads += 1;
+          return 'rev-2';
+        },
+      },
+    );
+    expect(outcome.status).toBe('no_change');
+    expect(client.writes).toHaveLength(0);
+    expect(journalled).toHaveLength(0);
+    // Ни одного лишнего обращения к Google: ревизию после записи читать незачем.
+    expect(revisionReads).toBe(0);
   });
 });
