@@ -230,6 +230,14 @@
       "value": 2000,
       "enforced_in": "src/core/sheets/structure-op.ts (assertSnapshotBudget)",
       "probe": "удаление диапазона больше бюджета отказывает ДО записи, назвав оба числа"
+    },
+    {
+      "id": "write.undo-names-what-it-cannot",
+      "title": "Откат, вернувший не всё, обязан назвать, чего не вернул",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/sheets/structure-op.ts (lostWith) + src/core/undo-structure.ts (undoStructure, notRestored)",
+      "probe": "откат удаления листа сообщает notRestored с числами, а не отчитывается полным успехом"
     }
   ]
 }

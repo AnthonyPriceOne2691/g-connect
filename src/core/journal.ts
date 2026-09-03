@@ -6,7 +6,7 @@
  * системы, а гейт `di-indirection` был бы прав, что зависимость добывается, а не даётся.
  */
 
-import type { CellFormat } from './sheets/types.js';
+import type { CellFormat, SheetProperties } from './sheets/types.js';
 
 export interface JournalChange {
   readonly a1: string;
@@ -54,6 +54,13 @@ export interface StructuralChange {
   readonly previousTitle?: string;
   /** Id созданного файла Drive: по нему откат кладёт его в корзину. */
   readonly fileId?: string;
+  /** Свойства удалённого листа, которые откат умеет вернуть (закрепления, цвет, ширины). */
+  readonly properties?: SheetProperties;
+  /**
+   * Чего откат вернуть НЕ сможет, названное числом. Уезжает в журнал, потому что ответ
+   * отката обязан сказать не только что вернулось, но и что нет (урок L5).
+   */
+  readonly irreversible?: readonly string[];
 }
 
 export interface SnapshotCell {
@@ -90,8 +97,13 @@ export interface WriteRecord {
   readonly changes: readonly JournalChange[];
   /** Геометрия: что сделали со строками, колонками, листами или файлами (D-19). */
   readonly structure?: StructuralChange;
-  /** Содержимое затронутого диапазона «до» — им откат восстанавливает то, что исчезло. */
-  readonly snapshot?: RangeSnapshot;
+  /**
+   * Содержимое затронутых диапазонов «до» — им откат восстанавливает исчезнувшее.
+   *
+   * Список, а не один диапазон: у `cutRange` их два (источник и получатель), и добавлять
+   * второе поле рядом с первым значило бы держать одно понятие в двух местах.
+   */
+  readonly snapshots?: readonly RangeSnapshot[];
   /** Ревизия таблицы до и после записи — по ним undo решает, безопасен ли откат. */
   readonly revisionBefore: string | null;
   readonly revisionAfter: string | null;

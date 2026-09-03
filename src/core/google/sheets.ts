@@ -16,8 +16,11 @@ import type {
   CellValue,
   DeleteDimensionRequest,
   FormatRequest,
+  GridRange,
   InsertDimensionRequest,
   ReadOptions,
+  SheetExtras,
+  SheetProperties,
   SheetRequest,
   SheetSnapshot,
   SheetsClient,
@@ -141,11 +144,9 @@ function validationsOf(sheet: sheets_v4.Schema$Sheet): ValidationRule[] {
   return out;
 }
 
-export function toSheetSnapshot(sheet: sheets_v4.Schema$Sheet): SheetSnapshot {
-  const properties = sheet.properties ?? {};
-  const rowData = sheet.data?.[0]?.rowData ?? [];
-  const frozen = properties.gridProperties?.frozenRowCount;
-  const protectedRanges = (sheet.protectedRanges ?? []).flatMap((range) => {
+/** Защищённые диапазоны в домен: 1-based строки, включительные колонки. */
+function protectedRangesOf(sheet: sheets_v4.Schema$Sheet): GridRange[] {
+  return (sheet.protectedRanges ?? []).flatMap((range) => {
     const r = range.range;
     if (r === undefined || r === null) return [];
     return [
@@ -157,13 +158,23 @@ export function toSheetSnapshot(sheet: sheets_v4.Schema$Sheet): SheetSnapshot {
       },
     ];
   });
+}
 
-  const merges = (sheet.merges ?? []).map((r) => ({
+function mergesOf(sheet: sheets_v4.Schema$Sheet): GridRange[] {
+  return (sheet.merges ?? []).map((r) => ({
     startRow: (r.startRowIndex ?? 0) + 1,
     endRow: r.endRowIndex ?? 0,
     startColumn: r.startColumnIndex ?? 0,
     endColumn: (r.endColumnIndex ?? 1) - 1,
   }));
+}
+
+export function toSheetSnapshot(sheet: sheets_v4.Schema$Sheet): SheetSnapshot {
+  const properties = sheet.properties ?? {};
+  const rowData = sheet.data?.[0]?.rowData ?? [];
+  const frozen = properties.gridProperties?.frozenRowCount;
+  const protectedRanges = protectedRangesOf(sheet);
+  const merges = mergesOf(sheet);
 
   return {
     title: properties.title ?? 'Лист',
@@ -173,8 +184,63 @@ export function toSheetSnapshot(sheet: sheets_v4.Schema$Sheet): SheetSnapshot {
     ...(frozen === undefined || frozen === null ? {} : { frozenRows: frozen }),
     validations: validationsOf(sheet),
     protectedRanges,
+    properties: sheetPropertiesOf(sheet),
+    extras: extrasOf(sheet, rowData),
   };
 }
+
+/**
+ * Свойства листа, которые откат умеет вернуть (D-19). Больше здесь не нужно: всё, чего
+ * в этом наборе нет, план обязан назвать потерей — см. `extrasOf`.
+ */
+function sheetPropertiesOf(sheet: sheets_v4.Schema$Sheet): SheetProperties {
+  const properties = sheet.properties ?? {};
+  const grid = properties.gridProperties ?? {};
+  return definedOnly<SheetProperties>({
+    frozenRows: grid.frozenRowCount,
+    frozenColumns: grid.frozenColumnCount,
+    tabColor: toHex(properties.tabColorStyle?.rgbColor ?? properties.tabColor ?? undefined),
+    hidden: properties.hidden,
+  });
+}
+
+/**
+ * Убрать поля со значением `null` или `undefined`.
+ *
+ * При `exactOptionalPropertyTypes` «поля нет» и «поле undefined» — разные типы, и чистка
+ * обязана быть в ОДНОМ месте: гейт сложности отклонил четыре тернарника подряд, и он прав,
+ * потому что читать их приходится по одному, а ошибка в любом даёт лишнее поле в домене.
+ */
+function definedOnly<T extends object>(value: Record<string, unknown>): T {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, item]) => item !== undefined && item !== null),
+  ) as T;
+}
+
+/**
+ * Сколько на листе того, чего откат не вернёт. Числа, а не признаки: человеку перед
+ * удалением листа нужно «3 правила условного форматирования», а не «есть форматирование».
+ *
+ * Заметки к ячейкам здесь НЕ считаются, и это названная непокрытость: ядро их не читает
+ * вовсе (`toCell` их не переносит), поэтому и обещать их подсчёт нельзя.
+ */
+function extrasOf(
+  sheet: sheets_v4.Schema$Sheet,
+  rowData: readonly sheets_v4.Schema$RowData[],
+): SheetExtras {
+  return {
+    conditionalFormats: countOf(sheet.conditionalFormats),
+    dataValidations: rowData.reduce((sum, row) => sum + countOf(withValidation(row)), 0),
+    protectedRanges: countOf(sheet.protectedRanges),
+    charts: countOf(sheet.charts),
+    filters: countOf(sheet.filterViews) + (present(sheet.basicFilter) ? 1 : 0),
+  };
+}
+
+const countOf = (list: readonly unknown[] | null | undefined): number => list?.length ?? 0;
+const present = (value: unknown): boolean => value !== undefined && value !== null;
+const withValidation = (row: sheets_v4.Schema$RowData): sheets_v4.Schema$CellData[] =>
+  (row.values ?? []).filter((cell) => present(cell.dataValidation));
 
 /**
  * Ответ Google → доменный снимок. Вынесено отдельно и экспортировано ради тестов:
@@ -211,7 +277,25 @@ export function toRequest(request: SheetRequest): sheets_v4.Schema$Request {
     return { deleteDimension: { range: toDimensionRange(request) } };
   }
   if (request.kind === 'addSheet') {
-    return { addSheet: { properties: { title: request.title } } };
+    const properties = request.properties ?? {};
+    const grid = {
+      ...(properties.frozenRows === undefined ? {} : { frozenRowCount: properties.frozenRows }),
+      ...(properties.frozenColumns === undefined
+        ? {}
+        : { frozenColumnCount: properties.frozenColumns }),
+    };
+    return {
+      addSheet: {
+        properties: {
+          title: request.title,
+          ...(Object.keys(grid).length === 0 ? {} : { gridProperties: grid }),
+          ...(properties.tabColor === undefined
+            ? {}
+            : { tabColorStyle: { rgbColor: fromHex(properties.tabColor) } }),
+          ...(properties.hidden === undefined ? {} : { hidden: properties.hidden }),
+        },
+      },
+    };
   }
   if (request.kind === 'deleteSheet') {
     return { deleteSheet: { sheetId: request.sheetId } };

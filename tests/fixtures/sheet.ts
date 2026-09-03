@@ -192,7 +192,13 @@ function applyRequest(data: SpreadsheetSnapshot, request: SheetRequest): Spreads
   if (request.kind === 'format') return withFormat(data, request);
   if (request.kind === 'addSheet') {
     const sheetId = Math.max(0, ...data.sheets.map((s) => s.sheetId)) + 1;
-    return { ...data, sheets: [...data.sheets, { title: request.title, sheetId, rows: [] }] };
+    const created = {
+      title: request.title,
+      sheetId,
+      rows: [],
+      ...(request.properties === undefined ? {} : { properties: request.properties }),
+    };
+    return { ...data, sheets: [...data.sheets, created] };
   }
   if (request.kind === 'deleteSheet') {
     return { ...data, sheets: data.sheets.filter((s) => s.sheetId !== request.sheetId) };

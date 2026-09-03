@@ -15,6 +15,7 @@ import {
   addSheet,
   deleteColumns,
   deleteRows,
+  deleteSheet,
   insertColumns,
   insertRows,
   renameSheet,
@@ -78,6 +79,7 @@ const HANDLERS: {
     deleteRows(client, data, operation.where, options),
   deleteColumns: (client, data, operation, options) =>
     deleteColumns(client, data, operation.column, options),
+  deleteSheet: (client, data, _operation, options) => deleteSheet(client, data, options),
   addSheet: (client, data, operation, options) => addSheet(client, data, operation.title, options),
   renameSheet: (client, data, operation, options) =>
     renameSheet(client, data, operation.title, options),

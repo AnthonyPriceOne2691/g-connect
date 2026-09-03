@@ -36,7 +36,8 @@ export type {
 } from './write-types.js';
 export { NO_CHANGE_NOTE } from './write-types.js';
 
-import { finishWrite, type Prepared } from './commit.js';
+import { contextOf, finishWrite, writeCells, type Prepared } from './commit.js';
+import { assertBeforeValues } from './write-guards.js';
 
 export type { Prepared } from './commit.js';
 export { formatRequest, finishWrite } from './commit.js';
@@ -54,7 +55,13 @@ export const finish = (
   prepared: Prepared,
   options: RowOptions,
   op: OperationKind,
-): Promise<ApplyOutcome> => finishWrite(client, map, changes, prepared, options, op);
+): Promise<ApplyOutcome> =>
+  finishWrite(client, contextOf(map), changes, prepared, options, op, {
+    // Ячеечная правка приносит своё применение и своё предусловие тем же способом, что
+    // структурная: контур записи один, а формы правки различаются ровно этими двумя.
+    apply: (c) => writeCells(c, map, changes),
+    precondition: (c) => assertBeforeValues(c, map, changes),
+  });
 
 export const names = (map: SheetMap): readonly string[] => map.columns.map((c) => c.name);
 

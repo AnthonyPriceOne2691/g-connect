@@ -42,7 +42,11 @@ export async function undoStructure(
   // Геометрию вернули — теперь возвращаем содержимое. Порядок обязателен: залить снимок
   // в ещё не существующие строки нельзя, а вернуть строки без снимка значит вернуть
   // пустые (то есть отчитаться успехом, не вернув ничего).
-  const restored = await restoreSnapshot(client, targetId, book, record);
+  //
+  // Книга перечитывается ПОСЛЕ обратной операции: у пересозданного листа новый sheetId,
+  // и вид пришлось бы возвращать по устаревшему адресу — молча в чужой лист.
+  const after = await client.getSpreadsheet(targetId);
+  const restored = await restoreSnapshot(client, targetId, after, record);
   await journal(record, targetId, options);
   return {
     status: 'ok',
@@ -50,6 +54,7 @@ export async function undoStructure(
     undoneCorrelationId: record.correlationId,
     at: record.at,
     structureUndone: undoneText(structure),
+    ...(structure.irreversible === undefined ? {} : { notRestored: structure.irreversible }),
   };
 }
 
@@ -88,6 +93,21 @@ const INVERSE: Partial<Record<NonNullable<WriteRecord['structure']>['kind'], Inv
   // Удаление откатывается вставкой на то же место; содержимое заливает `restoreSnapshot`.
   deleteRows: (book, structure) => reinsert(book, structure, 'rows'),
   deleteColumns: (book, structure) => reinsert(book, structure, 'columns'),
+  // Лист возвращается со своими свойствами: закрепления, цвет ярлыка, скрытость. Всё
+  // остальное перечислено в `irreversible` и названо человеку ещё в плане.
+  deleteSheet: (book, structure) => {
+    if (book.sheets.some((s) => s.title === structure.sheet)) {
+      throw gcError('revision_conflict', {
+        detail: `Лист «${structure.sheet}» уже есть в книге — откат создал бы второй с тем же именем.`,
+        cause: 'sheet_exists',
+      });
+    }
+    return {
+      kind: 'addSheet',
+      title: structure.sheet,
+      ...(structure.properties === undefined ? {} : { properties: structure.properties }),
+    };
+  },
   addSheet: (book, structure, options) => {
     const sheet = sheetByTitle(book, structure.title ?? structure.sheet);
     if (options.force !== true) assertSheetEmpty(sheet);
@@ -128,8 +148,21 @@ async function restoreSnapshot(
   book: SpreadsheetSnapshot,
   record: WriteRecord,
 ): Promise<UndoOutcome['restored']> {
-  const snapshot = record.snapshot;
-  if (snapshot === undefined) return [];
+  const snapshots = record.snapshots ?? [];
+  const restored: { a1: string; column: string; value: string | number | boolean | null }[] = [];
+  for (const snapshot of snapshots) {
+    restored.push(...(await restoreOne(client, targetId, book, snapshot)));
+  }
+  return restored;
+}
+
+/** Один диапазон обратно: значения через values-API, вид — через `batchUpdate`. */
+async function restoreOne(
+  client: SheetsClient,
+  targetId: string,
+  book: SpreadsheetSnapshot,
+  snapshot: NonNullable<WriteRecord['snapshots']>[number],
+): Promise<UndoOutcome['restored']> {
   const parsed = parseRange(snapshot.a1Range);
   const sheetId = book.sheets.find((s) => s.title === parsed.sheet)?.sheetId ?? 0;
   const restored: { a1: string; column: string; value: string | number | boolean | null }[] = [];
@@ -229,6 +262,9 @@ function undoneText(structure: NonNullable<WriteRecord['structure']>): string {
     deleteRows: `Удалённые строки возвращены на место: ${count} шт. с ${at}-й, со значениями и видом.`,
     deleteColumns: `Удалённая колонка возвращена на место (${at}-я), со значениями и видом.`,
     renameSheet: `Лист переименован обратно: «${title}» → «${structure.previousTitle ?? ''}».`,
+    deleteSheet:
+      `Лист «${structure.sheet}» создан заново: значения, вид ячеек и свойства листа ` +
+      'на месте. Что не вернулось — в notRestored.',
   };
   return texts[structure.kind] ?? `Правка «${structure.kind}» откачена.`;
 }

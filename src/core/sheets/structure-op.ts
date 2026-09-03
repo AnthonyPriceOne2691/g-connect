@@ -13,13 +13,20 @@
 
 import { gcError } from '../errors.js';
 import type { RangeSnapshot, SnapshotCell } from '../journal.js';
-import { denyByRule, limitOf } from '../policy.js';
-import { needsClarification, resolveColumn } from '../resolver.js';
 import { buildSheetData } from './map.js';
-import { finishWrite, type Prepared } from './commit.js';
-import { columnQuestion, clarify, rowsUnderCondition } from './rows.js';
-import { columnLetter, type ColumnProfile } from './types.js';
-import type { SheetData, SheetMap, SheetsClient } from './types.js';
+import { contextOf, finishWrite, type Prepared } from './commit.js';
+import { rowsUnderCondition } from './rows.js';
+import {
+  anchorColumn,
+  assertContiguous,
+  assertSnapshotBudget,
+  columnSnapshot,
+  rowChanges,
+  snapshotOf,
+  subjectOf,
+} from './structure-support.js';
+import { columnLetter } from './types.js';
+import type { SheetData, SheetMap, SheetSnapshot, SheetsClient } from './types.js';
 import type {
   ApplyOutcome,
   PlannedChange,
@@ -74,10 +81,10 @@ export async function insertRows(
     count,
     anchor: `строка, где ${anchorText(where)}`,
   };
-  return finishWrite(client, map, [], empty(), options, 'insertRows', {
+  return finishWrite(client, contextOf(map), [], empty(), options, 'insertRows', {
     structural,
-    apply: (c, m) => insertDimension(c, m, 'rows', at, count),
-    precondition: (c, m) => assertAnchorRow(c, m, where, options, anchorRow),
+    apply: (c) => insertDimension(c, map, 'rows', at, count),
+    precondition: (c) => assertAnchorRow(c, map, where, options, anchorRow),
   });
 }
 
@@ -102,10 +109,10 @@ export async function insertColumns(
     count,
     anchor: `колонка «${column.name}» (${column.letter})`,
   };
-  return finishWrite(client, map, [], empty(), options, 'insertColumns', {
+  return finishWrite(client, contextOf(map), [], empty(), options, 'insertColumns', {
     structural,
-    apply: (c, m) => insertDimension(c, m, 'columns', at, count),
-    precondition: (c, m) => assertColumnStill(c, m, column.name, column.index),
+    apply: (c) => insertDimension(c, map, 'columns', at, count),
+    precondition: (c) => assertColumnStill(c, map, column.name, column.index),
   });
 }
 
@@ -120,10 +127,10 @@ export async function addSheet(
   assertTitle(title);
   assertNoSuchSheet(map, title);
   const structural: StructuralPlan = { kind: 'addSheet', sheet: title, title };
-  return finishWrite(client, map, [], empty(), options, 'addSheet', {
+  return finishWrite(client, contextOf(map), [], empty(), options, 'addSheet', {
     structural,
-    apply: (c, m) => c.batchUpdate(m.spreadsheetId, [{ kind: 'addSheet', title }]),
-    precondition: (c, m) => assertTitleFree(c, m, title),
+    apply: (c) => c.batchUpdate(map.spreadsheetId, [{ kind: 'addSheet', title }]),
+    precondition: (c) => assertTitleFree(c, map, title),
   });
 }
 
@@ -137,7 +144,7 @@ export async function renameSheet(
   const map = data.map;
   assertTitle(title);
   if (title === map.sheet) {
-    return finishWrite(client, map, [], empty(), options, 'renameSheet', {});
+    return finishWrite(client, contextOf(map), [], empty(), options, 'renameSheet', {});
   }
   assertNoSuchSheet(map, title);
   const structural: StructuralPlan = {
@@ -146,11 +153,11 @@ export async function renameSheet(
     title,
     previousTitle: map.sheet,
   };
-  return finishWrite(client, map, [], empty(), options, 'renameSheet', {
+  return finishWrite(client, contextOf(map), [], empty(), options, 'renameSheet', {
     structural,
-    apply: (c, m) =>
-      c.batchUpdate(m.spreadsheetId, [{ kind: 'renameSheet', sheetId: m.sheetId, title }]),
-    precondition: (c, m) => assertTitleFree(c, m, title),
+    apply: (c) =>
+      c.batchUpdate(map.spreadsheetId, [{ kind: 'renameSheet', sheetId: map.sheetId, title }]),
+    precondition: (c) => assertTitleFree(c, map, title),
   });
 }
 
@@ -292,11 +299,11 @@ export async function deleteRows(
     confirmPhrase: `удаляю ${count === 1 ? 'строку' : `строки (${count})`} ${subject}`,
     confirmToken: subject,
   };
-  return finishWrite(client, map, changes, empty(), options, 'deleteRows', {
+  return finishWrite(client, contextOf(map), changes, empty(), options, 'deleteRows', {
     structural,
-    snapshot: snapshotOf(map, data, rows),
-    apply: (c, m) => deleteDimension(c, m, 'rows', at, count),
-    precondition: (c, m) => assertAnchorRow(c, m, where, options, at),
+    snapshots: [snapshotOf(map, data, rows)],
+    apply: (c) => deleteDimension(c, map, 'rows', at, count),
+    precondition: (c) => assertAnchorRow(c, map, where, options, at),
   });
 }
 
@@ -329,11 +336,11 @@ export async function deleteColumns(
     confirmPhrase: `удаляю колонку ${column.name}`,
     confirmToken: column.name,
   };
-  return finishWrite(client, map, changes, empty(), options, 'deleteColumns', {
+  return finishWrite(client, contextOf(map), changes, empty(), options, 'deleteColumns', {
     structural,
-    snapshot: columnSnapshot(map, data, column.name, column.letter),
-    apply: (c, m) => deleteDimension(c, m, 'columns', at, 1),
-    precondition: (c, m) => assertColumnStill(c, m, column.name, column.index),
+    snapshots: [columnSnapshot(map, data, column.name, column.letter)],
+    apply: (c) => deleteDimension(c, map, 'columns', at, 1),
+    precondition: (c) => assertColumnStill(c, map, column.name, column.index),
   });
 }
 
@@ -349,113 +356,97 @@ function deleteDimension(
   ]);
 }
 
-/** Предмет правки словами: то, что человек произносит в подтверждении (D-20). */
-function subjectOf(where: RowValues): string {
-  const values = Object.values(where).map((v) => String(v));
-  return values.length === 0 ? 'весь лист' : values.join(' / ');
-}
-
 /**
- * Удаление идёт непрерывным блоком: `deleteDimension` умеет только диапазон.
+ * Удаление листа (решение владельца 2026-09-03: делать, несмотря на неполный откат).
  *
- * Разрозненные строки — не повод удалить «первую подходящую» и не повод удалить всё между
- * ними: и то и другое человек не просил. Отказ называет номера.
+ * Единственная операция поставки, чей откат вернёт НЕ ВСЁ, и поэтому единственная, где
+ * план обязан назвать потерю числом. Вернётся: значения, вид ячеек и модельные свойства
+ * листа (закрепления, цвет ярлыка, скрытость). Не вернётся: условное форматирование,
+ * проверки данных, защищённые диапазоны, диаграммы, фильтры — они считаются и
+ * перечисляются В ПЛАНЕ, до записи, а не выясняются после отката.
+ *
+ * Читает книгу отдельно: снимок листа нужен ЦЕЛИКОМ, включая строки над шапкой, которых в
+ * `SheetData` нет по построению. Цена названа — одно дополнительное чтение на операцию.
  */
-function assertContiguous(rows: readonly number[]): void {
-  const gaps = rows.some((row, i) => i > 0 && row !== rows[i - 1]! + 1);
-  if (!gaps) return;
-  throw gcError('bad_request', {
-    detail:
-      `Под условие подошли строки ${rows.join(', ')} — они не подряд, а удаление идёт ` +
-      'непрерывным блоком. Уточни условие так, чтобы строки шли одна за другой.',
-    cause: 'rows_not_contiguous',
-  });
-}
-
-/** Бюджет снимка: не влез — отказ ДО записи, с обоими числами. */
-function assertSnapshotBudget(cells: number): void {
-  const max = limitOf('write.snapshot-max-cells', 2000);
-  if (cells <= max) return;
-  denyByRule(
-    'write.snapshot-max-cells',
-    `Снимок для отката — ${cells} ячеек, разрешено ${max}. Записи не было: правку, ` +
-      'которую нечем вернуть, ядро не делает. Сузь диапазон.',
-  );
-}
-
-/** Ячейки удаляемых строк в план: человек должен видеть, ЧТО именно исчезнет. */
-function rowChanges(data: SheetData, rows: readonly number[]): PlannedChange[] {
-  const map = data.map;
-  const out: PlannedChange[] = [];
-  for (const rowNumber of rows) {
-    const index = rowNumber - map.headerRow - 1;
-    const values = data.rows[index] ?? {};
-    for (const column of map.columns) {
-      out.push({
-        kind: 'set',
-        a1: `${map.sheet}!${column.letter}${rowNumber}`,
-        column: column.name,
-        before: values[column.name] ?? null,
-        after: null,
-      });
-    }
-  }
-  return out;
-}
-
-/** Снимок удаляемых строк: значения И вид, иначе откат вернёт неоформленную строку. */
-function snapshotOf(map: SheetMap, data: SheetData, rows: readonly number[]): RangeSnapshot {
-  const last = columnLetter(map.columns.length - 1);
-  const cells = rows.map((rowNumber) => {
-    const index = rowNumber - map.headerRow - 1;
-    const values = data.rows[index] ?? {};
-    const formats = data.formats[index] ?? {};
-    return map.columns.map((column): SnapshotCell => {
-      const format = formats[column.name];
-      return {
-        value: values[column.name] ?? null,
-        ...(format === undefined ? {} : { format }),
-      };
-    });
-  });
-  return {
-    a1Range: `${map.sheet}!A${rows[0] ?? 1}:${last}${rows[rows.length - 1] ?? 1}`,
-    rows: cells,
-  };
-}
-
-/** Снимок колонки: столбец значений от строки заголовка вниз. */
-function columnSnapshot(
-  map: SheetMap,
+export async function deleteSheet(
+  client: SheetsClient,
   data: SheetData,
-  name: string,
-  letter: string,
-): RangeSnapshot {
-  const rows: SnapshotCell[][] = [[{ value: name }]];
-  data.rows.forEach((row, index) => {
-    const format = data.formats[index]?.[name];
-    rows.push([{ value: row[name] ?? null, ...(format === undefined ? {} : { format }) }]);
+  options: RowOptions = {},
+): Promise<ApplyOutcome> {
+  const map = data.map;
+  const book = await client.getSpreadsheet(map.spreadsheetId);
+  if (book.sheets.length <= 1) {
+    throw gcError('bad_request', {
+      detail: `«${map.sheet}» — единственный лист книги, а книги без листов не бывает.`,
+      cause: 'last_sheet',
+    });
+  }
+  const sheet = book.sheets.find((s) => s.title === map.sheet);
+  if (sheet === undefined) {
+    throw gcError('not_found', { detail: `Листа «${map.sheet}» в книге нет.` });
+  }
+  const cells = sheet.rows.reduce((sum, row) => sum + row.length, 0);
+  assertSnapshotBudget(cells);
+  const structural: StructuralPlan = {
+    kind: 'deleteSheet',
+    sheet: map.sheet,
+    count: cells,
+    ...(sheet.properties === undefined ? {} : { properties: sheet.properties }),
+    irreversible: lostWith(sheet),
+    confirmPhrase: `удаляю лист ${map.sheet}`,
+    confirmToken: map.sheet,
+  };
+  return finishWrite(client, contextOf(map), [], empty(), options, 'deleteSheet', {
+    structural,
+    snapshots: [sheetSnapshotOf(map.sheet, sheet)],
+    apply: (c) =>
+      c.batchUpdate(map.spreadsheetId, [{ kind: 'deleteSheet', sheetId: sheet.sheetId }]),
+    precondition: (c) => assertSheetStill(c, map.spreadsheetId, map.sheet),
   });
+}
+
+/** Что исчезнет безвозвратно — числом, а не признаком. Пусто — тоже утверждение. */
+function lostWith(sheet: SheetSnapshot): readonly string[] {
+  const extras = sheet.extras;
+  if (extras === undefined) return [];
+  const named: [number, string][] = [
+    [extras.conditionalFormats, 'правил условного форматирования'],
+    [extras.dataValidations, 'проверок данных в ячейках'],
+    [extras.protectedRanges, 'защищённых диапазонов'],
+    [extras.charts, 'диаграмм'],
+    [extras.filters, 'фильтров'],
+  ];
+  const lost = named.filter(([count]) => count > 0).map(([count, what]) => `${count} ${what}`);
+  // Заметки к ячейкам ядро не читает вовсе, поэтому и не обещает вернуть: непокрытость
+  // названа здесь, а не спрятана в «прочее».
+  if (lost.length > 0) lost.push('плюс заметки к ячейкам, если они есть: ядро их не читает');
+  return lost;
+}
+
+/** Снимок всего листа: строки от первой, а не от шапки — восстанавливать надо всё. */
+function sheetSnapshotOf(title: string, sheet: SheetSnapshot): RangeSnapshot {
+  const width = Math.max(1, ...sheet.rows.map((row) => row.length));
   return {
-    a1Range: `${map.sheet}!${letter}${map.headerRow}:${letter}${map.headerRow + data.rows.length}`,
-    rows,
+    a1Range: `${title}!A1:${columnLetter(width - 1)}${Math.max(1, sheet.rows.length)}`,
+    rows: sheet.rows.map((row) =>
+      row.map((cell): SnapshotCell => ({
+        value: cell.value,
+        ...(cell.format === undefined ? {} : { format: cell.format }),
+      })),
+    ),
   };
 }
 
-/**
- * Колонка-якорь по имени: те же шесть ступеней резолвера, что у записи значений.
- *
- * Один помощник на вставку и удаление — гейт копипаста отклонил вторую копию, и он прав:
- * разъехавшись, они по-разному отвечали бы на «Дата» при двух похожих колонках.
- */
-function anchorColumn(
-  map: SheetMap,
-  columnName: string,
-  options: RowOptions,
-): { column: ColumnProfile } | { refusal: ApplyOutcome } {
-  const resolution = resolveColumn(columnName, map.columns, options);
-  if (needsClarification(resolution.step) || resolution.column === null) {
-    return { refusal: clarify([columnQuestion(columnName, resolution, map)], map) };
-  }
-  return { column: resolution.column };
+/** Лист всё ещё на месте: между планом и записью его мог удалить другой. */
+async function assertSheetStill(
+  client: SheetsClient,
+  targetId: string,
+  title: string,
+): Promise<void> {
+  const book = await client.getSpreadsheet(targetId);
+  if (book.sheets.some((s) => s.title === title)) return;
+  throw gcError('stale_value', {
+    detail: `Лист «${title}» исчез после построения плана. Правка не выполнена.`,
+    cause: 'anchor_moved',
+  });
 }

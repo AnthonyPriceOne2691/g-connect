@@ -18,7 +18,6 @@ import { planId as planCode, type PlanCell, type PlanShape, type PlanTouch } fro
 import { assertChangeBudget } from '../policy.js';
 import { parseA1 } from './a1.js';
 import {
-  assertBeforeValues,
   assertPlanNotApplied,
   confirmationOutcome,
   duplicateAppendOutcome,
@@ -51,10 +50,31 @@ import {
  */
 export interface WriteShape {
   readonly structural?: StructuralPlan;
-  readonly snapshot?: RangeSnapshot;
-  readonly apply?: (client: SheetsClient, map: SheetMap) => Promise<void>;
-  readonly precondition?: (client: SheetsClient, map: SheetMap) => Promise<void>;
+  readonly snapshots?: readonly RangeSnapshot[];
+  readonly apply?: (client: SheetsClient, context: WriteContext) => Promise<void>;
+  readonly precondition?: (client: SheetsClient, context: WriteContext) => Promise<void>;
 }
+
+/**
+ * Куда пишем, глазами контура записи: id цели, лист, ревизия.
+ *
+ * Не `SheetMap` намеренно. Со слайса 8 через тот же контур идёт создание файлов Drive, у
+ * которого никакой карты листа нет вовсе — а журнал, код плана и подтверждение нужны те
+ * же. Карта сужается до контекста одной функцией, и это единственное место перевода.
+ */
+export interface WriteContext {
+  readonly targetId: string;
+  readonly sheet: string;
+  readonly sheetId: number;
+  readonly revisionId: string | null;
+}
+
+export const contextOf = (map: SheetMap): WriteContext => ({
+  targetId: map.spreadsheetId,
+  sheet: map.sheet,
+  sheetId: map.sheetId,
+  revisionId: map.revisionId,
+});
 
 type Base = Omit<ApplyOutcome, 'status' | 'revisionAfter'>;
 
@@ -95,7 +115,7 @@ function cellRecord(change: PlannedChange): PlanCell {
 
 /** План как данные: из него считается код (D-16) и с ним сверяется журнал (B19). */
 function planOf(
-  map: SheetMap,
+  map: WriteContext,
   changes: readonly PlannedChange[],
   prepared: Prepared,
   op: OperationKind,
@@ -103,7 +123,7 @@ function planOf(
 ): PlanShape {
   const structural = shape.structural;
   return {
-    targetId: map.spreadsheetId,
+    targetId: map.targetId,
     sheet: map.sheet,
     op,
     cells: changes.map(cellRecord),
@@ -126,7 +146,7 @@ function planOf(
   };
 }
 
-async function writeCells(
+export async function writeCells(
   client: SheetsClient,
   map: SheetMap,
   changes: readonly PlannedChange[],
@@ -149,7 +169,7 @@ async function writeCells(
  */
 async function commit(
   client: SheetsClient,
-  map: SheetMap,
+  map: WriteContext,
   changes: readonly PlannedChange[],
   base: Base,
   options: RowOptions,
@@ -164,11 +184,16 @@ async function commit(
   if (unconfirmed !== null) return unconfirmed;
 
   // Дубль дописанной строки ловится ДО записи и только там, где человек план не читал.
-  const duplicate = await duplicateAppendOutcome(base, options, op, changes, map.spreadsheetId);
+  const duplicate = await duplicateAppendOutcome(base, options, op, changes, map.targetId);
   if (duplicate !== null) return duplicate;
-  await assertPlanNotApplied(options, base.planId, map.spreadsheetId);
-  await (shape.precondition ?? ((c, m) => assertBeforeValues(c, m, changes)))(client, map);
-  await (shape.apply ?? ((c, m) => writeCells(c, m, changes)))(client, map);
+  await assertPlanNotApplied(options, base.planId, map.targetId);
+  if (shape.apply === undefined) {
+    // Не «на всякий случай»: контур без применения правки означает, что операция забыла
+    // сказать, ЧЕМ она пишет, — и молчаливая запись нуля хуже отказа.
+    throw gcError('internal', { detail: 'Контур записи вызван без применения правки.' });
+  }
+  if (shape.precondition !== undefined) await shape.precondition(client, map);
+  await shape.apply(client, map);
   const revisionAfter = (await options.readRevision?.()) ?? null;
   const correlationId = newCorrelationId();
 
@@ -183,7 +208,7 @@ async function commit(
 
 export async function finishWrite(
   client: SheetsClient,
-  map: SheetMap,
+  map: WriteContext,
   changes: readonly PlannedChange[],
   prepared: Prepared,
   options: RowOptions,
@@ -224,6 +249,10 @@ function toStructuralChange(plan: StructuralPlan): StructuralChange {
     ...(plan.count === undefined ? {} : { count: plan.count }),
     ...(plan.title === undefined ? {} : { title: plan.title }),
     ...(plan.previousTitle === undefined ? {} : { previousTitle: plan.previousTitle }),
+    ...(plan.properties === undefined ? {} : { properties: plan.properties }),
+    // Названная потеря уезжает в журнал: ответ отката обязан сказать не только что
+    // вернулось, но и что нет — иначе он отчитается успехом, вернув не всё (урок L5).
+    ...(plan.irreversible === undefined ? {} : { irreversible: plan.irreversible }),
   };
 }
 
@@ -248,7 +277,7 @@ export function formatRequest(map: SheetMap, a1: string, format: CellFormat): Fo
  * стало пять.
  */
 function journalRecord(input: {
-  map: SheetMap;
+  map: WriteContext;
   op: OperationKind;
   changes: readonly PlannedChange[];
   base: Base;
@@ -261,7 +290,7 @@ function journalRecord(input: {
   return {
     at: new Date().toISOString(),
     account: options.account ?? 'default',
-    targetId: map.spreadsheetId,
+    targetId: map.targetId,
     alias: options.alias ?? null,
     sheet: map.sheet,
     op: input.op,
@@ -272,6 +301,6 @@ function journalRecord(input: {
     ...(base.planId === null ? {} : { planId: base.planId }),
     // Геометрия и снимок — то, чем откат вернёт исчезнувшее (D-19).
     ...(shape.structural === undefined ? {} : { structure: toStructuralChange(shape.structural) }),
-    ...(shape.snapshot === undefined ? {} : { snapshot: shape.snapshot }),
+    ...(shape.snapshots === undefined ? {} : { snapshots: shape.snapshots }),
   };
 }

@@ -168,6 +168,12 @@ export const deleteColumnsOp = z.object({
   ...commonFields,
 });
 
+/** Удаление листа: какой именно — из `sheet` (или лист по умолчанию у цели реестра). */
+export const deleteSheetOp = z.object({
+  op: z.literal('deleteSheet'),
+  ...commonFields,
+});
+
 export const addSheetOp = z.object({
   op: z.literal('addSheet'),
   title: z.string().min(1),
@@ -190,6 +196,7 @@ export const operationSchema = z.discriminatedUnion('op', [
   insertColumnsOp,
   deleteRowsOp,
   deleteColumnsOp,
+  deleteSheetOp,
   addSheetOp,
   renameSheetOp,
 ]);
@@ -207,6 +214,7 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'insertColumns',
   'deleteRows',
   'deleteColumns',
+  'deleteSheet',
   'addSheet',
   'renameSheet',
 ];

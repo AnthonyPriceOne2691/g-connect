@@ -6,7 +6,7 @@
 
 import type { JournalSink, JournalSource, StructuralKind } from '../journal.js';
 import type { ResolveOptions } from '../resolver.js';
-import type { CellFormat, CellValue } from './types.js';
+import type { CellFormat, CellValue, SheetProperties } from './types.js';
 
 export type RowValues = Readonly<Record<string, unknown>>;
 
@@ -28,6 +28,8 @@ export interface StructuralPlan {
   readonly count?: number;
   readonly title?: string;
   readonly previousTitle?: string;
+  /** Свойства листа для восстановления после удаления (D-19). */
+  readonly properties?: SheetProperties;
   /**
    * Якорь, по которому найдена позиция: «строка проекта G connect». В плане он ЕСТЬ, потому
    * что подтверждая правку, человек подтверждает «удалить строку проекта X, которая сейчас

@@ -43,11 +43,40 @@ export interface ValidationRule {
   readonly values: readonly string[];
 }
 
+/**
+ * Свойства листа, которые ядро умеет вернуть после удаления (D-19).
+ *
+ * Список закрытый и короткий намеренно: всё, чего здесь нет, откат не восстановит, и об
+ * этом человек читает В ПЛАНЕ до удаления, а не выясняет после.
+ */
+export interface SheetProperties {
+  readonly frozenRows?: number;
+  readonly frozenColumns?: number;
+  /** Цвет ярлыка как `#RRGGBB`. */
+  readonly tabColor?: string;
+  readonly hidden?: boolean;
+}
+
+/**
+ * Чего на листе есть, но чего ядро восстановить не может. Считается, чтобы назвать
+ * человеку ЧИСЛОМ, что он потеряет безвозвратно (решение владельца 2026-09-03).
+ */
+export interface SheetExtras {
+  readonly conditionalFormats: number;
+  readonly dataValidations: number;
+  readonly protectedRanges: number;
+  readonly charts: number;
+  readonly filters: number;
+}
+
 export interface SheetSnapshot {
   readonly title: string;
   readonly sheetId: number;
   /** Строки с первой по последнюю заполненную; вложенный массив — по колонкам. */
   readonly rows: readonly (readonly Cell[])[];
+  readonly properties?: SheetProperties;
+  /** Невосстановимое, посчитанное: условное форматирование, проверки данных и прочее. */
+  readonly extras?: SheetExtras;
   readonly frozenRows?: number;
   readonly validations?: readonly ValidationRule[];
   readonly protectedRanges?: readonly GridRange[];
@@ -183,6 +212,8 @@ export interface DeleteDimensionRequest {
 export interface AddSheetRequest {
   readonly kind: 'addSheet';
   readonly title: string;
+  /** Свойства при создании — ими откат возвращает удалённый лист «как был» (D-19). */
+  readonly properties?: SheetProperties;
 }
 
 export interface DeleteSheetRequest {

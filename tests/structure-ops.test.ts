@@ -12,12 +12,19 @@ import { buildSheetData } from '../src/core/sheets/map.js';
 import {
   addSheet,
   deleteRows,
+  deleteSheet,
   insertColumns,
   insertRows,
   renameSheet,
 } from '../src/core/sheets/structure-op.js';
 import { undoLast } from '../src/core/undo.js';
-import { MutableSheetsClient, instructionSheet, reportSheet, snapshot } from './fixtures/sheet.js';
+import {
+  MutableSheetsClient,
+  instructionSheet,
+  reportSheet,
+  snapshot,
+  wideSheet,
+} from './fixtures/sheet.js';
 
 const where = { Проект: 'G connect' };
 const book = () => snapshot([reportSheet(), instructionSheet()]);
@@ -215,7 +222,7 @@ describe('G5, G6, G6b, G7, G17 — удаление строки и подтве
     });
     expect(outcome.status).toBe('ok');
     expect(journalled[0]?.structure).toMatchObject({ kind: 'deleteRows' });
-    expect(journalled[0]?.snapshot?.rows[0]?.map((c) => c.value)).toContain('lash-try-on');
+    expect(journalled[0]?.snapshots?.[0]?.rows[0]?.map((c) => c.value)).toContain('lash-try-on');
 
     const afterDelete = await client.getSpreadsheet();
     expect(afterDelete.sheets[0]?.rows).toHaveLength(3);
@@ -264,5 +271,84 @@ describe('G5, G6, G6b, G7, G17 — удаление строки и подтве
     // а вот пропуск в середине должен отказать, и на это отдельная фикстура ниже.
     const outcome = await deleteRows(client, buildSheetData(book()), { Проект: 'нет такого' }, {});
     expect(outcome.status).toBe('needs_clarification');
+  });
+});
+
+describe('G9, G9b — удаление листа: потеря названа числом, откат говорит, чего не вернул', () => {
+  /** Лист с содержимым, оформлением, закреплённой шапкой и тем, чего откат не вернёт. */
+  const richBook = () => {
+    const base = snapshot([reportSheet(), instructionSheet()]);
+    const rich = {
+      ...base.sheets[1]!,
+      properties: { frozenRows: 1, tabColor: '#17365d', hidden: false },
+      extras: {
+        conditionalFormats: 3,
+        dataValidations: 1,
+        protectedRanges: 0,
+        charts: 2,
+        filters: 1,
+      },
+    };
+    return { ...base, sheets: [base.sheets[0]!, rich] };
+  };
+
+  it('G9b — план называет ЧИСЛОМ, что исчезнет безвозвратно, и просит назвать лист', async () => {
+    const client = new MutableSheetsClient(richBook());
+    const data = buildSheetData(richBook(), { sheet: 'Инструкция' });
+    const preview = await deleteSheet(client, data, {});
+    expect(preview.status).toBe('preview');
+    const lost = preview.structural?.irreversible?.join('; ') ?? '';
+    expect(lost).toContain('3 правил условного форматирования');
+    expect(lost).toContain('2 диаграмм');
+    expect(lost).toContain('1 проверок данных');
+    // Заметки названы как непокрытость, а не посчитаны: ядро их не читает.
+    expect(lost).toContain('заметки к ячейкам');
+    expect(preview.structural?.confirmPhrase).toContain('Инструкция');
+  });
+
+  it('G9b — откат возвращает лист со свойствами и ГОВОРИТ, чего не вернул', async () => {
+    const client = new MutableSheetsClient(richBook());
+    const journalled: WriteRecord[] = [];
+    const outcome = await deleteSheet(client, buildSheetData(richBook(), { sheet: 'Инструкция' }), {
+      dryRun: false,
+      confirm: 'да, удаляю лист Инструкция',
+      journal: async (record) => {
+        journalled.push(record);
+      },
+      journalSource: { recent: () => Promise.resolve(journalled) },
+    });
+    expect(outcome.status).toBe('ok');
+    expect((await client.getSpreadsheet()).sheets.map((s) => s.title)).not.toContain('Инструкция');
+
+    const undone = await undoLast(client, 'SHEET', { recent: () => Promise.resolve(journalled) });
+    expect(undone.status).toBe('ok');
+    const back = (await client.getSpreadsheet()).sheets.find((s) => s.title === 'Инструкция');
+    expect(back).toBeDefined();
+    expect(back?.properties).toMatchObject({ frozenRows: 1, tabColor: '#17365d' });
+    expect(JSON.stringify(back?.rows)).toContain('Реестр');
+    // Главное в этом оракуле: откат НЕ отчитывается полным успехом.
+    expect(undone.notRestored?.join('; ')).toContain('условного форматирования');
+  });
+
+  it('G9 — лист больше бюджета снимка: отказ ДО записи, оба числа названы', async () => {
+    const big = snapshot([reportSheet(), wideSheet(2100)]);
+    const client = new MutableSheetsClient(big);
+    try {
+      await deleteSheet(client, buildSheetData(big, { sheet: 'Много' }), { dryRun: false });
+      expect.unreachable('лист больше бюджета должен отказать');
+    } catch (error) {
+      const { payload } = error as { payload: { cause?: string; detail: string } };
+      expect(payload.cause).toBe('write.snapshot-max-cells');
+      expect(payload.detail).toContain('2000');
+      expect(payload.detail).toContain('4202');
+    }
+  });
+
+  it('единственный лист книги не удаляется: книги без листов не бывает', async () => {
+    const single = snapshot([reportSheet()]);
+    const client = new MutableSheetsClient(single);
+    await expect(deleteSheet(client, buildSheetData(single), {})).rejects.toMatchObject({
+      payload: { cause: 'last_sheet' },
+    });
   });
 });

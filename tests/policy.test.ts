@@ -29,11 +29,23 @@ import { findReplace } from '../src/core/sheets/find-replace-op.js';
 import { formatCells } from '../src/core/sheets/format-op.js';
 import { setCells } from '../src/core/sheets/set-cells-op.js';
 import { assertWritable, resolveTarget } from '../src/core/targets.js';
-import { deleteColumns } from '../src/core/sheets/structure-op.js';
+import { deleteColumns, deleteSheet } from '../src/core/sheets/structure-op.js';
+
+/** Лист с тем, чего откат вернуть не может: считается, чтобы назвать числом. */
+const EXTRAS = {
+  conditionalFormats: 2,
+  dataValidations: 0,
+  protectedRanges: 0,
+  charts: 1,
+  filters: 0,
+};
 import { undoLast } from '../src/core/undo.js';
 import {
   upsertConfirmed,
   FakeSheetsClient,
+  MutableSheetsClient,
+  instructionSheet,
+  reportSheet,
   formattedSheet,
   formulaSheet,
   protectedSheet,
@@ -304,6 +316,28 @@ const probes: Record<string, () => Promise<void>> = {
       // кладётся не «потому что нечем откатить», а потому что требует названия (D-20).
       expect(payload.detail).toContain('названием');
     }
+  },
+
+  'write.undo-names-what-it-cannot': async () => {
+    // Откат листа возвращает значения, вид и свойства — но не условное форматирование,
+    // проверки данных и диаграммы. Он обязан это СКАЗАТЬ: иначе человек прочитает
+    // «откачено» и будет думать, что вернулось всё (урок L5).
+    const rich = snapshot([reportSheet(), { ...instructionSheet(), extras: EXTRAS }]);
+    const client = new MutableSheetsClient(rich);
+    const journalled: WriteRecord[] = [];
+    await deleteSheet(client, buildSheetData(rich, { sheet: 'Инструкция' }), {
+      dryRun: false,
+      confirm: 'удаляю лист Инструкция',
+      journal: async (r) => {
+        journalled.push(r);
+      },
+      journalSource: { recent: () => Promise.resolve(journalled) },
+    });
+    const undone = await undoLast(client, 'SHEET', {
+      recent: () => Promise.resolve(journalled),
+    });
+    expect(undone.status).toBe('ok');
+    expect(undone.notRestored?.join('; ')).toContain('условного форматирования');
   },
 
   'write.snapshot-max-cells': async () => {
@@ -606,7 +640,7 @@ describe('правила как механизм (D-12)', () => {
       // оракул ниже, но здесь важно, что именно эти четыре правила не остались текстом.
       expect(rule.enforced_in).toMatch(/src\//);
     }
-    expect(policyRules()).toHaveLength(31);
+    expect(policyRules()).toHaveLength(32);
   });
 
   it('у КАЖДОГО правила есть проба — и наоборот', () => {
