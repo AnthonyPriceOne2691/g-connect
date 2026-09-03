@@ -119,6 +119,11 @@ export const noopJournal: JournalSink = () => Promise.resolve();
 /**
  * Последняя запись, которую ещё не откатывали. Откат уже откаченного — не «повтор»,
  * а второй откат: он вернул бы значения, которых человек не выбирал.
+ *
+ * Запись БЕЗ ячеек пропускается — но только если у неё нет и геометрии: у структурной
+ * правки ячеек не бывает вовсе («вставили строку» нечего описывать ячейками), и раньше
+ * такая запись становилась неоткатываемой молча — `gc_undo` отвечал «откатывать нечего»
+ * сразу после успешной вставки.
  */
 export function lastUndoable(records: readonly WriteRecord[]): WriteRecord | null {
   const undone = new Set(
@@ -128,7 +133,7 @@ export function lastUndoable(records: readonly WriteRecord[]): WriteRecord | nul
     const record = records[i]!;
     if (record.op === 'undo') continue;
     if (undone.has(record.correlationId)) continue;
-    if (record.changes.length === 0) continue;
+    if (record.changes.length === 0 && record.structure === undefined) continue;
     return record;
   }
   return null;

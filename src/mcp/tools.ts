@@ -15,15 +15,12 @@ import { z } from 'zod';
 import { parseEnvelope } from '../core/envelope.js';
 import { gcError, isGcError } from '../core/errors.js';
 import type { SearchQuery } from '../core/google/drive.js';
-import type { SheetData, SheetsClient } from '../core/sheets/types.js';
 import { operationJsonSchema, parseOperation } from '../core/ops.js';
+import { runOperation } from './run-operation.js';
 import { limitOf, policyText, policyRules } from '../core/policy.js';
 import { listProfiles, profileStatus } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
-import { findReplace } from '../core/sheets/find-replace-op.js';
-import { formatCells } from '../core/sheets/format-op.js';
-import { appendRow, upsertRow, type ApplyOutcome } from '../core/sheets/rows.js';
-import { setCells } from '../core/sheets/set-cells-op.js';
+import type { ApplyOutcome } from '../core/sheets/rows.js';
 import { assertWritable, resolveTarget, type RegistryEntry } from '../core/targets.js';
 import { undoLast } from '../core/undo.js';
 
@@ -269,41 +266,6 @@ export const gcScan: ToolDefinition = {
   },
 };
 
-/** Разводка по операциям. Вынесено: в обработчике это была четвёртая ветка подряд. */
-async function runOperation(
-  client: SheetsClient,
-  data: SheetData,
-  operation: ReturnType<typeof parseOperation>,
-  options: Parameters<typeof appendRow>[3],
-): Promise<ApplyOutcome> {
-  if (operation.op === 'appendRow') return appendRow(client, data, operation.values, options);
-  if (operation.op === 'upsertRow') {
-    return upsertRow(client, data, operation.key, operation.values, options);
-  }
-  if (operation.op === 'findReplace') {
-    return findReplace(
-      client,
-      data,
-      {
-        find: operation.find,
-        replace: operation.replace,
-        ...(operation.columns === undefined ? {} : { columns: operation.columns }),
-        matchCase: operation.matchCase,
-        matchEntireCell: operation.matchEntireCell,
-        searchByRegex: operation.searchByRegex,
-      },
-      options,
-    );
-  }
-  if (operation.op === 'formatCells') {
-    return formatCells(client, data, operation.where, operation.columns, operation.format, {
-      ...options,
-      includeHeader: operation.includeHeader,
-    });
-  }
-  return setCells(client, data, operation.where, operation.values, options);
-}
-
 export const gcApply: ToolDefinition = {
   name: 'gc_apply',
   title: 'Записать в таблицу (по умолчанию — превью)',
@@ -313,7 +275,17 @@ export const gcApply: ToolDefinition = {
     'dryRun=false. Неизвестная колонка или значение вне списка допустимых дают ' +
     'status=needs_clarification с вариантами: спроси, не угадывай.',
   input: {
-    op: z.enum(['appendRow', 'upsertRow', 'setCells', 'formatCells', 'findReplace']),
+    op: z.enum([
+      'appendRow',
+      'upsertRow',
+      'setCells',
+      'formatCells',
+      'findReplace',
+      'insertRows',
+      'insertColumns',
+      'addSheet',
+      'renameSheet',
+    ]),
     /** Превью файлом: широкую таблицу в терминале не читают (§13.3, ступень 0). */
     report: z.boolean().default(false).describe('Дополнительно записать превью HTML-файлом'),
     target: targetArg,
@@ -340,6 +312,18 @@ export const gcApply: ToolDefinition = {
       .optional()
       .describe('formatCells: заодно поправить ячейку заголовка этих колонок'),
     find: z.string().min(1).optional().describe('findReplace: что искать'),
+    count: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe('insertRows/insertColumns: сколько вставить (по умолчанию 1)'),
+    below: z
+      .boolean()
+      .optional()
+      .describe('insertRows/insertColumns: вставить ниже (правее) якоря, а не выше'),
+    title: z.string().min(1).optional().describe('addSheet/renameSheet: имя листа'),
+    column: z.string().min(1).optional().describe('insertColumns: якорь — имя колонки'),
     replace: z.string().optional().describe('findReplace: на что заменить'),
     matchCase: z.boolean().optional().describe('findReplace: учитывать регистр'),
     matchEntireCell: z.boolean().optional().describe('findReplace: совпадение по всей ячейке'),

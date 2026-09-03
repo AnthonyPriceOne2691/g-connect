@@ -125,12 +125,55 @@ export const findReplaceOp = z.object({
   ...commonFields,
 });
 
+/**
+ * Структурные операции (§6.2, фаза 2.5b): геометрия листа.
+ *
+ * Позиция задаётся ЯКОРЕМ, а не числом: «вставь строку выше проекта X». Номер строки
+ * между планом и записью может стать чужим, и число на границе означало бы, что клиент
+ * его уже посчитал — по карте, которая могла устареть.
+ */
+export const insertRowsOp = z.object({
+  op: z.literal('insertRows'),
+  /** Относительно какой строки вставляем: то же условие, что у `setCells`. */
+  where: rowValues,
+  count: z.number().int().positive().max(200).default(1),
+  /** Ниже якоря, а не выше. */
+  below: z.boolean().default(false),
+  ...commonFields,
+});
+
+export const insertColumnsOp = z.object({
+  op: z.literal('insertColumns'),
+  /** Относительно какой колонки — по имени, не по букве. */
+  column: z.string().min(1),
+  count: z.number().int().positive().max(200).default(1),
+  /** Правее якоря, а не левее. */
+  below: z.boolean().default(false),
+  ...commonFields,
+});
+
+export const addSheetOp = z.object({
+  op: z.literal('addSheet'),
+  title: z.string().min(1),
+  ...commonFields,
+});
+
+export const renameSheetOp = z.object({
+  op: z.literal('renameSheet'),
+  title: z.string().min(1),
+  ...commonFields,
+});
+
 export const operationSchema = z.discriminatedUnion('op', [
   appendRowOp,
   upsertRowOp,
   setCellsOp,
   formatCellsOp,
   findReplaceOp,
+  insertRowsOp,
+  insertColumnsOp,
+  addSheetOp,
+  renameSheetOp,
 ]);
 
 export type Operation = z.infer<typeof operationSchema>;
@@ -142,6 +185,10 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'setCells',
   'formatCells',
   'findReplace',
+  'insertRows',
+  'insertColumns',
+  'addSheet',
+  'renameSheet',
 ];
 
 /**
