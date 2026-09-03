@@ -238,6 +238,22 @@
       "value": true,
       "enforced_in": "src/core/sheets/structure-op.ts (lostWith) + src/core/undo-structure.ts (undoStructure, notRestored)",
       "probe": "откат удаления листа сообщает notRestored с числами, а не отчитывается полным успехом"
+    },
+    {
+      "id": "write.structural-needs-snapshot",
+      "title": "Правка, уничтожающая содержимое, не идёт без снимка для отката",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/sheets/structure-op.ts (deleteRows, deleteColumns, deleteSheet) + src/core/sheets/order-op.ts (sortRange) + src/core/undo-structure.ts (restoreSnapshot)",
+      "probe": "в записи журнала об удалении есть снимок со значениями и видом, и откат заливает его обратно"
+    },
+    {
+      "id": "write.destructive-needs-name",
+      "title": "Разрушающая правка подтверждается названием предмета, а не «да»",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/envelope.ts (NAMED_CONFIRM_OPS) + src/core/sheets/write-guards.ts (namedConfirmOutcome)",
+      "probe": "удаление с подтверждением «да» не пишет; с названием предмета — пишет"
     }
   ]
 }

@@ -51,7 +51,16 @@ describe('K10 — что вообще нельзя положить в конв�
       'insertColumns',
       'addSheet',
       'renameSheet',
+      'copyRange',
+      'autoFill',
+      'duplicateSheet',
+      'createFile',
     ]);
+    // В конверте только добавляющее и обратимое: ни одного удаления, ни перемещения,
+    // ни сортировки, ни вырезания — они уничтожают или перемешивают.
+    for (const op of ['deleteRows', 'deleteSheet', 'cutRange', 'moveRows', 'sortRange']) {
+      expect(ENVELOPE_OPS).not.toContain(op);
+    }
     // Два списка не пересекаются — иначе одна операция была бы и разрешаемой, и требующей
     // подтверждения, и какая ветвь сработает, зависело бы от порядка проверок.
     for (const op of NAMED_CONFIRM_OPS) expect(ENVELOPE_OPS).not.toContain(op);

@@ -33,6 +33,13 @@ export const ENVELOPE_OPS: readonly OperationKind[] = [
   'insertColumns',
   'addSheet',
   'renameSheet',
+  // Добавляющие и обратимые: копия колонки и автозаполнение возвращаются снимком,
+  // копия листа удаляется откатом, созданный файл уходит в корзину.
+  'copyRange',
+  'autoFill',
+  'duplicateSheet',
+  // Создание файла (`createFile`) тоже добавляющее и обратимое — в корзину.
+  'createFile',
 ];
 
 /**
@@ -49,6 +56,8 @@ export const NAMED_CONFIRM_OPS: readonly OperationKind[] = [
   'deleteSheet',
   'moveRows',
   'sortRange',
+  // Вырезание уничтожает источник целиком, независимо от того, что переносит.
+  'cutRange',
 ];
 
 /** Граница по числу ячеек, когда конверт её не назвал. */

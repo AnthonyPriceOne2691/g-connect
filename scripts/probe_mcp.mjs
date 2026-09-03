@@ -144,6 +144,43 @@ try {
       combat === null ? 'конверта нет: запись через план и код' : JSON.stringify(combat),
     );
 
+    // Фаза 2.5b: структурные операции. Превью вставки — ничего не пишем; живую вставку с
+    // откатом делает человек (см. чек-лист поставки), потому что подтверждение — его.
+    const insert = await callTool('gc_apply', {
+      op: 'insertRows',
+      target: TARGET,
+      where: { [key]: 'G connect' },
+      count: 1,
+    });
+    check(
+      'превью вставки строки описывает позицию и якорь',
+      insert.structural?.kind === 'insertRows' && typeof insert.structural?.at === 'number',
+      `status=${insert.status}, at=${insert.structural?.at}, anchor=${insert.structural?.anchor}`,
+    );
+    check(
+      'вставка ничего не записала на превью',
+      insert.status === 'preview',
+      String(insert.status),
+    );
+
+    // Разрушающая правка обязана просить НАЗВАНИЕ, а не код и не «да» (D-20).
+    const remove = await callTool('gc_apply', {
+      op: 'deleteRows',
+      target: TARGET,
+      where: { [key]: 'G connect' },
+    });
+    check(
+      'удаление строки просит назвать предмет правки',
+      typeof remove.structural?.confirmPhrase === 'string' &&
+        remove.structural.confirmPhrase.includes('G connect'),
+      String(remove.structural?.confirmPhrase),
+    );
+    check(
+      'план удаления перечисляет, что именно исчезнет',
+      Array.isArray(remove.changes) && remove.changes.length > 0,
+      `${remove.changes?.length ?? 0} ячеек в плане`,
+    );
+
     // Фаза 2.5a: вид и замена — тоже только превью, ничего не записываем.
     const format = await callTool('gc_apply', {
       op: 'formatCells',

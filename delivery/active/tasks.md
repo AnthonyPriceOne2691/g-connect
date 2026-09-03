@@ -87,5 +87,5 @@
 - [x] T33: `write.snapshot-max-cells`, `write.structural-needs-snapshot`,
       `write.destructive-needs-name`, `write.undo-names-what-it-cannot` — с пробами
 - [x] T34: D-19 и D-20 в DESIGN.md, §6.2 закрыт в части структуры — тем же коммитом
-- [ ] T35: `probe_mcp.mjs --live`: вставка и откат вставки, ничего не удаляя
+- [x] T35: `probe_mcp.mjs --live`: вставка и откат вставки, ничего не удаляя
 - [ ] T36: живой прогон владельцем, результат в `observed.md`

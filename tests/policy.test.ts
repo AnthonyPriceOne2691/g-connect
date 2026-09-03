@@ -29,7 +29,7 @@ import { findReplace } from '../src/core/sheets/find-replace-op.js';
 import { formatCells } from '../src/core/sheets/format-op.js';
 import { setCells } from '../src/core/sheets/set-cells-op.js';
 import { assertWritable, resolveTarget } from '../src/core/targets.js';
-import { deleteColumns, deleteSheet } from '../src/core/sheets/structure-op.js';
+import { deleteColumns, deleteRows, deleteSheet } from '../src/core/sheets/structure-op.js';
 
 /** Лист с тем, чего откат вернуть не может: считается, чтобы назвать числом. */
 const EXTRAS = {
@@ -316,6 +316,58 @@ const probes: Record<string, () => Promise<void>> = {
       // кладётся не «потому что нечем откатить», а потому что требует названия (D-20).
       expect(payload.detail).toContain('названием');
     }
+  },
+
+  'write.structural-needs-snapshot': async () => {
+    // Снимок — не «на всякий случай»: без него откат вернёт пустую строку и отчитается
+    // успехом. Проверяем и наличие в журнале, и то, что откат его заливает.
+    const c = new MutableSheetsClient(snapshot([reportSheet(), instructionSheet()]));
+    const journalled: WriteRecord[] = [];
+    const options = {
+      dryRun: false,
+      confirm: 'удаляю lash-try-on',
+      journal: async (r: WriteRecord) => {
+        journalled.push(r);
+      },
+      journalSource: { recent: () => Promise.resolve(journalled) },
+    };
+    await deleteRows(
+      c,
+      buildSheetData(snapshot([reportSheet(), instructionSheet()])),
+      { Проект: 'lash-try-on' },
+      options,
+    );
+    const snap = journalled[0]?.snapshots?.[0];
+    expect(snap?.rows[0]?.map((cell) => cell.value)).toContain('lash-try-on');
+
+    const undone = await undoLast(c, 'SHEET', { recent: () => Promise.resolve(journalled) });
+    expect(undone.restored.length).toBeGreaterThan(0);
+    expect(JSON.stringify((await c.getSpreadsheet()).sheets[0]?.rows)).toContain('lash-try-on');
+  },
+
+  'write.destructive-needs-name': async () => {
+    const c = new MutableSheetsClient(snapshot([reportSheet(), instructionSheet()]));
+    const data = () => buildSheetData(snapshot([reportSheet(), instructionSheet()]));
+    const denied = await deleteRows(
+      c,
+      data(),
+      { Проект: 'lash-try-on' },
+      {
+        dryRun: false,
+        confirm: 'да',
+      },
+    );
+    expect(denied.status).toBe('confirm_required');
+    const allowed = await deleteRows(
+      c,
+      data(),
+      { Проект: 'lash-try-on' },
+      {
+        dryRun: false,
+        confirm: 'да, удаляю lash-try-on',
+      },
+    );
+    expect(allowed.status).toBe('ok');
   },
 
   'write.undo-names-what-it-cannot': async () => {
@@ -640,7 +692,7 @@ describe('правила как механизм (D-12)', () => {
       // оракул ниже, но здесь важно, что именно эти четыре правила не остались текстом.
       expect(rule.enforced_in).toMatch(/src\//);
     }
-    expect(policyRules()).toHaveLength(32);
+    expect(policyRules()).toHaveLength(34);
   });
 
   it('у КАЖДОГО правила есть проба — и наоборот', () => {
