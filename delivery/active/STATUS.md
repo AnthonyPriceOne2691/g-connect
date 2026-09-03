@@ -1,0 +1,29 @@
+# Active delivery status
+
+- **slug:** structural-ops
+- **stack:** delivery@1.84, cqg@2.32, okf@absent
+- **class:** L
+- **kind:** feature
+- **repro_test:** n/a reason=kind=feature
+- **diagnosis:** n/a reason=kind=feature
+- **phase:** specify
+- **builder:** agent:claude-opus-5
+- **verifier:** human:anton
+- **human_ok_spec:** no reason=ждёт подписи владельца; спека открыта 2026-09-03 по его решению «дальше сделать уровень 2»
+- **human_ok_plan:** no reason=plan.md и tasks.md пишутся после подписи спеки
+- **shape-oracles:** cqg-deployed
+- **behavior-oracles:** planned reason=G1-G14 в spec.md
+- **artifact_oracle:** scripts/probe_mcp.mjs reason=структурная правка меняет геометрию листа, и отказ Google на `insertDimension`/`deleteDimension` виден живым ответом, а не фейком (урок L3)
+- **ci-oracles:** tooling
+- **worktree:** ветка feat/structural-ops reason=урок L2; мерж только через merge_guard.sh, сразу за ним contour_doctor
+- **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
+- **blockers:** none
+- **waivers:** none
+- **runtime_paths:** src/core/google/sheets.ts,src/core/undo.ts reason=новые запросы `batchUpdate` (insertDimension, deleteDimension, addSheet, copyPaste, autoFill, sortRange) в шве отсутствуют вовсе, и их отказ виден живым ответом Google; откат структурной правки впервые применяет ОБРАТНУЮ структурную операцию, а не запись значений
+- **model_surface:** src/policy/rules.md,src/policy/rules.json reason=агенту уходит, какие структурные операции существуют, какие можно в конверт, и что удаление требует снимка
+- **canon_drift_waiver:** no
+- **baseline_growth_waiver:** no
+- **observability:** 1
+- **observe_signal:** структурная правка на живой таблице откатывается ПОЛНОСТЬЮ: удалённая строка возвращается со значениями и видом, вставленная исчезает, лист восстанавливается с содержимым. Обратное тоже наблюдаем: отказ вместо порчи, когда снимок не построить или якорь сдвинулся
+- **observe_until:** 2026-11-01
+- **circuit_breakers:** defaults from AGENT_DELIVERY_HARNESS.md §3.4
