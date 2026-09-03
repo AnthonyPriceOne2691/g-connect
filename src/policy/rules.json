@@ -190,6 +190,38 @@
       "kind": "invariant",
       "enforced_in": "src/core/sheets/find-replace-op.ts (replaceChanges)",
       "probe": "findReplace отдаёт по одной строке плана на каждую затронутую ячейку с «было → станет»"
+    },
+    {
+      "id": "write.envelope-authorizes",
+      "title": "Запись без кода плана идёт только в пределах конверта цели",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/envelope.ts (envelopeAuthorizes) + src/core/sheets/write-guards.ts (confirmationOutcome)",
+      "probe": "правка вне конверта с dryRun:false и без кода даёт confirm_required и ни одной записи"
+    },
+    {
+      "id": "write.irreversible-outside-envelope",
+      "title": "В конверт кладутся только операции, откат которых построен",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/envelope.ts (ENVELOPE_OPS, parseOps)",
+      "probe": "структурная операция в auto отклоняется при разборе конверта с названной причиной"
+    },
+    {
+      "id": "write.plan-cells-only",
+      "title": "Код плана считается от затронутых ячеек, но не от ревизии документа",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/plan.ts (canonicalPlan)",
+      "probe": "два превью одной правки на разных ревизиях дают один код плана"
+    },
+    {
+      "id": "write.append-dedupe-window",
+      "title": "Повтор той же дописанной строки в пределах 10 минут не дописывается второй раз",
+      "kind": "limit",
+      "value": 10,
+      "enforced_in": "src/core/sheets/write-guards.ts (recentDuplicateAppend)",
+      "probe": "второй appendRow с тем же содержимым без кода плана даёт no_change, а не вторую строку"
     }
   ]
 }

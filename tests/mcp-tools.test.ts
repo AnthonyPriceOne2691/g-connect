@@ -24,6 +24,7 @@ import {
 import {
   FakeSheetsClient,
   MutableSheetsClient,
+  formulaSheet,
   instructionSheet,
   reportSheet,
   snapshot,
@@ -35,6 +36,27 @@ const registry: Registry = {
   targets: [
     { alias: 'log', id: SHEET_ID, type: 'sheet', allow: 'write', sheet: 'Лист1', key: ['Проект'] },
     { alias: 'reference', id: 'DOCID000000000000000000', type: 'doc' },
+    // Цель с подписанным конвертом (D-18): такие правки идут с первой фразы.
+    {
+      alias: 'combat',
+      id: SHEET_ID,
+      type: 'sheet',
+      allow: 'write',
+      sheet: 'Лист1',
+      key: ['Проект'],
+      auto: { ops: ['upsertRow', 'setCells', 'formatCells', 'appendRow'], maxCells: 2 },
+    },
+    // Конверт написан неверно: запись по такой цели идёт через план и код, а причина
+    // называется вслух — угадывать половину подписи нельзя.
+    {
+      alias: 'broken',
+      id: SHEET_ID,
+      type: 'sheet',
+      allow: 'write',
+      sheet: 'Лист1',
+      key: ['Проект'],
+      auto: { ops: ['deleteRows'] },
+    },
   ],
 };
 
@@ -126,11 +148,18 @@ describe('B2 — gc_targets отдаёт права, но не секреты', 
     const { deps } = harness();
     const result = await runTool(gcTargets, {}, deps);
     expect(result.ok).toBe(true);
-    const data = result.data as { targets: { alias: string; allow: string }[]; note: string };
-    expect(data.targets).toHaveLength(2);
+    const data = result.data as {
+      targets: { alias: string; allow: string; auto: unknown }[];
+      note: string;
+    };
+    expect(data.targets).toHaveLength(4);
     expect(data.targets.find((t) => t.alias === 'log')?.allow).toBe('write');
     expect(data.targets.find((t) => t.alias === 'reference')?.allow).toBe('read');
     expect(data.note).toContain('write.allowlist');
+    // Конверт виден рядом с правами: у цели без него — null, у битого — причина строкой.
+    expect(data.targets.find((t) => t.alias === 'log')?.auto).toBeNull();
+    expect(data.targets.find((t) => t.alias === 'combat')?.auto).toMatchObject({ maxCells: 2 });
+    expect(String(data.targets.find((t) => t.alias === 'broken')?.auto)).toContain('deleteRows');
   });
 
   it('в ответе нет ни токенов, ни путей к профилю', async () => {
@@ -317,6 +346,21 @@ describe('gc_undo через инструмент', () => {
     expect(data.status).toBe('ok');
     expect(data.restored[0]?.value).toBe(2);
     expect(journalled.some((r) => r.op === 'undo')).toBe(true);
+  });
+
+  it('R6 — строка отката несёт ревизию ПОСЛЕ обратной записи, а не литерал null', async () => {
+    const applied = new MutableSheetsClient(snapshot());
+    const { deps, journalled } = harness({ sheets: () => Promise.resolve(applied) });
+    await applyConfirmed(
+      { op: 'upsertRow', target: 'log', key: { Проект: 'G connect' }, values: { Часы: 9 } },
+      deps,
+    );
+    await runTool(gcUndo, { target: 'log' }, deps);
+    const undone = journalled.find((r) => r.op === 'undo');
+    // Тип WriteRecord и rules.md обещают человеку обе ревизии; до 2026-09-03 у строки
+    // отката вторая была захардкожена null, и обещание было ложным.
+    expect(undone?.revisionBefore).toBe('rev-1');
+    expect(undone?.revisionAfter).toBe('rev-1');
   });
 
   it('нечего откатывать → говорит прямо', async () => {
@@ -581,5 +625,171 @@ describe('живой прогон B13 — что он нашёл', () => {
     expect(data.status).toBe('nothing_to_undo');
     expect(data.reason).toBe('journal_empty');
     expect(data.hint).toContain('журнала нет');
+  });
+});
+
+describe('K1, K3, K9 — боевая запись по конверту (D-18)', () => {
+  it('K1: правка внутри конверта пишется с первой фразы, без кода плана', async () => {
+    const applied = new MutableSheetsClient(snapshot());
+    const { deps, journalled } = harness({ sheets: () => Promise.resolve(applied) });
+    const result = await runTool(
+      gcApply,
+      {
+        op: 'upsertRow',
+        target: 'combat',
+        key: { Проект: 'G connect' },
+        values: { Часы: 9 },
+        dryRun: false,
+      },
+      deps,
+    );
+    expect(result.ok).toBe(true);
+    const data = result.data as { status: string; correlationId?: string; hint?: string };
+    expect(data.status).toBe('ok');
+    // Обещание «откатить одной фразой» исполняет механизм: id записи в ответе (урок L6).
+    expect(data.correlationId).toBeDefined();
+    expect(data.hint).toContain('gc_undo');
+    expect(journalled).toHaveLength(1);
+    expect(journalled[0]?.correlationId).toBe(data.correlationId);
+  });
+
+  it('K9: откат после боевой записи возвращает ровно её', async () => {
+    const applied = new MutableSheetsClient(snapshot());
+    const { deps, journalled } = harness({ sheets: () => Promise.resolve(applied) });
+    await runTool(
+      gcApply,
+      {
+        op: 'upsertRow',
+        target: 'combat',
+        key: { Проект: 'G connect' },
+        values: { Часы: 9 },
+        dryRun: false,
+      },
+      deps,
+    );
+    const undone = (await runTool(gcUndo, { target: 'combat' }, deps)).data as {
+      status: string;
+      restored: { value: unknown }[];
+    };
+    expect(undone.status).toBe('ok');
+    expect(undone.restored[0]?.value).toBe(2);
+    expect(journalled.map((r) => r.op)).toEqual(['upsertRow', 'undo']);
+  });
+
+  it('K3: за границей конверта записи нет — статус, план и код в том же ответе', async () => {
+    const { deps, client, journalled } = harness();
+    const result = await runTool(
+      gcApply,
+      {
+        op: 'setCells',
+        target: 'combat',
+        where: {},
+        values: { Часы: 1 },
+        dryRun: false,
+      },
+      deps,
+    );
+    const data = result.data as { status: string; planId: string | null; notes: string[] };
+    // В конверте maxCells: 2, а правка по пустому условию берёт обе строки листа —
+    // границу проверяем на настоящем плане, а не на подставленном числе.
+    if (data.status === 'confirm_required') {
+      expect(data.planId).toMatch(/^[0-9a-f]{6}$/);
+      expect(data.notes.join(' ')).toContain('конверт');
+    } else {
+      expect(data.status).toBe('ok');
+    }
+    expect(journalled.some((r) => r.op === 'setCells' && r.changes.length > 2)).toBe(false);
+    expect(client.writes.length).toBeLessThanOrEqual(2);
+  });
+
+  it('битый конверт: запись отказывает с названной причиной, а не пишет наугад', async () => {
+    const { deps, client } = harness();
+    const result = await runTool(
+      gcApply,
+      {
+        op: 'upsertRow',
+        target: 'broken',
+        key: { Проект: 'G connect' },
+        values: { Часы: 9 },
+        dryRun: false,
+      },
+      deps,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.cause).toBe('write.envelope-invalid');
+    expect(client.writes).toHaveLength(0);
+  });
+
+  it('цель без конверта ведёт себя как прежде: без кода записи нет', async () => {
+    const { deps, client } = harness();
+    const result = await runTool(
+      gcApply,
+      {
+        op: 'upsertRow',
+        target: 'log',
+        key: { Проект: 'G connect' },
+        values: { Часы: 9 },
+        dryRun: false,
+      },
+      deps,
+    );
+    const data = result.data as { status: string; planId: string | null };
+    expect(data.status).toBe('confirm_required');
+    expect(data.planId).toMatch(/^[0-9a-f]{6}$/);
+    expect(client.writes).toHaveLength(0);
+  });
+});
+
+describe('K4, K5, K6, K7 — что конверт НЕ разрешает решать за человека (D-18)', () => {
+  const combat = { op: 'upsertRow', target: 'combat', key: { Проект: 'G connect' }, dryRun: false };
+
+  it('K4: неизвестная колонка внутри конверта — вопрос, а не догадка', async () => {
+    const { deps, client } = harness();
+    const data = (await runTool(gcApply, { ...combat, values: { Бюджет: 5 } }, deps)).data as {
+      status: string;
+      questions: { available: string[] }[];
+    };
+    expect(data.status).toBe('needs_clarification');
+    expect(data.questions[0]?.available).toContain('Часы');
+    expect(client.writes).toHaveLength(0);
+  });
+
+  it('K5: значение вне списка допустимых — вопрос со списком', async () => {
+    const { deps, client } = harness();
+    const data = (await runTool(gcApply, { ...combat, values: { Статус: 'почти готово' } }, deps))
+      .data as { status: string; questions: { reason: string; available: string[] }[] };
+    expect(data.status).toBe('needs_clarification');
+    expect(data.questions[0]?.reason).toBe('not_in_enum');
+    expect(client.writes).toHaveLength(0);
+  });
+
+  it('K6: формульная колонка внутри конверта требует force, а не конверта', async () => {
+    const applied = new FakeSheetsClient(snapshot([formulaSheet()]));
+    const { deps } = harness({ sheets: () => Promise.resolve(applied) });
+    const result = await runTool(
+      gcApply,
+      { ...combat, sheet: 'Итоги', key: { Проект: 'G connect' }, values: { Итого: 1 } },
+      deps,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.cause).toBe('formula_column');
+    expect(applied.writes).toHaveLength(0);
+  });
+
+  it('K7: та же фраза дважды не даёт второй строки', async () => {
+    const applied = new MutableSheetsClient(snapshot());
+    const { deps, journalled } = harness({ sheets: () => Promise.resolve(applied) });
+    const row = {
+      op: 'appendRow',
+      target: 'combat',
+      values: { Проект: 'Новый', Часы: 1 },
+      dryRun: false,
+    };
+    const first = (await runTool(gcApply, row, deps)).data as { status: string };
+    expect(first.status).toBe('ok');
+    const second = (await runTool(gcApply, row, deps)).data as { status: string; notes: string[] };
+    expect(second.status).toBe('no_change');
+    expect(second.notes.join(' ')).toContain('уже дописана');
+    expect(journalled.filter((r) => r.op === 'appendRow')).toHaveLength(1);
   });
 });

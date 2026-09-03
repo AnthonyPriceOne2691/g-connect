@@ -26,6 +26,12 @@ export interface RegistryEntry {
   readonly columns?: Readonly<Record<string, string>>;
   readonly aliases?: Readonly<Record<string, readonly string[]>>;
   readonly key?: readonly string[];
+  /**
+   * Конверт разрешений (D-18): что делать с первой фразы, без показа плана. Разбирается
+   * в `envelope.ts` там, где принимается решение о записи, — битый конверт не должен
+   * ронять чтение. Отсутствие поля = разрешения нет.
+   */
+  readonly auto?: unknown;
 }
 
 export interface Registry {

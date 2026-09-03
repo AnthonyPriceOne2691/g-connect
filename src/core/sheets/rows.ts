@@ -23,7 +23,12 @@ import {
   type SheetMap,
   type SheetsClient,
 } from './types.js';
-import { assertBeforeValues, assertPlanNotApplied, confirmationOutcome } from './write-guards.js';
+import {
+  assertBeforeValues,
+  assertPlanNotApplied,
+  confirmationOutcome,
+  duplicateAppendOutcome,
+} from './write-guards.js';
 import {
   noChangeNote,
   type OperationKind,
@@ -237,7 +242,6 @@ function planOf(
     targetId: map.spreadsheetId,
     sheet: map.sheet,
     op,
-    revision: map.revisionId,
     cells: changes.map(cellRecord),
     touches: prepared.touches,
   };
@@ -257,12 +261,21 @@ async function commit(
   options: RowOptions,
   op: OperationKind,
 ): Promise<ApplyOutcome> {
-  const mismatch = confirmationOutcome(base, options);
-  if (mismatch !== null) return mismatch;
+  const decision = options.authorize?.(op, changes.length) ?? {
+    authorized: false,
+    reason: 'Разрешения на запись без кода плана у этого вызова нет.',
+  };
+  const unconfirmed = confirmationOutcome(base, options, decision);
+  if (unconfirmed !== null) return unconfirmed;
+
+  // Дубль дописанной строки ловится ДО записи и только там, где человек план не читал.
+  const duplicate = await duplicateAppendOutcome(base, options, op, changes, map.spreadsheetId);
+  if (duplicate !== null) return duplicate;
   await assertPlanNotApplied(options, base.planId, map.spreadsheetId);
   await assertBeforeValues(client, map, changes);
   await writeCells(client, map, changes);
   const revisionAfter = (await options.readRevision?.()) ?? null;
+  const correlationId = newCorrelationId();
 
   // Журнал пишется ПОСЛЕ успешной записи и до возврата: если журналирование упало,
   // вызывающий обязан узнать об этом — «записали, но не знаем что» хуже отказа.
@@ -276,11 +289,11 @@ async function commit(
     changes: changes.map(cellRecord),
     revisionBefore: map.revisionId,
     revisionAfter,
-    correlationId: newCorrelationId(),
+    correlationId,
     ...(base.planId === null ? {} : { planId: base.planId }),
   });
 
-  return { status: 'ok', ...base, revisionAfter };
+  return { status: 'ok', ...base, revisionAfter, correlationId };
 }
 
 export async function finish(

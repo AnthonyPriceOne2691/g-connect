@@ -86,6 +86,11 @@ try {
 
   const applySchema = (tools.result?.tools ?? []).find((t) => t.name === 'gc_apply')?.inputSchema;
   check('gc_apply объявляет confirm', applySchema?.properties?.confirm !== undefined);
+  // D-18: конверт цели виден там же, где права. Иначе о разрешении узнают по факту записи.
+  check(
+    'instructions объясняют конверт',
+    (init.result?.instructions ?? '').includes('конверт'),
+  );
 
   const resources = await send('resources/list', {});
   const uris = (resources.result?.resources ?? []).map((r) => r.uri);
@@ -113,6 +118,31 @@ try {
       `status=${preview.status}, planId=${preview.planId}`,
     );
     check('превью ничего не записало', preview.status === 'preview' || preview.status === 'no_change');
+
+    // D-18: код плана не зависит от ревизии документа. На живой таблице `version` Drive
+    // растёт сам (замерено 37 → 39 без записей), и раньше второй превью давал ДРУГОЙ код —
+    // человек получал plan_mismatch на честном подтверждении. Протокольный режим этого не
+    // видит: там ревизия не двигается.
+    const again = await callTool('gc_apply', {
+      op: 'upsertRow',
+      target: TARGET,
+      key: { [key]: 'G connect' },
+      values: { Статус: 'Запущено' },
+    });
+    check(
+      'два превью одной правки дают один код плана',
+      again.planId === preview.planId,
+      `${preview.planId} → ${again.planId}, ревизии ${preview.baseRevision} → ${again.baseRevision}`,
+    );
+
+    // Конверт цели: проба СУДИТ, а не пишет. Боевую запись на живой таблице делает
+    // человек — у пробы нет права расширять разрешение, которое подписывал не она.
+    const combat = entry?.auto;
+    check(
+      'конверт цели виден в gc_targets',
+      combat === null || typeof combat === 'object' || typeof combat === 'string',
+      combat === null ? 'конверта нет: запись через план и код' : JSON.stringify(combat),
+    );
 
     // Фаза 2.5a: вид и замена — тоже только превью, ничего не записываем.
     const format = await callTool('gc_apply', {

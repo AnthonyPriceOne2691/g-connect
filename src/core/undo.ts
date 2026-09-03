@@ -30,6 +30,12 @@ export interface UndoOptions {
   readonly last?: number;
   /** Ревизия сейчас — только для записи в журнал; решение об откате принимается по ячейкам. */
   readonly currentRevision?: string | null;
+  /**
+   * Ревизия ПОСЛЕ обратной записи — тем же способом, каким её читает путь записи.
+   * Раньше здесь стоял литерал `null`, хотя тип `WriteRecord` и `rules.md` обещают
+   * человеку обе ревизии: строка отката была заведомо неполной.
+   */
+  readonly readRevision?: () => Promise<string | null>;
   /** Откатить, даже если наши ячейки изменили. Только по явному решению человека. */
   readonly force?: boolean;
   readonly journal?: JournalSink;
@@ -99,6 +105,7 @@ function undoRecord(
   targetId: string,
   at: string,
   options: UndoOptions,
+  revisionAfter: string | null,
 ): WriteRecord {
   return {
     at,
@@ -116,7 +123,7 @@ function undoRecord(
       ...(c.beforeFormat === undefined ? {} : { afterFormat: c.beforeFormat }),
     })),
     revisionBefore: options.currentRevision ?? null,
-    revisionAfter: null,
+    revisionAfter,
     correlationId: newCorrelationId(),
     undoOf: record.correlationId,
     ...(record.planId === undefined ? {} : { planId: record.planId }),
@@ -280,8 +287,25 @@ export async function undoLast(
 
   const restored = await restoreChanges(client, targetId, sheetId, record);
 
-  const at = new Date().toISOString();
-  await options.journal?.(undoRecord(record, targetId, at, options));
+  await journalUndo(record, targetId, options);
 
   return { status: 'ok', restored, undoneCorrelationId: record.correlationId, at: record.at };
+}
+
+/**
+ * След отката в журнале: время, ревизия после обратной записи, обратные изменения.
+ *
+ * Вынесено из `undoLast` не для красоты — гейт сложности отклонил одиннадцатую ветвь в
+ * оркестраторе, и он прав: «что откатывать» и «как записать след» это разные вопросы,
+ * а в `undoLast` уже тринадцать ветвей на первый из них.
+ */
+async function journalUndo(
+  record: WriteRecord,
+  targetId: string,
+  options: UndoOptions,
+): Promise<void> {
+  if (options.journal === undefined) return;
+  const at = new Date().toISOString();
+  const revisionAfter = (await options.readRevision?.()) ?? null;
+  await options.journal(undoRecord(record, targetId, at, options, revisionAfter));
 }

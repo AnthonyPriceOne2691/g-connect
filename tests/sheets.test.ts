@@ -551,7 +551,7 @@ describe('запись не идёт на изменившееся значен�
     expect(outcome.changes[0]?.before).toBe(2);
   });
 
-  it('значение изменилось после превью → stale_value, ни одной записи', async () => {
+  it('R3 — значение изменилось после превью → stale_value, ни одной записи', async () => {
     const client = new AlteredClient(statusChanged);
     const failure = await thrown(
       upsertConfirmed(
@@ -610,13 +610,22 @@ describe('запись не идёт на изменившееся значен�
 describe('запись идёт только по коду плана', () => {
   const key = { Проект: 'G connect' };
 
-  it('B15 — без кода плана запись не проходит, и это отказ с действием', async () => {
+  it('B15 — без кода плана и без конверта записи нет, и в ответе есть чем подтвердить', async () => {
+    // Переведён, а не обойдён (урок L10): с D-18 отказ приходит СТАТУСОМ, а не
+    // исключением, и несёт план с кодом — раньше человек получал отказ без плана и
+    // подтверждать было нечего. Само правило не ослаблено: записи по-прежнему нет.
     const client = new FakeSheetsClient();
-    const failure = await thrown(
-      upsertRow(client, data(), key, { Часы: 7 }, { now: NOW, aliases, dryRun: false }),
+    const outcome = await upsertRow(
+      client,
+      data(),
+      key,
+      { Часы: 7 },
+      { now: NOW, aliases, dryRun: false },
     );
-    expect(failure.payload.code).toBe('confirm_required');
-    expect(failure.payload.cause).toBe('write.plan-confirmation');
+    expect(outcome.status).toBe('confirm_required');
+    expect(outcome.planId).toMatch(/^[0-9a-f]{6}$/);
+    expect(outcome.changes).toHaveLength(1);
+    expect(outcome.notes.join(' ')).toContain(outcome.planId ?? '');
     expect(client.writes).toHaveLength(0);
   });
 
@@ -666,7 +675,7 @@ describe('запись идёт только по коду плана', () => {
     expect(journalled[0]?.changes.map((c) => c.a1)).toEqual(preview.changes.map((c) => c.a1));
   });
 
-  it('B20 — тот же план второй раз: отказ, второй строки нет', async () => {
+  it('B20, R5 — тот же план второй раз: отказ, второй строки нет', async () => {
     const client = new FakeSheetsClient();
     const journalled: WriteRecord[] = [];
     const options = {
@@ -773,10 +782,11 @@ describe('force работает только вместе с кодом пла�
 
   it('force без кода плана не проходит: модель не подтверждает сама за человека', async () => {
     const client = new FakeSheetsClient(snapshot([formulaSheet()]));
-    const failure = await thrown(
-      upsertRow(client, formulaData(), key, write, { dryRun: false, force: true }),
-    );
-    expect(failure.payload.code).toBe('confirm_required');
+    const outcome = await upsertRow(client, formulaData(), key, write, {
+      dryRun: false,
+      force: true,
+    });
+    expect(outcome.status).toBe('confirm_required');
     expect(client.writes).toHaveLength(0);
   });
 

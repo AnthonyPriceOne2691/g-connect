@@ -38,8 +38,6 @@ export interface PlanShape {
   readonly targetId: string;
   readonly sheet: string;
   readonly op: string;
-  /** Ревизия, на которой построен план: правка таблицы обязана менять код. */
-  readonly revision: string | null;
   readonly cells: readonly PlanCell[];
   /**
    * Входит в код плана намеренно: подтверждая код, человек подтверждает и то, что правка
@@ -61,6 +59,14 @@ function sortedFormat(format: CellFormat | undefined): readonly (readonly [strin
  * Канонический вид: фиксированный порядок полей и ячейки по адресу. Сортировка не
  * косметика — без неё один и тот же план, собранный в другом порядке обхода строк, дал бы
  * другой код, и человек получил бы отказ на честном подтверждении.
+ *
+ * Ревизии документа здесь нет намеренно (D-18). Она стояла в подписи как второй ремень, а
+ * её источник — `version` из Drive — считает ВСЕ серверные изменения файла, включая
+ * невидимые: замерено 16 → 17 → 18 внутри одного цикла записи (`undo.ts`, потому там
+ * сверка по ревизии и отменена) и 37 → 39 без единой записи между двумя превью (живой
+ * прогон 2026-09-03, код одного плана съехал b6206a → 59cadb → 52a2e8). То есть ремень
+ * рвал честные подтверждения, не добавляя защиты: чужую правку ловит предусловие D-17,
+ * сверяющее значение и вид именно затронутых ячеек.
  */
 export function canonicalPlan(plan: PlanShape): string {
   const cells = [...plan.cells]
@@ -76,7 +82,7 @@ export function canonicalPlan(plan: PlanShape): string {
       sortedFormat(c.afterFormat),
     ]);
   const touches = [...plan.touches].sort();
-  return JSON.stringify([plan.targetId, plan.sheet, plan.op, plan.revision, cells, touches]);
+  return JSON.stringify([plan.targetId, plan.sheet, plan.op, cells, touches]);
 }
 
 /** Код плана: первые символы sha256 от канонического вида. */

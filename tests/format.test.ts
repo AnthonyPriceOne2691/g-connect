@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { WriteRecord } from '../src/core/journal.js';
 import { formatKey } from '../src/core/sheets/a1.js';
-import type { CellFormat } from '../src/core/sheets/types.js';
+import type { Cell, CellFormat } from '../src/core/sheets/types.js';
 import { buildSheetData } from '../src/core/sheets/map.js';
 import { findReplace } from '../src/core/sheets/find-replace-op.js';
 import { formatCells } from '../src/core/sheets/format-op.js';
@@ -440,5 +440,55 @@ describe('findReplace — регистр, экранирование, облас
     const cleared = await run({ find: 'в работе', replace: '', matchEntireCell: true });
     expect(cleared.status).toBe('preview');
     expect(cleared.changes[0]?.after).toBe('');
+  });
+});
+
+describe('R4 — предусловие по ВИДУ между планом и записью (D-17, D-18)', () => {
+  const where = { Проект: 'G connect' };
+
+  /** Клиент, у которого вид ячейки к моменту записи уже другой: чужая правка оформления. */
+  const restyledCell: Cell = { value: 2, format: { align: 'right', italic: true } };
+
+  const restyled = (): ReturnType<typeof snapshot> => {
+    const sheet = formattedSheet();
+    const rows = sheet.rows.map((row, index) =>
+      index === 1 ? row.map((cell, column) => (column === 1 ? restyledCell : cell)) : row,
+    );
+    return snapshot([{ ...sheet, rows }]);
+  };
+
+  class RestyledClient extends FakeSheetsClient {
+    override getSpreadsheet(): ReturnType<FakeSheetsClient['getSpreadsheet']> {
+      return Promise.resolve(restyled());
+    }
+  }
+
+  it('вид изменился после плана → stale_value, ни одной записи', async () => {
+    // Без этого оракула боевой режим держался бы на предусловии, у которого нет пробы:
+    // значение правка вида не меняет, и сверять надо именно формат.
+    const planning = new FakeSheetsClient(snapshot([formattedSheet()]));
+    const preview = await formatCells(
+      planning,
+      buildSheetData(snapshot([formattedSheet()])),
+      where,
+      ['Часы'],
+      { bold: true },
+    );
+    expect(preview.status).toBe('preview');
+
+    const client = new RestyledClient(snapshot([formattedSheet()]));
+    const failure = await thrown(
+      formatCells(
+        client,
+        buildSheetData(snapshot([formattedSheet()])),
+        where,
+        ['Часы'],
+        { bold: true },
+        { dryRun: false, authorize: () => ({ authorized: true }) as const },
+      ),
+    );
+    expect(failure.payload.code).toBe('stale_value');
+    expect(failure.payload.cause).toBe('format_changed_after_preview');
+    expect(client.writes).toHaveLength(0);
   });
 });

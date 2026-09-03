@@ -20,6 +20,7 @@ import { clampLimit, listParams } from '../src/core/google/drive.js';
 import { DEFAULT_MAX_ROWS } from '../src/core/google/sheets.js';
 import { parseOperation, OPERATION_NAMES } from '../src/core/ops.js';
 import { asData, limitOf, policyRules, policyText, ruleById } from '../src/core/policy.js';
+import { parseEnvelope } from '../src/core/envelope.js';
 import { profileStatus, writeToken } from '../src/core/profiles.js';
 import { buildSheetData } from '../src/core/sheets/map.js';
 import type { WriteRecord } from '../src/core/journal.js';
@@ -264,34 +265,115 @@ const probes: Record<string, () => Promise<void>> = {
     }
   },
 
-  'write.plan-confirmation': async () => {
+  'write.envelope-authorizes': async () => {
+    // Без разрешения записи нет, с разрешением — есть. Правило именно про это: право
+    // писать без кода даёт конверт цели, а не желание модели.
     const c = client();
+    const denied = await upsertRow(
+      c,
+      data(),
+      { Проект: 'G connect' },
+      { Часы: 41 },
+      { dryRun: false },
+    );
+    expect(denied.status).toBe('confirm_required');
+    expect(c.writes).toHaveLength(0);
+
+    const allowed = await upsertRow(
+      c,
+      data(),
+      { Проект: 'G connect' },
+      { Часы: 41 },
+      { dryRun: false, authorize: () => ({ authorized: true }) as const },
+    );
+    expect(allowed.status).toBe('ok');
+    expect(c.writes).toHaveLength(1);
+  },
+
+  'write.irreversible-outside-envelope': async () => {
+    // Структурная операция в конверт не кладётся: её откат нечем построить, пока журнал
+    // хранит ячейки, а не строки. Список допустимого — белый, поэтому 2.5b снаружи.
     try {
-      await upsertRow(c, data(), { Проект: 'G connect' }, { Часы: 42 }, { dryRun: false });
-      expect.unreachable('запись без кода плана должна отказать');
+      parseEnvelope({ ops: ['deleteRows'] }, 'infra-test');
+      expect.unreachable('структурная операция в конверте должна быть отклонена');
     } catch (error) {
-      const { payload } = error as { payload: { code: string; cause?: string } };
-      expect(payload.code).toBe('confirm_required');
-      expect(payload.cause).toBe('write.plan-confirmation');
+      const { payload } = error as { payload: { detail: string; cause?: string } };
+      expect(payload.cause).toBe('write.envelope-invalid');
+      expect(payload.detail).toContain('журнал хранит ячейки');
     }
+  },
+
+  'write.plan-cells-only': async () => {
+    // Ревизия документа в подпись не входит: `version` Drive растёт и без правок
+    // пользователя, и код одного плана съезжал между двумя превью (живой прогон).
+    const c = client();
+    const on = (revisionId: string) => buildSheetData({ ...snapshot(), revisionId });
+    const first = await upsertRow(c, on('37'), { Проект: 'G connect' }, { Часы: 7 }, {});
+    const second = await upsertRow(c, on('39'), { Проект: 'G connect' }, { Часы: 7 }, {});
+    expect(second.planId).toBe(first.planId);
+    expect(c.writes).toHaveLength(0);
+  },
+
+  'write.append-dedupe-window': async () => {
+    // Внутри конверта повтор той же фразы не должен давать вторую строку: кода плана,
+    // который раньше ловил дубль, здесь нет, а номер строки после записи сдвигается.
+    const c = client();
+    const journalled: WriteRecord[] = [];
+    const options = {
+      dryRun: false,
+      authorize: () => ({ authorized: true }) as const,
+      journal: async (r: WriteRecord) => {
+        journalled.push(r);
+      },
+      journalSource: { recent: () => Promise.resolve(journalled) },
+    };
+    const row = { Проект: 'Новый', Часы: 1 };
+    const first = await appendRow(c, data(), row, options);
+    expect(first.status).toBe('ok');
+    // Одна дописанная строка — это по одной записи на колонку; важно, что после второго
+    // вызова их число НЕ выросло.
+    const afterFirst = c.writes.length;
+    const second = await appendRow(c, data(), row, options);
+    expect(second.status).toBe('no_change');
+    expect(second.notes.join(' ')).toContain('уже дописана');
+    expect(c.writes).toHaveLength(afterFirst);
+    expect(journalled).toHaveLength(1);
+    expect(limitOf('write.append-dedupe-window', 0)).toBe(10);
+  },
+
+  'write.plan-confirmation': async () => {
+    // С D-18 отказ приходит статусом `confirm_required` и несёт план с кодом: подтвердить
+    // можно следующей фразой, а не третьим вызовом. Правило от этого не ослабло —
+    // запись без разрешения по-прежнему не идёт, и проба это и проверяет (урок L10).
+    const c = client();
+    const outcome = await upsertRow(
+      c,
+      data(),
+      { Проект: 'G connect' },
+      { Часы: 42 },
+      { dryRun: false },
+    );
+    expect(outcome.status).toBe('confirm_required');
+    expect(outcome.planId).toMatch(/^[0-9a-f]{6}$/);
     expect(c.writes).toHaveLength(0);
   },
 
   'write.force-needs-plan': async () => {
     const c = new FakeSheetsClient(snapshot([formulaSheet()]));
     const formulaData = buildSheetData(snapshot([formulaSheet()]));
-    await expect(
-      upsertRow(
-        c,
-        formulaData,
-        { Проект: 'G connect' },
-        { Итого: 1 },
-        {
-          dryRun: false,
-          force: true,
-        },
-      ),
-    ).rejects.toMatchObject({ payload: { code: 'confirm_required' } });
+    const outcome = await upsertRow(
+      c,
+      formulaData,
+      { Проект: 'G connect' },
+      { Итого: 1 },
+      {
+        dryRun: false,
+        force: true,
+      },
+    );
+    // `force` без разрешения не пишет: осознанность правки в формульную колонку
+    // подтверждает человек, а не модель (D-16 остаётся в силе для этого пути).
+    expect(outcome.status).toBe('confirm_required');
     expect(c.writes).toHaveLength(0);
   },
 
@@ -488,6 +570,23 @@ describe('правила как механизм (D-12)', () => {
         expect(existsSync(path), `${rule.id}: файла ${path} нет`).toBe(true);
       }
     }
+  });
+
+  it('R8 — правила боевого режима на месте, с enforced_in и пробой', () => {
+    const added = [
+      'write.envelope-authorizes',
+      'write.irreversible-outside-envelope',
+      'write.plan-cells-only',
+      'write.append-dedupe-window',
+    ];
+    for (const id of added) {
+      const rule = ruleById(id);
+      expect(rule.probe.length).toBeGreaterThan(10);
+      // `enforced_in` указывает на существующий файл — это же проверяет структурный
+      // оракул ниже, но здесь важно, что именно эти четыре правила не остались текстом.
+      expect(rule.enforced_in).toMatch(/src\//);
+    }
+    expect(policyRules()).toHaveLength(30);
   });
 
   it('у КАЖДОГО правила есть проба — и наоборот', () => {

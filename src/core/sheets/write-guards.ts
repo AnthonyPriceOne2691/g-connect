@@ -8,9 +8,11 @@
  */
 
 import { gcError } from '../errors.js';
+import type { JournalSource, WriteRecord } from '../journal.js';
+import { limitOf } from '../policy.js';
 import { formatAt, sameCell, sameFormat, valueAt } from './a1.js';
 import type { SheetMap, SheetSnapshot, SheetsClient } from './types.js';
-import type { ApplyOutcome, PlannedChange, RowOptions } from './write-types.js';
+import type { ApplyOutcome, EnvelopeDecision, PlannedChange, RowOptions } from './write-types.js';
 
 /**
  * Предусловие для правки вида: в ячейке всё ещё тот вид, который показывало превью.
@@ -33,25 +35,40 @@ function assertFormatUnchanged(
 }
 
 /**
- * Подтверждение как подпись (D-16).
+ * Кто разрешил эту запись (D-16 + D-18).
  *
- * Без кода запись не идёт: «пиши» без кода означает «пиши что-нибудь», а между превью и
- * записью план мог измениться — именно эта дыра и закрывается. Код от другого плана —
- * не ошибка формата, а расхождение: в ответ уходит НОВЫЙ план со своим кодом, чтобы
- * человеку было что подтвердить, а не тупик.
+ * Две дороги, и обе ведут к одной проверке — «пишем ровно то, что показали»:
+ *
+ * 1. **Код плана.** Он есть в вызове — сверяем всегда, даже внутри конверта: код от
+ *    другого плана это расхождение, а не формальность. В ответ уходит НОВЫЙ план со своим
+ *    кодом, чтобы человеку было что подтвердить, а не тупик.
+ * 2. **Конверт цели.** Кода нет, но человек заранее подписал, что такие правки на этой
+ *    цели идут с первой фразы. Связь с показанным планом здесь даёт не строка, а один
+ *    вызов: план строится, перечитывается предусловием D-17 и пишется без промежутка, в
+ *    который мог бы вклиниться другой план.
+ *
+ * Ни того, ни другого — `confirm_required` СТАТУСОМ, с планом и кодом в том же ответе.
+ * Раньше здесь летело исключение, и человек получал отказ без плана: подтверждать было
+ * нечего, приходился третий вызов.
  */
 export function confirmationOutcome(
   base: Omit<ApplyOutcome, 'status' | 'revisionAfter'>,
   options: RowOptions,
+  decision: EnvelopeDecision,
 ): ApplyOutcome | null {
   const code = base.planId;
   if (options.confirm === undefined) {
-    throw gcError('confirm_required', {
-      detail:
-        `Покажи человеку план и его код (${code ?? '—'}), и передай код обратно в confirm: ` +
-        '«пиши» без кода не подтверждает конкретную правку.',
-      cause: 'write.plan-confirmation',
-    });
+    if (decision.authorized) return null;
+    return {
+      status: 'confirm_required',
+      ...base,
+      notes: [
+        ...base.notes,
+        `${decision.reason} Записи не было. Код плана — ${code ?? '—'}: покажи человеку ` +
+          'план и код, и передай код обратно в confirm.',
+      ],
+      revisionAfter: null,
+    };
   }
   if (options.confirm === code) return null;
   return {
@@ -80,12 +97,8 @@ export async function assertPlanNotApplied(
   targetId: string,
 ): Promise<void> {
   if (options.journalSource === undefined || planIdValue === null) return;
-  const history = await options.journalSource.recent(targetId, 50);
-  const undone = new Set(
-    history.filter((r) => r.op === 'undo' && r.undoOf !== undefined).map((r) => r.undoOf),
-  );
-  const already = history.find(
-    (r) => r.planId === planIdValue && r.op !== 'undo' && !undone.has(r.correlationId),
+  const already = (await standingWrites(options.journalSource, targetId)).find(
+    (r) => r.planId === planIdValue,
   );
   if (already === undefined) return;
   throw gcError('plan_already_applied', {
@@ -127,4 +140,86 @@ export async function assertBeforeValues(
       cause: 'value_changed_after_preview',
     });
   }
+}
+
+/**
+ * Повтор той же строки внутри конверта — повторённая фраза, а не второе событие (D-18).
+ *
+ * `appendRow` единственная операция записи, которая не идемпотентна: `upsertRow` правит ту
+ * же строку по ключу, `setCells` и `formatCells` на второй раз дают `no_change`. Раньше от
+ * дубля спасал код плана (`plan_already_applied`), но внутри конверта кода нет, а номер
+ * строки после первой записи сдвигается — то есть план ДРУГОЙ, и прежний охранник до этого
+ * случая не доходит.
+ *
+ * Сверяется содержимое, а не адрес: колонка плюс значение «станет». Окно берётся из правил
+ * (`write.append-dedupe-window`), потому что через час та же строка может быть осмысленным
+ * повтором — журналом событий, ради которого `appendRow` и существует. Осознанный дубль
+ * по-прежнему возможен: он подтверждается кодом плана, то есть человеком.
+ */
+export async function duplicateAppendOutcome(
+  base: Omit<ApplyOutcome, 'status' | 'revisionAfter'>,
+  options: RowOptions,
+  op: string,
+  changes: readonly PlannedChange[],
+  targetId: string,
+): Promise<ApplyOutcome | null> {
+  // Подтверждённый кодом дубль осознан — его ловит `plan_already_applied`, а не это
+  // правило: человек прочитал план и назвал код именно для второй такой же строки.
+  if (options.confirm !== undefined) return null;
+  const duplicate = await recentDuplicateAppend(options, op, changes, targetId);
+  if (duplicate === null) return null;
+  return {
+    status: 'no_change',
+    ...base,
+    notes: [...base.notes, duplicate],
+    revisionAfter: null,
+  };
+}
+
+async function recentDuplicateAppend(
+  options: RowOptions,
+  op: string,
+  changes: readonly PlannedChange[],
+  targetId: string,
+): Promise<string | null> {
+  if (op !== 'appendRow' || options.journalSource === undefined) return null;
+  const windowMs = limitOf('write.append-dedupe-window', 10) * 60_000;
+  const now = (options.now ?? new Date()).getTime();
+  const wanted = contentOf(changes);
+  for (const record of await standingWrites(options.journalSource, targetId)) {
+    if (record.op !== 'appendRow') continue;
+    if (now - new Date(record.at).getTime() > windowMs) continue;
+    if (contentOf(record.changes) !== wanted) continue;
+    return (
+      `Такая строка уже дописана ${new Date(record.at).toLocaleString('ru-RU')} ` +
+      `(запись ${record.correlationId}). Второй раз не дописываю: повтор той же фразы — ` +
+      'это не второе событие. Нужен именно дубль — подтверди его кодом плана.'
+    );
+  }
+  return null;
+}
+
+/** Содержимое строки как подпись: колонки и значения «станет», адрес не участвует. */
+function contentOf(changes: readonly { column: string; after: unknown }[]): string {
+  return JSON.stringify(
+    [...changes].map((c) => [c.column, c.after]).sort((a, b) => (a[0]! < b[0]! ? -1 : 1)),
+  );
+}
+
+/**
+ * Записи цели, которые ещё СТОЯТ в документе: без откаченных и без самих откатов.
+ *
+ * Один helper на два охранника: `plan_already_applied` и дедуп `appendRow` спрашивают одно
+ * и то же — «что из этого ещё в силе». Гейт копипаста отклонил две копии этого вопроса, и
+ * он прав: разъехавшись, они дали бы «план уже записан» и «дубля нет» одновременно.
+ */
+async function standingWrites(
+  source: JournalSource,
+  targetId: string,
+): Promise<readonly WriteRecord[]> {
+  const history = await source.recent(targetId, 50);
+  const undone = new Set(
+    history.filter((r) => r.op === 'undo' && r.undoOf !== undefined).map((r) => r.undoOf),
+  );
+  return history.filter((r) => r.op !== 'undo' && !undone.has(r.correlationId));
 }

@@ -12,6 +12,7 @@
 
 import { z } from 'zod';
 
+import { parseEnvelope } from '../core/envelope.js';
 import { gcError, isGcError } from '../core/errors.js';
 import type { SearchQuery } from '../core/google/drive.js';
 import type { SheetData, SheetsClient } from '../core/sheets/types.js';
@@ -68,6 +69,24 @@ const readSheet = async (deps: ToolDeps, target: string, sheet?: string, headerR
   return { resolved, client, data };
 };
 
+/**
+ * Конверт для ответа `gc_targets`: что разрешено с первой фразы. Битый конверт не роняет
+ * список целей — он назван строкой, потому что «почему по этой цели опять просят код»
+ * человек должен читать здесь, а не выяснять записью.
+ */
+function envelopeSummary(
+  raw: unknown,
+  alias: string,
+): { readonly ops: readonly string[]; readonly maxCells: number } | string | null {
+  try {
+    const envelope = parseEnvelope(raw, alias);
+    return envelope === null ? null : { ops: envelope.ops, maxCells: envelope.maxCells };
+  } catch (error) {
+    const detail = (error as { payload?: { detail?: string } }).payload?.detail;
+    return detail ?? 'Конверт написан неверно: запись идёт через план и код.';
+  }
+}
+
 export const gcTargets: ToolDefinition = {
   name: 'gc_targets',
   title: 'Доступные цели',
@@ -87,6 +106,10 @@ export const gcTargets: ToolDefinition = {
         sheet: t.sheet ?? null,
         headerRow: t.headerRow ?? null,
         key: t.key ?? null,
+        // Конверт цели (D-18) виден там же, где права: иначе агент узнавал бы о нём
+        // только по факту записи, а человек — никогда. Битый конверт называется здесь
+        // же — это ответ на «почему по этой цели просят код».
+        auto: envelopeSummary(t.auto, t.alias),
       })),
       accounts: accounts.map((a) => ({
         account: a.account,
@@ -100,7 +123,8 @@ export const gcTargets: ToolDefinition = {
       })),
       note:
         'Произвольная ссылка доступна только для чтения: право записи даёт реестр ' +
-        '(правило write.allowlist).',
+        '(правило write.allowlist). Цель с конвертом (auto) пишется с первой фразы, ' +
+        'без кода плана; всё, что вне конверта, показывает план и требует код от человека.',
     };
   },
 };
@@ -370,7 +394,7 @@ export const gcApply: ToolDefinition = {
     return {
       ...outcome,
       target: { id: resolved.id, alias: resolved.alias, sheet: data.map.sheet },
-      hint: applyHint(outcome.status),
+      hint: applyHint(outcome),
       ...(reportPath === null ? {} : { reportFile: reportPath }),
     };
   },
@@ -398,6 +422,7 @@ export const gcUndo: ToolDefinition = {
       account: deps.account,
       force: input.force,
       currentRevision: await deps.revision(resolved.id),
+      readRevision: () => deps.revision(resolved.id),
       journal: deps.journal,
     });
     return {

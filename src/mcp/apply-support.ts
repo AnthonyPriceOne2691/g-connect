@@ -6,8 +6,10 @@
  */
 
 import type { ApplyOutcome } from '../core/sheets/rows.js';
+import { envelopeAuthorizes, parseEnvelope } from '../core/envelope.js';
 import { renderPreview, writeReport } from '../core/report/html.js';
 import type { parseOperation } from '../core/ops.js';
+import type { RowOptions } from '../core/sheets/write-types.js';
 import type { ResolvedTarget } from '../core/targets.js';
 import type { ToolDeps } from './deps.js';
 
@@ -25,14 +27,42 @@ export function applyOptions(
     account: deps.account,
     alias: resolved.alias,
     readRevision: () => deps.revision(resolved.id),
+    // Конверт цели (D-18): разбирается здесь, где решается запись, а не при чтении
+    // реестра — битый конверт не должен ронять чтение. Судит по числу ячеек, которое
+    // известно только после построения плана, поэтому колбэком.
+    authorize: envelopeJudge(resolved),
     ...(operation.confirm === undefined ? {} : { confirm: operation.confirm }),
     ...(operation.expectRevision === undefined ? {} : { expectRevision: operation.expectRevision }),
     ...(resolved.entry?.aliases === undefined ? {} : { aliases: resolved.entry.aliases }),
   };
 }
 
+/**
+ * Судья конверта для одной цели. Конверт разбирается один раз на вызов: битый конверт
+ * отказывает записи с названной причиной (`write.envelope-invalid`), а не выбирает
+ * половину того, что человек имел в виду.
+ */
+function envelopeJudge(resolved: ResolvedTarget): NonNullable<RowOptions['authorize']> {
+  const envelope = parseEnvelope(resolved.entry?.auto, resolved.alias);
+  return (op, cellCount) => envelopeAuthorizes(envelope, op, cellCount);
+}
+
 /** Что делать человеку дальше. Текст здесь, а не в обработчике: его читают, а не ветвят. */
-export function applyHint(status: ApplyOutcome['status']): string | undefined {
+export function applyHint(outcome: ApplyOutcome): string | undefined {
+  const status = outcome.status;
+  if (status === 'ok') {
+    return (
+      'Записано. Скажи человеку, что именно записано, и что откатить можно одной фразой: ' +
+      `gc_undo по этой цели${outcome.correlationId === undefined ? '' : ` (запись ${outcome.correlationId})`}.`
+    );
+  }
+  if (status === 'confirm_required') {
+    return (
+      'Записи НЕ было: эту правку конверт цели не разрешает (причина в notes). Покажи ' +
+      'человеку план и код плана; запись — тем же вызовом с кодом в confirm. Код ' +
+      'придумывать нельзя, он должен прийти от человека.'
+    );
+  }
   if (status === 'preview') {
     return (
       'Это план. Покажи человеку план И код плана (поле planId), запись — повторным ' +
@@ -78,6 +108,7 @@ export async function maybeReport(
     no_change: 'Без изменений',
     plan_mismatch: 'Код не совпал',
     needs_clarification: 'Нужен ответ человека',
+    confirm_required: 'Нужен код плана',
   };
   const label = labels[outcome.status];
   return writeReport(

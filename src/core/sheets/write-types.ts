@@ -65,7 +65,20 @@ export function noChangeNote(op: OperationKind): string {
 }
 
 export interface ApplyOutcome {
-  readonly status: 'ok' | 'preview' | 'no_change' | 'plan_mismatch' | 'needs_clarification';
+  readonly status:
+    | 'ok'
+    | 'preview'
+    | 'no_change'
+    | 'plan_mismatch'
+    | 'needs_clarification'
+    /**
+     * Правку никто не разрешил: конверт цели её не покрывает, а кода плана в вызове нет
+     * (D-18). Статусом, а не исключением: план и его код лежат в этом же ответе, значит
+     * человек подтверждает следующей фразой, не третьим вызовом. И статусом, а не
+     * `preview`: «превью» модель пересказывает как «сделано», а этот статус приходится
+     * назвать своим именем.
+     */
+    | 'confirm_required';
   readonly changes: readonly PlannedChange[];
   /** Ступень 4 резолвера: что именно мы поняли по-своему (§8.2). */
   readonly assumptions: readonly string[];
@@ -85,7 +98,21 @@ export interface ApplyOutcome {
    * подтверждать нечего — вопрос вместо плана или нулевое изменение.
    */
   readonly planId: string | null;
+  /**
+   * Id строки журнала успешной записи. В ответе он потому, что ответ обещает человеку
+   * «откатить одной фразой», а обещание в ответе исполняет механизм, а не память модели
+   * (урок L6): без id откат «именно этой» записи назвать нечем.
+   */
+  readonly correlationId?: string;
 }
+
+/**
+ * Разрешение на запись без кода плана (D-18). Форма объявлена здесь, а не в `envelope.ts`,
+ * чтобы охранники записи не импортировали конверт, а конверт — охранников: цикл между
+ * «что разрешено» и «пускать ли писать» разъехался бы первым же рефакторингом.
+ */
+export type EnvelopeDecision =
+  { readonly authorized: true } | { readonly authorized: false; readonly reason: string };
 
 export interface RowOptions extends ResolveOptions {
   readonly dryRun?: boolean;
@@ -105,6 +132,12 @@ export interface RowOptions extends ResolveOptions {
   readonly force?: boolean;
   /** Код плана из превью — подпись человека под этой правкой (D-16). */
   readonly confirm?: string;
+  /**
+   * Судья разрешения (D-18): разрешает ли конверт цели эту операцию на столько ячеек.
+   * Колбэком, как `readRevision`: число ячеек известно только после построения плана, а
+   * сам конверт — свойство цели, то есть фасада, а не ядра операций.
+   */
+  readonly authorize?: (op: OperationKind, cellCount: number) => EnvelopeDecision;
   /** Правка вида: заодно поправить ячейку заголовка — «сделай шапку жирной». */
   readonly includeHeader?: boolean;
   /**
