@@ -10,6 +10,7 @@
 import { z } from 'zod';
 
 import { gcError } from './errors.js';
+import type { CellFormat } from './sheets/types.js';
 
 /** Значение ячейки, как его может прислать клиент. */
 const cellValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
@@ -57,12 +58,111 @@ export const setCellsOp = z.object({
   ...commonFields,
 });
 
-export const operationSchema = z.discriminatedUnion('op', [appendRowOp, upsertRowOp, setCellsOp]);
+/**
+ * Вид ячейки на внешней границе. `.strict()` не косметика: `{fontSize: 14}` должен
+ * отклоняться С ПЕРЕЧИСЛЕНИЕМ допустимых полей (пример V11), а не проходить в никуда —
+ * иначе агент будет уверен, что размер шрифта поменялся.
+ */
+const cellFormat = z
+  .object({
+    bold: z.boolean().optional(),
+    italic: z.boolean().optional(),
+    underline: z.boolean().optional(),
+    align: z.enum(['left', 'center', 'right']).optional(),
+    background: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{6}$/, 'цвет задаётся как #RRGGBB')
+      .optional(),
+  })
+  .strict();
+
+export const FORMAT_FIELDS: readonly string[] = [
+  'bold',
+  'italic',
+  'underline',
+  'align',
+  'background',
+];
+
+export const formatCellsOp = z.object({
+  op: z.literal('formatCells'),
+  /** Какие строки: то же условие, что у `setCells` — по ключу или по любой колонке. */
+  where: rowValues,
+  /** Какие колонки — по именам, а не по буквам: колонки переставляют (§5). */
+  columns: z.array(z.string().min(1)).min(1),
+  /**
+   * Правка частичная: `{bold: true}` не сбрасывает выравнивание и фон.
+   *
+   * `transform` убирает ключи со значением `undefined`: при `exactOptionalPropertyTypes`
+   * `{bold: undefined}` и «поля нет» — разные типы, и чистка обязана быть на границе, а не
+   * в ядре. Домен от этого остаётся строгим.
+   */
+  format: cellFormat
+    .refine((f) => Object.values(f).some((v) => v !== undefined), 'не задано ни одного поля вида')
+    .transform(
+      (f) => Object.fromEntries(Object.entries(f).filter(([, v]) => v !== undefined)) as CellFormat,
+    ),
+  /** Заодно поправить ячейку заголовка этих колонок — «сделай шапку жирной». */
+  includeHeader: z.boolean().default(false),
+  ...commonFields,
+});
+
+/**
+ * Поиск и замена (§6.1, Ctrl+F/Ctrl+H). Область — лист или перечисленные колонки.
+ *
+ * Регулярное выражение проверяется ЗДЕСЬ, на границе: битое выражение должно отклоняться
+ * до обращения к Google и до построения плана (пример V10), а не падать в середине.
+ */
+export const findReplaceOp = z.object({
+  op: z.literal('findReplace'),
+  find: z.string().min(1),
+  replace: z.string(),
+  /** Ограничить область колонками; без этого — весь лист. */
+  columns: z.array(z.string().min(1)).optional(),
+  matchCase: z.boolean().default(false),
+  matchEntireCell: z.boolean().default(false),
+  searchByRegex: z.boolean().default(false),
+  ...commonFields,
+});
+
+export const operationSchema = z.discriminatedUnion('op', [
+  appendRowOp,
+  upsertRowOp,
+  setCellsOp,
+  formatCellsOp,
+  findReplaceOp,
+]);
 
 export type Operation = z.infer<typeof operationSchema>;
 export type OperationName = Operation['op'];
 
-export const OPERATION_NAMES: readonly OperationName[] = ['appendRow', 'upsertRow', 'setCells'];
+export const OPERATION_NAMES: readonly OperationName[] = [
+  'appendRow',
+  'upsertRow',
+  'setCells',
+  'formatCells',
+  'findReplace',
+];
+
+/**
+ * Битое регулярное выражение — отказ на границе, а не падение в середине плана (V10).
+ *
+ * Проверка здесь, а не в схеме: `superRefine` возвращает `ZodEffects`, которому нет места
+ * в `discriminatedUnion`, а разбор операции и есть граница ядра.
+ */
+function assertUsableRegex(operation: Operation): void {
+  if (operation.op !== 'findReplace' || !operation.searchByRegex) return;
+  try {
+    new RegExp(operation.find);
+  } catch (error) {
+    throw gcError('bad_request', {
+      detail:
+        `Регулярное выражение «${operation.find}» не разбирается: ` +
+        `${error instanceof Error ? error.message : 'ошибка разбора'}. Ни одной замены не сделано.`,
+      cause: 'bad_regex',
+    });
+  }
+}
 
 /** Путь ошибки zod в читаемый вид: `values.Часы`, а не `[object Object]`. */
 const pathOf = (issue: z.ZodIssue): string =>
@@ -74,7 +174,10 @@ const pathOf = (issue: z.ZodIssue): string =>
  */
 export function parseOperation(input: unknown): Operation {
   const parsed = operationSchema.safeParse(input);
-  if (parsed.success) return parsed.data;
+  if (parsed.success) {
+    assertUsableRegex(parsed.data);
+    return parsed.data;
+  }
 
   const named = (input as { op?: unknown } | null)?.op;
   const unknownOp = typeof named !== 'string' || !OPERATION_NAMES.includes(named as OperationName);
@@ -93,8 +196,14 @@ export function parseOperation(input: unknown): Operation {
     .slice(0, 5)
     .map((issue) => `${pathOf(issue)}: ${issue.message}`)
     .join('; ');
+  // «Unrecognized key fontSize» говорит, чего НЕЛЬЗЯ, и молчит о том, что можно — агент
+  // после такого ответа угадывает. Список допустимых полей вида дописывается явно
+  // (пример V11): узнать его иначе неоткуда, схема вида в `tools/list` вложенная.
+  const aboutFormat = parsed.error.issues.some((issue) => issue.path[0] === 'format');
   throw gcError('bad_request', {
-    detail: `Запрос операции «${named}» не проходит проверку — ${problems}.`,
+    detail:
+      `Запрос операции «${named}» не проходит проверку — ${problems}.` +
+      (aboutFormat ? ` Допустимые поля вида: ${FORMAT_FIELDS.join(', ')}.` : ''),
     cause: 'schema_violation',
   });
 }

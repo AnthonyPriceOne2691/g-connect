@@ -12,7 +12,7 @@
 
 import { createHash } from 'node:crypto';
 
-import type { CellValue } from './sheets/types.js';
+import type { CellFormat, CellValue } from './sheets/types.js';
 
 /**
  * Длина кода — шесть символов (решение владельца 2026-09-02). Защита не от подбора: её
@@ -26,6 +26,9 @@ export interface PlanCell {
   readonly column: string;
   readonly before: CellValue;
   readonly after: CellValue;
+  /** Вид «до» и «после» для правок вида — часть подписи, а не украшение. */
+  readonly beforeFormat?: CellFormat;
+  readonly afterFormat?: CellFormat;
 }
 
 /** Что в плане опасного: формульная колонка, защищённый диапазон. */
@@ -45,6 +48,15 @@ export interface PlanShape {
   readonly touches: readonly PlanTouch[];
 }
 
+/** Вид как отсортированные пары: порядок ключей в объекте не должен менять код плана. */
+function sortedFormat(format: CellFormat | undefined): readonly (readonly [string, unknown])[] {
+  if (format === undefined) return [];
+  return Object.entries(format)
+    .filter(([, value]) => value !== undefined)
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([key, value]) => [key, value] as const);
+}
+
 /**
  * Канонический вид: фиксированный порядок полей и ячейки по адресу. Сортировка не
  * косметика — без неё один и тот же план, собранный в другом порядке обхода строк, дал бы
@@ -53,7 +65,16 @@ export interface PlanShape {
 export function canonicalPlan(plan: PlanShape): string {
   const cells = [...plan.cells]
     .sort((a, b) => (a.a1 < b.a1 ? -1 : a.a1 > b.a1 ? 1 : 0))
-    .map((c) => [c.a1, c.column, c.before, c.after]);
+    .map((c) => [
+      c.a1,
+      c.column,
+      c.before,
+      c.after,
+      // Вид сериализуется отсортированными парами: `{bold, italic}` и `{italic, bold}` —
+      // один и тот же вид, и код плана обязан быть одним.
+      sortedFormat(c.beforeFormat),
+      sortedFormat(c.afterFormat),
+    ]);
   const touches = [...plan.touches].sort();
   return JSON.stringify([plan.targetId, plan.sheet, plan.op, plan.revision, cells, touches]);
 }

@@ -6,11 +6,20 @@
  * системы, а гейт `di-indirection` был бы прав, что зависимость добывается, а не даётся.
  */
 
+import type { CellFormat } from './sheets/types.js';
+
 export interface JournalChange {
   readonly a1: string;
   readonly column: string;
   readonly before: string | number | boolean | null;
   readonly after: string | number | boolean | null;
+  /**
+   * Снимок вида «до» и «после» для правок вида (решение от 2026-09-03: формат
+   * откатывается, а не объявляется неоткатываемым). Только затронутые ячейки и только
+   * изменяемые поля — журнал не должен расти пропорционально размеру таблицы.
+   */
+  readonly beforeFormat?: CellFormat;
+  readonly afterFormat?: CellFormat;
 }
 
 export interface WriteRecord {
@@ -20,7 +29,7 @@ export interface WriteRecord {
   readonly targetId: string;
   readonly alias: string | null;
   readonly sheet: string;
-  readonly op: 'appendRow' | 'upsertRow' | 'setCells' | 'undo';
+  readonly op: 'appendRow' | 'upsertRow' | 'setCells' | 'formatCells' | 'findReplace' | 'undo';
   readonly changes: readonly JournalChange[];
   /** Ревизия таблицы до и после записи — по ним undo решает, безопасен ли откат. */
   readonly revisionBefore: string | null;

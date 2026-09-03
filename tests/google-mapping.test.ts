@@ -120,3 +120,70 @@ describe('перевод ответа Google в снимок', () => {
     expect(() => toSpreadsheetSnapshot({ sheets: [] }, 'X')).toThrowError(/not_found/);
   });
 });
+
+/**
+ * Фаза 2.5a: вид ячейки. Форма ответа собрана по документации Sheets API —
+ * `userEnteredFormat.textFormat`, `horizontalAlignment`, `backgroundColor` в долях.
+ * Урок L3: шов проверяется ответом по документации, а не «мы же подключились».
+ */
+describe('вид ячейки из ответа Google', () => {
+  const formatted: sheets_v4.Schema$Spreadsheet = {
+    properties: { title: 'Оформленный' },
+    sheets: [
+      {
+        properties: { title: 'Лист1', sheetId: 0 },
+        data: [
+          {
+            rowData: [
+              {
+                values: [
+                  cell({
+                    formattedValue: 'Проект',
+                    effectiveValue: { stringValue: 'Проект' },
+                    userEnteredFormat: {
+                      textFormat: { bold: true, underline: true },
+                      horizontalAlignment: 'CENTER',
+                    },
+                  }),
+                  cell({
+                    formattedValue: '2',
+                    effectiveValue: { numberValue: 2 },
+                    userEnteredFormat: {
+                      horizontalAlignment: 'RIGHT',
+                      backgroundColor: { red: 1, green: 0.8, blue: 0 },
+                    },
+                  }),
+                  // Вид от темы приходит в effectiveFormat: его ядро НЕ считает своим,
+                  // потому что откатывать чужой механизм нечем.
+                  cell({
+                    formattedValue: 'Статус',
+                    effectiveValue: { stringValue: 'Статус' },
+                    effectiveFormat: { textFormat: { bold: true } },
+                  }),
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  it('bold, underline и выравнивание переносятся из userEnteredFormat', () => {
+    const snapshot = toSpreadsheetSnapshot(formatted, 'ID');
+    const row = snapshot.sheets[0]?.rows[0] ?? [];
+    expect(row[0]?.format).toEqual({ bold: true, underline: true, align: 'center' });
+  });
+
+  it('цвет фона приходит долями, а в домен уходит как #RRGGBB', () => {
+    const snapshot = toSpreadsheetSnapshot(formatted, 'ID');
+    const row = snapshot.sheets[0]?.rows[0] ?? [];
+    expect(row[1]?.format).toEqual({ align: 'right', background: '#ffcc00' });
+  });
+
+  it('вид из effectiveFormat своим не считается: откатывать его ядру нечем', () => {
+    const snapshot = toSpreadsheetSnapshot(formatted, 'ID');
+    const row = snapshot.sheets[0]?.rows[0] ?? [];
+    expect(row[2]?.format).toBeUndefined();
+  });
+});

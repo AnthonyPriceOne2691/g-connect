@@ -12,8 +12,11 @@ import { limitOf } from '../policy.js';
 import { withRetry } from '../retry.js';
 import type {
   Cell,
+  CellFormat,
   CellValue,
+  FormatRequest,
   ReadOptions,
+  SheetRequest,
   SheetSnapshot,
   SheetsClient,
   SpreadsheetSnapshot,
@@ -51,10 +54,60 @@ function cellValue(cell: sheets_v4.Schema$CellData): CellValue {
   );
 }
 
+/** `{red: 1, green: 0.5}` → `#ff8000`. Google отдаёт доли, человек вводит hex. */
+function toHex(color: sheets_v4.Schema$Color | undefined): string | undefined {
+  if (color === undefined || color === null) return undefined;
+  const part = (v: number | null | undefined): string =>
+    Math.round((v ?? 0) * 255)
+      .toString(16)
+      .padStart(2, '0');
+  return `#${part(color.red)}${part(color.green)}${part(color.blue)}`;
+}
+
+/** `LEFT|CENTER|RIGHT` из ответа → доменное выравнивание; всё остальное игнорируем. */
+function toAlign(value: string | null | undefined): CellFormat['align'] | undefined {
+  if (value === 'LEFT' || value === 'CENTER' || value === 'RIGHT') {
+    return value.toLowerCase() as CellFormat['align'];
+  }
+  return undefined;
+}
+
+/** Поле вида попадает в домен только когда задано явно: `undefined` и `false` — разное. */
+function flag(value: boolean | null | undefined): boolean | undefined {
+  return value === undefined || value === null ? undefined : value;
+}
+
+/**
+ * Явный вид ячейки. Берётся `userEnteredFormat`, а НЕ `effectiveFormat`: второй показывает
+ * и то, что пришло от темы или условного форматирования, — откатывать такое ядру нечем, а
+ * показать в превью «было → станет» значило бы обещать правку чужого механизма.
+ */
+function toFormat(cell: sheets_v4.Schema$CellData): CellFormat | undefined {
+  const format = cell.userEnteredFormat;
+  if (format === undefined || format === null) return undefined;
+  const text = format.textFormat ?? {};
+  const fields = {
+    bold: flag(text.bold),
+    italic: flag(text.italic),
+    underline: flag(text.underline),
+    align: toAlign(format.horizontalAlignment),
+    background: toHex(format.backgroundColor ?? undefined),
+  };
+  const out = Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined),
+  ) as CellFormat;
+  return Object.keys(out).length === 0 ? undefined : out;
+}
+
 function toCell(cell: sheets_v4.Schema$CellData): Cell {
   const formula = cell.userEnteredValue?.formulaValue;
   const value = cellValue(cell);
-  return formula === undefined || formula === null ? { value } : { value, formula };
+  const format = toFormat(cell);
+  return {
+    value,
+    ...(formula === undefined || formula === null ? {} : { formula }),
+    ...(format === undefined ? {} : { format }),
+  };
 }
 
 /**
@@ -143,6 +196,53 @@ export function toSpreadsheetSnapshot(
   };
 }
 
+/** Доменная правка вида → запрос библиотеки. Единственное место такого перевода. */
+function toRepeatCell(request: FormatRequest): sheets_v4.Schema$Request {
+  const { format } = request;
+  const textFields = (['bold', 'italic', 'underline'] as const).filter(
+    (key) => format[key] !== undefined,
+  );
+  const fields = [
+    ...textFields.map((key) => `userEnteredFormat.textFormat.${key}`),
+    ...(format.align === undefined ? [] : ['userEnteredFormat.horizontalAlignment']),
+    ...(format.background === undefined ? [] : ['userEnteredFormat.backgroundColor']),
+  ];
+  return {
+    repeatCell: {
+      range: {
+        sheetId: request.sheetId,
+        startRowIndex: request.row - 1,
+        endRowIndex: request.row,
+        startColumnIndex: request.column,
+        endColumnIndex: request.column + 1,
+      },
+      cell: {
+        userEnteredFormat: {
+          ...(textFields.length === 0
+            ? {}
+            : {
+                textFormat: Object.fromEntries(textFields.map((key) => [key, format[key]])),
+              }),
+          ...(format.align === undefined
+            ? {}
+            : { horizontalAlignment: format.align.toUpperCase() }),
+          ...(format.background === undefined
+            ? {}
+            : { backgroundColor: fromHex(format.background) }),
+        },
+      },
+      fields: fields.join(','),
+    },
+  };
+}
+
+/** `#ff8000` → доли, как их ждёт Google. Обратная сторона `toHex`. */
+function fromHex(hex: string): sheets_v4.Schema$Color {
+  const clean = hex.replace('#', '');
+  const part = (at: number): number => parseInt(clean.slice(at, at + 2), 16) / 255;
+  return { red: part(0), green: part(2), blue: part(4) };
+}
+
 export interface GoogleSheetsClientOptions {
   readonly accessToken: string;
   readonly maxRows?: number;
@@ -219,6 +319,28 @@ export class GoogleSheetsClient implements SheetsClient {
       );
     } catch (error) {
       throw fromGoogleError(error, `Не удалось записать в ${range}.`);
+    }
+  }
+
+  /**
+   * Правки вне values-API. Доменный запрос переводится в `repeatCell` здесь и только здесь.
+   *
+   * `fields` собирается из ЗАДАННЫХ полей: без маски Google затирает весь формат ячейки, и
+   * `{ bold: true }` снял бы и выравнивание, и фон. Маска — не оптимизация, а разница между
+   * «сделать жирным» и «сделать жирным, стереть остальное».
+   */
+  async batchUpdate(id: string, requests: readonly SheetRequest[]): Promise<void> {
+    if (requests.length === 0) return;
+    const body = requests.map((request) => toRepeatCell(request));
+    try {
+      await this.retry(() =>
+        this.sheets.spreadsheets.batchUpdate({
+          spreadsheetId: id,
+          requestBody: { requests: body },
+        }),
+      );
+    } catch (error) {
+      throw fromGoogleError(error, `Не удалось применить ${requests.length} правк(и) вида.`);
     }
   }
 

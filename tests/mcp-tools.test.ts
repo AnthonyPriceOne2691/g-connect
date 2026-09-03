@@ -352,6 +352,97 @@ describe('noopJournal не мешает', () => {
 });
 
 /** Оракулы на дефекты живого прогона B13 в Cursor (2026-09-02). */
+describe('V10 — битое выражение на границе', () => {
+  it('отклоняется ДО обращения к Google, и ни одной замены не сделано', async () => {
+    const { deps, client } = harness();
+    const result = await runTool(
+      gcApply,
+      {
+        op: 'findReplace',
+        target: 'log',
+        find: '[',
+        replace: 'x',
+        searchByRegex: true,
+        dryRun: false,
+      },
+      deps,
+    );
+    expect(result.ok).toBe(false);
+    expect(JSON.stringify(result.error)).toContain('bad_regex');
+    expect(client.writes).toHaveLength(0);
+  });
+
+  it('то же выражение без searchByRegex — обычная строка, отказа нет', async () => {
+    const { deps } = harness();
+    const result = await runTool(
+      gcApply,
+      { op: 'findReplace', target: 'log', find: '[', replace: 'x' },
+      deps,
+    );
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe('V11 — вид на границе инструмента', () => {
+  it('неизвестное поле вида отклонено ДО обращения к Google, с перечислением допустимых', async () => {
+    const { deps, client } = harness();
+    const result = await runTool(
+      gcApply,
+      {
+        op: 'formatCells',
+        target: 'log',
+        where: { Проект: 'G connect' },
+        columns: ['Часы'],
+        format: { fontSize: 14 },
+      },
+      deps,
+    );
+    expect(result.ok).toBe(false);
+    const text = JSON.stringify(result.error);
+    // Агент должен узнать, что вообще можно: без списка он будет угадывать.
+    for (const field of ['bold', 'italic', 'underline', 'align', 'background']) {
+      expect(text, field).toContain(field);
+    }
+    expect(client.formatWrites).toHaveLength(0);
+    expect(client.writes).toHaveLength(0);
+  });
+
+  it('formatCells проходит через тот же контур подтверждения, что запись', async () => {
+    const { deps, client } = harness();
+    const preview = await runTool(
+      gcApply,
+      {
+        op: 'formatCells',
+        target: 'log',
+        where: { Проект: 'G connect' },
+        columns: ['Часы'],
+        format: { bold: true },
+      },
+      deps,
+    );
+    const { planId, status } = preview.data as { planId: string | null; status: string };
+    expect(status).toBe('preview');
+    expect(planId).toMatch(/^[0-9a-f]{6}$/);
+
+    const written = await runTool(
+      gcApply,
+      {
+        op: 'formatCells',
+        target: 'log',
+        where: { Проект: 'G connect' },
+        columns: ['Часы'],
+        format: { bold: true },
+        dryRun: false,
+        confirm: planId,
+      },
+      deps,
+    );
+    expect((written.data as { status: string }).status).toBe('ok');
+    expect(client.formatWrites).toHaveLength(1);
+    expect(client.writes).toHaveLength(0);
+  });
+});
+
 describe('живой прогон B13 — что он нашёл', () => {
   it('gc_targets не отдаёт expiresAt: агент читал его как «срок входа истёк»', async () => {
     // Профиль нужен настоящий, иначе accounts пуст и оракул проходит вхолостую.

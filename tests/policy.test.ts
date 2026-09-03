@@ -23,12 +23,16 @@ import { asData, limitOf, policyRules, policyText, ruleById } from '../src/core/
 import { profileStatus, writeToken } from '../src/core/profiles.js';
 import { buildSheetData } from '../src/core/sheets/map.js';
 import type { WriteRecord } from '../src/core/journal.js';
-import { appendRow, setCells, upsertRow } from '../src/core/sheets/rows.js';
+import { appendRow, upsertRow } from '../src/core/sheets/rows.js';
+import { findReplace } from '../src/core/sheets/find-replace-op.js';
+import { formatCells } from '../src/core/sheets/format-op.js';
+import { setCells } from '../src/core/sheets/set-cells-op.js';
 import { assertWritable, resolveTarget } from '../src/core/targets.js';
 import { undoLast } from '../src/core/undo.js';
 import {
   upsertConfirmed,
   FakeSheetsClient,
+  formattedSheet,
   formulaSheet,
   protectedSheet,
   snapshot,
@@ -217,6 +221,47 @@ const probes: Record<string, () => Promise<void>> = {
     const files = (await readdir(reportsDir())).filter((f) => f.endsWith('.html')).sort();
     expect(files).toHaveLength(keep);
     expect(files[0]).not.toContain('T00-00-00');
+  },
+
+  'write.format-preserves-values': async () => {
+    const client = new FakeSheetsClient(snapshot([formattedSheet()]));
+    const sheetData = buildSheetData(snapshot([formattedSheet()]));
+    const preview = await formatCells(client, sheetData, { Проект: 'G connect' }, ['Статус'], {
+      bold: true,
+    });
+    await formatCells(
+      client,
+      sheetData,
+      { Проект: 'G connect' },
+      ['Статус'],
+      { bold: true },
+      {
+        dryRun: false,
+        confirm: preview.planId ?? '',
+      },
+    );
+    // Значения не тронуты: ни одного вызова values-API, только вид.
+    expect(client.writes).toHaveLength(0);
+    expect(client.formatWrites).toHaveLength(1);
+    const cell = (await client.getSpreadsheet()).sheets[0]?.rows[1]?.[2];
+    expect(cell?.value).toBe('в работе');
+  },
+
+  'write.replace-preview-lists-cells': async () => {
+    const client = new FakeSheetsClient(snapshot([formattedSheet()]));
+    const outcome = await findReplace(client, buildSheetData(snapshot([formattedSheet()])), {
+      find: 'o',
+      replace: '0',
+      matchCase: false,
+      matchEntireCell: false,
+      searchByRegex: false,
+    });
+    // По строке плана на ячейку, у каждой «было → станет» — а не «заменено N».
+    expect(outcome.changes.length).toBeGreaterThan(1);
+    for (const change of outcome.changes) {
+      expect(change.a1).toMatch(/^Оформленный![A-Z]\d+$/);
+      expect(String(change.before)).not.toBe(String(change.after));
+    }
   },
 
   'write.plan-confirmation': async () => {

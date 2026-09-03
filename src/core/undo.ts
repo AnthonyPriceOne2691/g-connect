@@ -12,9 +12,15 @@
 
 import { gcError, newCorrelationId } from './errors.js';
 import { limitOf } from './policy.js';
-import { lastUndoable, type JournalSink, type JournalSource, type WriteRecord } from './journal.js';
-import { parseA1, sameCell, valueAt } from './sheets/a1.js';
-import type { SheetsClient } from './sheets/types.js';
+import {
+  lastUndoable,
+  type JournalChange,
+  type JournalSink,
+  type JournalSource,
+  type WriteRecord,
+} from './journal.js';
+import { formatAt, parseA1, sameCell, sameFormat, valueAt } from './sheets/a1.js';
+import type { CellFormat, SheetsClient, SpreadsheetSnapshot } from './sheets/types.js';
 
 export interface UndoOptions {
   readonly account?: string;
@@ -80,6 +86,118 @@ function nothingToUndo(
 
 export { parseA1 };
 
+/**
+ * Строка журнала об откате. Вынесена из `undoLast`: гейт сложности считает и литерал с
+ * условными полями, и он прав — оркестратор должен читаться одним экраном.
+ *
+ * Направление меняется местами: `before` записи становится `after` отката. Код плана
+ * переносится, чтобы по нему было видно, ЧТО вернули, и чтобы проверка однократности
+ * снова разрешила эту правку (B20, B21).
+ */
+function undoRecord(
+  record: WriteRecord,
+  targetId: string,
+  at: string,
+  options: UndoOptions,
+): WriteRecord {
+  return {
+    at,
+    account: record.account,
+    targetId,
+    alias: record.alias,
+    sheet: record.sheet,
+    op: 'undo',
+    changes: record.changes.map((c) => ({
+      a1: c.a1,
+      column: c.column,
+      before: c.after,
+      after: c.before,
+      ...(c.afterFormat === undefined ? {} : { beforeFormat: c.afterFormat }),
+      ...(c.beforeFormat === undefined ? {} : { afterFormat: c.beforeFormat }),
+    })),
+    revisionBefore: options.currentRevision ?? null,
+    revisionAfter: null,
+    correlationId: newCorrelationId(),
+    undoOf: record.correlationId,
+    ...(record.planId === undefined ? {} : { planId: record.planId }),
+  };
+}
+
+/**
+ * Обратная запись: значения через values-API, вид через `batchUpdate`.
+ *
+ * В обратном порядке: если одна операция трогала ячейку дважды, вернуть надо самое раннее
+ * состояние, а не промежуточное. Вынесено из `undoLast` — гейт сложности был прав, там
+ * уже тринадцать ветвей на один оркестратор.
+ */
+async function restoreChanges(
+  client: SheetsClient,
+  targetId: string,
+  sheetId: number,
+  record: WriteRecord,
+): Promise<{ a1: string; column: string; value: string | number | boolean | null }[]> {
+  const restored: { a1: string; column: string; value: string | number | boolean | null }[] = [];
+  for (const change of [...record.changes].reverse()) {
+    if (change.afterFormat === undefined) {
+      await client.updateValues(targetId, change.a1, [[change.before]]);
+    } else {
+      await client.batchUpdate(targetId, [
+        { kind: 'format', sheetId, ...cellAt(change.a1), format: undoFormat(change) },
+      ]);
+    }
+    restored.push({ a1: change.a1, column: change.column, value: change.before });
+  }
+  return restored;
+}
+
+/** Адрес A1 → строка и колонка для доменного запроса вида. */
+function cellAt(a1: string): { row: number; column: number } {
+  const parsed = parseA1(a1);
+  if (parsed === null) {
+    throw gcError('internal', { detail: `В журнале нечитаемый адрес ${a1}.` });
+  }
+  return { row: parsed.row, column: parsed.column };
+}
+
+/**
+ * Вид, который надо вернуть. Для полей, которых «до» не было, ставится нейтральное
+ * значение: пустого формата в Google не существует, и снять жирность можно только
+ * записав `bold: false`.
+ *
+ * Названная непокрытость: у фона нейтральное значение — белый. Если до правки фон был
+ * унаследован от темы, откат сделает его явно белым, а не вернёт наследование. Ядро судит
+ * и откатывает только явный формат ячейки, и это записано в спеке.
+ */
+function undoFormat(change: JournalChange): CellFormat {
+  const before = change.beforeFormat ?? {};
+  const neutral: CellFormat = {
+    bold: false,
+    italic: false,
+    underline: false,
+    align: 'left',
+    background: '#ffffff',
+  };
+  const keys = Object.keys(change.afterFormat ?? {});
+  const out: Record<string, unknown> = {};
+  for (const key of keys) {
+    const field = key as keyof CellFormat;
+    out[key] = before[field] ?? neutral[field];
+  }
+  return out;
+}
+
+/** Вид нашей ячейки после записи не должны были менять — иначе откат перетрёт чужое. */
+function assertFormatIntact(snapshot: SpreadsheetSnapshot, change: JournalChange): void {
+  const current = formatAt(snapshot, change.a1);
+  if (sameFormat(current, change.afterFormat)) return;
+  throw gcError('revision_conflict', {
+    detail:
+      `Вид ячейки ${change.a1} (${change.column}) после записи изменили. Откат перетёр бы ` +
+      'чужое оформление, поэтому не выполнен: перечитай и реши, что вернуть.',
+    cause: 'format_changed_after_write',
+  });
+}
+
 const same = sameCell;
 
 /**
@@ -91,15 +209,19 @@ const same = sameCell;
  * который не срабатывает никогда. Содержательный вопрос другой: изменил ли кто-то то,
  * что мы записали. На него и отвечаем.
  */
-async function assertSafeToUndo(
-  client: SheetsClient,
-  targetId: string,
+function assertSafeToUndo(
+  snapshot: SpreadsheetSnapshot,
   record: WriteRecord,
   options: UndoOptions,
-): Promise<void> {
+): void {
   if (options.force === true) return;
-  const snapshot = await client.getSpreadsheet(targetId, { sheet: record.sheet });
   for (const change of record.changes) {
+    // У правки вида значение не менялось — сверять надо ВИД, иначе откат затрёт чужое
+    // оформление молча.
+    if (change.afterFormat !== undefined) {
+      assertFormatIntact(snapshot, change);
+      continue;
+    }
     const current = valueAt(snapshot, change.a1);
     if (same(current, change.after)) continue;
     throw gcError('revision_conflict', {
@@ -152,38 +274,14 @@ export async function undoLast(
     return nothingToUndo(reasonFor(history, options), history.length, options.correlationId);
   }
   assertRecent(record, options);
-  await assertSafeToUndo(client, targetId, record, options);
+  const snapshot = await client.getSpreadsheet(targetId, { sheet: record.sheet });
+  assertSafeToUndo(snapshot, record, options);
+  const sheetId = snapshot.sheets.find((s) => s.title === record.sheet)?.sheetId ?? 0;
 
-  const restored: { a1: string; column: string; value: string | number | boolean | null }[] = [];
-  // В обратном порядке: если одна операция трогала ячейку дважды, вернуть надо
-  // самое раннее состояние, а не промежуточное.
-  for (const change of [...record.changes].reverse()) {
-    await client.updateValues(targetId, change.a1, [[change.before]]);
-    restored.push({ a1: change.a1, column: change.column, value: change.before });
-  }
+  const restored = await restoreChanges(client, targetId, sheetId, record);
 
   const at = new Date().toISOString();
-  await options.journal?.({
-    at,
-    account: record.account,
-    targetId,
-    alias: record.alias,
-    sheet: record.sheet,
-    op: 'undo',
-    changes: record.changes.map((c) => ({
-      a1: c.a1,
-      column: c.column,
-      before: c.after,
-      after: c.before,
-    })),
-    revisionBefore: options.currentRevision ?? null,
-    revisionAfter: null,
-    correlationId: newCorrelationId(),
-    undoOf: record.correlationId,
-    // Код плана откаченной записи: по нему видно, ЧТО именно вернули, и по нему же
-    // проверка однократности снова разрешает эту правку (B20, B21).
-    ...(record.planId === undefined ? {} : { planId: record.planId }),
-  });
+  await options.journal?.(undoRecord(record, targetId, at, options));
 
   return { status: 'ok', restored, undoneCorrelationId: record.correlationId, at: record.at };
 }

@@ -19,6 +19,7 @@ import {
   type SheetMap,
   type SheetSnapshot,
   type SpreadsheetSnapshot,
+  type CellFormat,
 } from './types.js';
 
 const HEADER_SEARCH_DEPTH = 8;
@@ -286,6 +287,9 @@ export function buildSheetData(
       unique: uniqueValues.size,
       hasFormula: cells.some((c) => c?.formula !== undefined),
       protected: isProtected(sheet, index, firstDataRow),
+      // Вид шапки и вид первой строки данных — только когда задан явно. Пустой объект в
+      // карту не кладём: карта должна оставаться десятками строк, а не тысячами (§7).
+      ...formatFields(headerCells[index]?.format, cells[0]?.format),
     });
   }
 
@@ -320,7 +324,10 @@ export function buildSheetData(
       ? `${sheet.title}!A1:A1`
       : `${sheet.title}!A1:${columnLetter(width - 1)}${rows.length}`;
 
-  const allRows = dataRows.map((row) => rowToRecord(row, columns));
+  const withData = withoutEmptyTail(dataRows);
+  const allRows = withData.map((row) => rowToRecord(row, columns));
+  const allFormats = withData.map((row) => formatsToRecord(row, columns));
+  const headerFormats = formatsToRecord(headerCells, columns);
   const sampleRows = allRows.slice(0, SAMPLE_ROWS);
 
   const map: SheetMap = {
@@ -342,10 +349,54 @@ export function buildSheetData(
     warnings,
   };
 
-  return { map, rows: allRows };
+  return { map, rows: allRows, formats: allFormats, headerFormats };
 }
 
 /** Только карта — когда данные не нужны (ответ агенту на «что в этой таблице»). */
+/**
+ * Строки без пустого ХВОСТА сетки. Живая проверка 2026-09-03: при двух строках данных
+ * `sampleRows` отдавал три, третья — все поля null.
+ *
+ * Режем именно хвост, а не первые `dataRowCount` строк: этот счётчик считает непустые
+ * строки ГДЕ УГОДНО, и срез по нему потерял бы данные после пустой строки в середине —
+ * такую таблицу («блок, пропуск, блок») дизайн допускает и предупреждает о ней (§9.3).
+ */
+function withoutEmptyTail(rows: readonly (readonly Cell[])[]): readonly (readonly Cell[])[] {
+  let lastFilled = 0;
+  rows.forEach((row, index) => {
+    if (row.some((cell) => !isBlank(cell))) lastFilled = index + 1;
+  });
+  return rows.slice(0, lastFilled);
+}
+
+/** Вид ячеек строки → запись по именам колонок. Ячейки без вида в запись не попадают. */
+function formatsToRecord(
+  row: readonly (Cell | undefined)[],
+  columns: readonly ColumnProfile[],
+): Record<string, CellFormat> {
+  const out: Record<string, CellFormat> = {};
+  for (const column of columns) {
+    const format = row[column.index]?.format;
+    if (format !== undefined) out[column.name] = format;
+  }
+  return out;
+}
+
+/**
+ * Поля вида для профиля колонки. Отдельной функцией из-за `exactOptionalPropertyTypes`:
+ * `{ headerFormat: undefined }` и «поля нет» — для строгого TS разные вещи, и первое он
+ * не пускает. Заодно читается лучше, чем два тернария в литерале.
+ */
+function formatFields(
+  header: CellFormat | undefined,
+  first: CellFormat | undefined,
+): { headerFormat?: CellFormat; format?: CellFormat } {
+  return {
+    ...(header === undefined ? {} : { headerFormat: header }),
+    ...(first === undefined ? {} : { format: first }),
+  };
+}
+
 export function buildSheetMap(
   snapshot: SpreadsheetSnapshot,
   options: SheetMapOptions = {},

@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { limitOf } from '../policy.js';
 import { profilesRoot } from '../profiles.js';
 import type { ApplyOutcome, PlannedChange, Question } from '../sheets/rows.js';
+import type { CellFormat } from '../sheets/types.js';
 
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -71,18 +72,46 @@ export interface PreviewMeta {
   readonly revision: string | null;
 }
 
+/** Вид человеческим языком: «жирный, по правому краю», а не JSON с полями. */
+const ALIGN_WORDS: Record<'left' | 'center' | 'right', string> = {
+  left: 'по левому краю',
+  center: 'по центру',
+  right: 'по правому краю',
+};
+
+const yesNo = (value: boolean | undefined, yes: string, no: string): string | null =>
+  value === undefined ? null : value ? yes : no;
+
+function formatWords(format: CellFormat | undefined): string {
+  if (format === undefined) return '—';
+  const words = [
+    yesNo(format.bold, 'жирный', 'не жирный'),
+    yesNo(format.italic, 'курсив', 'не курсив'),
+    yesNo(format.underline, 'подчёркнутый', 'без подчёркивания'),
+    format.align === undefined ? null : ALIGN_WORDS[format.align],
+    format.background === undefined ? null : `фон ${format.background}`,
+  ].filter((word): word is string => word !== null);
+  return words.length === 0 ? '—' : words.join(', ');
+}
+
 function changesTable(changes: readonly PlannedChange[]): string {
   if (changes.length === 0) return '<p class="note">Изменений нет: значения уже такие.</p>';
   const rows = changes
-    .map(
-      (change) => `<tr>
+    .map((change) => {
+      // Правка вида показывается видом, а не значением: значение у неё не меняется, и
+      // колонка «было → станет» со одинаковым текстом читалась бы как «ничего не будет».
+      const was = change.kind === 'format' ? formatWords(change.beforeFormat) : change.before;
+      const will = change.kind === 'format' ? formatWords(change.afterFormat) : change.after;
+      const tag =
+        change.kind === 'addRow' ? 'новая строка' : change.kind === 'format' ? 'вид' : 'правка';
+      return `<tr>
       <td class="cell">${escapeHtml(change.a1)}</td>
       <td>${escapeHtml(change.column)}</td>
-      <td class="cell was">${change.before === null ? '—' : escapeHtml(change.before)}</td>
-      <td class="cell will">${escapeHtml(change.after)}</td>
-      <td><span class="tag">${change.kind === 'addRow' ? 'новая строка' : 'правка'}</span></td>
-    </tr>`,
-    )
+      <td class="cell was">${was === null ? '—' : escapeHtml(was)}</td>
+      <td class="cell will">${will === null ? '—' : escapeHtml(will)}</td>
+      <td><span class="tag">${tag}</span></td>
+    </tr>`;
+    })
     .join('\n');
   return `<div class="wrap"><table>
     <thead><tr><th>Ячейка</th><th>Колонка</th><th>Было</th><th>Станет</th><th></th></tr></thead>

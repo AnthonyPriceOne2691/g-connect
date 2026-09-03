@@ -1,0 +1,29 @@
+# Active delivery status
+
+- **slug:** hotkey-parity-format
+- **stack:** delivery@1.84, cqg@2.32, okf@absent
+- **class:** L
+- **kind:** feature
+- **repro_test:** n/a reason=kind=feature
+- **diagnosis:** n/a reason=kind=feature
+- **phase:** handoff
+- **builder:** agent:claude-opus-5
+- **verifier:** human:anton
+- **human_ok_spec:** yes (by=human:anton, at=2026-09-03) reason=примеры HK1–HK12 и разбивка объёма (§6.1+§6.2, структурные в 2.5b, снимок формата в журнал) подписаны до кода
+- **human_ok_plan:** yes (by=human:anton, at=2026-09-03)
+- **shape-oracles:** cqg-deployed
+- **behavior-oracles:** tests-present
+- **artifact_oracle:** scripts/probe_mcp.mjs reason=протокольный режим в smoke как S11; в живом режиме добавится проба формата — превью правки вида возвращает код плана и не пишет
+- **ci-oracles:** tooling
+- **worktree:** ветка feat/phase-2.5a-format reason=урок L2; в фазе 2 мерж прямо в main обошёл гейт, больше так не делаем
+- **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
+- **blockers:** none
+- **waivers:** none
+- **runtime_paths:** src/core/google/sheets.ts reason=шов с библиотекой: `batchUpdate` в нём отсутствует вовсе, и отказ формата виден не тестами на фейке, а живым ответом Google (урок L3 фазы 1)
+- **model_surface:** src/policy/rules.md,src/policy/rules.json reason=правила про формат и про откат формата уходят агенту через instructions и ресурс
+- **canon_drift_waiver:** no
+- **baseline_growth_waiver:** no
+- **observability:** 1
+- **observe_signal:** вид и замена работают в живом клиенте на превью-половине (подтверждено вторым агентом сырыми ответами: planId, kind=format, список ячеек, отказы bad_regex и confirm_required); артефакт-оракул `probe_mcp.mjs --live` зелёный и ничего не пишет. НЕ закрыто: запись по коду плана → журнал → откат для новых операций — ждёт прогона, где код произносит человек (чек-лист `live-run.md`). Плюс прежний сигнал: семидневный предел доступа
+- **observe_until:** 2026-10-15
+- **circuit_breakers:** defaults from AGENT_DELIVERY_HARNESS.md §3.4

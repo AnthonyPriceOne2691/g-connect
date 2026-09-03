@@ -6,10 +6,29 @@
 
 export type CellValue = string | number | boolean | null;
 
+/**
+ * Вид ячейки — только то, что требует паритет с горячими клавишами (§6.1–6.2): Ctrl+B,
+ * Ctrl+I, Ctrl+U, Ctrl+Shift+E/L/R и цвет фона.
+ *
+ * Поля опциональны и означают «задано явно». Ячейка может ВЫГЛЯДЕТЬ жирной из-за темы или
+ * условного форматирования, и тогда здесь будет пусто: ядро судит и откатывает только
+ * явный формат ячейки, и это названо в спеке непокрытостью, а не спрятано.
+ */
+export interface CellFormat {
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly underline?: boolean;
+  readonly align?: 'left' | 'center' | 'right';
+  /** Цвет фона как его вводит человек: `#RRGGBB`. */
+  readonly background?: string;
+}
+
 export interface Cell {
   readonly value: CellValue;
   /** Введённая формула, если в ячейке она, а не значение. */
   readonly formula?: string;
+  /** Явно заданный вид; отсутствует, когда ничего не задано. */
+  readonly format?: CellFormat;
 }
 
 export interface GridRange {
@@ -63,6 +82,13 @@ export interface ColumnProfile {
   /** В колонке есть формулы: запись значения затрёт их (§8.1). */
   readonly hasFormula: boolean;
   readonly protected: boolean;
+  /**
+   * Вид ячейки заголовка и вид первой строки данных — попадают в карту только когда
+   * что-то задано явно. Агенту это нужно, чтобы «сделай как в шапке» имело смысл, а
+   * человеку — чтобы видеть, что правка вида вообще возможна.
+   */
+  readonly headerFormat?: CellFormat;
+  readonly format?: CellFormat;
 }
 
 export interface SheetMap {
@@ -93,6 +119,14 @@ export interface SheetData {
   readonly map: SheetMap;
   /** Все строки данных, ключ — имя колонки. */
   readonly rows: readonly Readonly<Record<string, CellValue>>[];
+  /**
+   * Явный вид тех же ячеек, ключ — имя колонки. Отдельным полем, а не внутри `rows`:
+   * `rows` читают все, кто пишет значения, и добавлять им объект вида в каждую ячейку
+   * значило бы утяжелить самый частый путь ради самого редкого. Пустых записей нет.
+   */
+  readonly formats: readonly Readonly<Record<string, CellFormat>>[];
+  /** Вид ячеек строки заголовков — для «сделай шапку жирной». */
+  readonly headerFormats: Readonly<Record<string, CellFormat>>;
 }
 
 export interface ReadOptions {
@@ -102,11 +136,33 @@ export interface ReadOptions {
   readonly maxRows?: number;
 }
 
+/**
+ * Правка вида одной ячейки. Запрос доменный, а не `sheets_v4.Schema$Request`: иначе фейк в
+ * тестах пришлось бы строить под форму библиотеки, а не под нужды ядра (решение фазы 1), и
+ * типы `googleapis` протекли бы за единственный шов — на это есть гейт `core-no-library`.
+ *
+ * Гранулярность — ячейка, а не диапазон: план записи и так живёт по ячейкам, и снимок вида
+ * «до» для отката собирается по ним же. Один вызов `batchUpdate` уносит их пачкой.
+ */
+export interface FormatRequest {
+  readonly kind: 'format';
+  readonly sheetId: number;
+  /** 1-based строка и 0-based колонка — как в остальном домене. */
+  readonly row: number;
+  readonly column: number;
+  /** Только заданные поля и правятся: `{ bold: true }` не сбрасывает выравнивание. */
+  readonly format: CellFormat;
+}
+
+export type SheetRequest = FormatRequest;
+
 export interface SheetsClient {
   getSpreadsheet(id: string, options?: ReadOptions): Promise<SpreadsheetSnapshot>;
   /** Запись значений в A1-диапазон; `values` — как ввёл бы человек. */
   updateValues(id: string, range: string, values: readonly (readonly CellValue[])[]): Promise<void>;
   appendValues(id: string, range: string, values: readonly (readonly CellValue[])[]): Promise<void>;
+  /** Правки, которых нет в values-API: вид ячеек (§6.2), дальше — структурные (2.5b). */
+  batchUpdate(id: string, requests: readonly SheetRequest[]): Promise<void>;
 }
 
 export function columnLetter(index: number): string {

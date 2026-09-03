@@ -3,14 +3,16 @@
  * название отчёта в первой строке, шапка во второй.
  */
 
-import { appendRow, setCells, upsertRow } from '../../src/core/sheets/rows.js';
+import { appendRow, upsertRow } from '../../src/core/sheets/rows.js';
+import { setCells } from '../../src/core/sheets/set-cells-op.js';
 import type { ApplyOutcome, RowOptions } from '../../src/core/sheets/rows.js';
 import type {
-  CellValue,
   Cell,
+  CellValue,
+  SheetRequest,
   SheetSnapshot,
-  SpreadsheetSnapshot,
   SheetsClient,
+  SpreadsheetSnapshot,
 } from '../../src/core/sheets/types.js';
 
 const cell = (value: CellValue, formula?: string): Cell =>
@@ -55,6 +57,31 @@ export function twoDatesSheet(): SheetSnapshot {
 }
 
 /** Лист с формульной колонкой — пример A10. */
+/**
+ * Лист с оформлением: жирная шапка, правое выравнивание числовой колонки, цветная ячейка.
+ * Нужен, чтобы карта могла показать вид, а откат — вернуть его.
+ */
+export function formattedSheet(): SheetSnapshot {
+  const header = (value: CellValue): Cell => ({
+    value,
+    format: { bold: true, align: 'center' },
+  });
+  return {
+    title: 'Оформленный',
+    sheetId: 7,
+    rows: [
+      [header('Проект'), header('Часы'), header('Статус')],
+      [
+        { value: 'G connect' },
+        { value: 2, format: { align: 'right' } },
+        { value: 'в работе', format: { background: '#ffcc00' } },
+      ],
+      [{ value: 'lash-try-on' }, { value: 5, format: { align: 'right' } }, { value: 'готово' }],
+    ],
+    frozenRows: 1,
+  };
+}
+
 export function formulaSheet(): SheetSnapshot {
   return {
     title: 'Итоги',
@@ -135,10 +162,29 @@ export interface RecordedWrite {
 }
 
 /** Фейковый клиент: запоминает записи, чтобы проверять, что dryRun действительно не пишет. */
+/**
+ * Применить правку вида к снимку. Один помощник на оба фейка: две копии этого цикла
+ * поймал гейт копипаста, и он прав — разъехались бы они молча.
+ */
+function withFormat(data: SpreadsheetSnapshot, request: SheetRequest): SpreadsheetSnapshot {
+  const sheet = data.sheets.find((s) => s.sheetId === request.sheetId);
+  if (sheet === undefined) return data;
+  const rows = sheet.rows.map((r) => [...r]);
+  const row = rows[request.row - 1];
+  if (row === undefined) return data;
+  const cell = row[request.column] ?? { value: null };
+  row[request.column] = { ...cell, format: { ...cell.format, ...request.format } };
+  return {
+    ...data,
+    sheets: data.sheets.map((s) => (s.sheetId === request.sheetId ? { ...s, rows } : s)),
+  };
+}
+
 export class FakeSheetsClient implements SheetsClient {
   readonly writes: RecordedWrite[] = [];
   readonly appends: RecordedWrite[] = [];
-  private readonly data: SpreadsheetSnapshot;
+  readonly formatWrites: SheetRequest[] = [];
+  private data: SpreadsheetSnapshot;
 
   constructor(data: SpreadsheetSnapshot = snapshot()) {
     this.data = data;
@@ -162,6 +208,17 @@ export class FakeSheetsClient implements SheetsClient {
     values: readonly (readonly CellValue[])[],
   ): Promise<void> {
     this.appends.push({ range, values });
+  }
+
+  /**
+   * Правки вида фейк ЗАПОМИНАЕТ и применяет к своему снимку: иначе оракул на откат вида
+   * проверял бы только «вызвали метод», а не «вид вернулся» — то есть ничего.
+   */
+  async batchUpdate(_id: string, requests: readonly SheetRequest[]): Promise<void> {
+    this.formatWrites.push(...requests);
+    for (const request of requests) {
+      this.data = withFormat(this.data, request);
+    }
   }
 }
 
@@ -205,6 +262,13 @@ export class MutableSheetsClient implements SheetsClient {
 
   async appendValues(): Promise<void> {
     throw new Error('не используется');
+  }
+
+  /** Тот же метод, что у настоящего клиента: шов один, и фейки обязаны ему соответствовать. */
+  async batchUpdate(_id: string, requests: readonly SheetRequest[]): Promise<void> {
+    for (const request of requests) {
+      this.data = withFormat(this.data, request);
+    }
   }
 }
 

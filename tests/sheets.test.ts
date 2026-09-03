@@ -3,13 +3,16 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildSheetData, buildSheetMap, detectHeaderRow } from '../src/core/sheets/map.js';
-import { appendRow, setCells, upsertRow } from '../src/core/sheets/rows.js';
+import { appendRow, upsertRow } from '../src/core/sheets/rows.js';
+import { setCells } from '../src/core/sheets/set-cells-op.js';
 import type { WriteRecord } from '../src/core/journal.js';
 import type { CellValue, SpreadsheetSnapshot } from '../src/core/sheets/types.js';
 import {
   MutableSheetsClient,
   appendConfirmed,
+  formattedSheet,
   formulaSheet,
+  reportSheet,
   setCellsConfirmed,
   upsertConfirmed,
   FakeSheetsClient,
@@ -833,5 +836,97 @@ describe('повтор подтверждённой правки', () => {
     expect(again.status).toBe('no_change');
     // Главное: второй записи нет — гарантия та же, что дало бы plan_already_applied.
     expect(journalled).toHaveLength(1);
+  });
+});
+
+/** Фаза 2.5a, слайс 1: вид ячейки виден ядру. */
+describe('V1, V9 — вид и формулы в карте', () => {
+  const formatted = () => buildSheetMap(snapshot([formattedSheet()]));
+
+  it('V1: вид шапки и вид данных попадают в профиль колонки', () => {
+    const byName = Object.fromEntries(formatted().columns.map((c) => [c.name, c]));
+    expect(byName['Проект']?.headerFormat).toEqual({ bold: true, align: 'center' });
+    expect(byName['Часы']?.format).toEqual({ align: 'right' });
+    expect(byName['Статус']?.format).toEqual({ background: '#ffcc00' });
+  });
+
+  it('вид не кладётся в карту пустым объектом, когда его не задавали', () => {
+    const plain = buildSheetMap(snapshot());
+    for (const column of plain.columns) {
+      expect(column.format, column.name).toBeUndefined();
+      expect(column.headerFormat, column.name).toBeUndefined();
+    }
+    // Карта остаётся дешёвой: поля вида не появляются ни у одной колонки.
+    expect(JSON.stringify(plain)).not.toContain('"format"');
+  });
+
+  it('V9: значение с «=» видно как формула — отдельной операции для этого не нужно', async () => {
+    const client = new FakeSheetsClient(snapshot([formulaSheet()]));
+    const data = buildSheetData(snapshot([formulaSheet()]));
+    const preview = await upsertRow(
+      client,
+      data,
+      { Проект: 'G connect' },
+      { Итого: '=B2*3' },
+      {
+        force: true,
+      },
+    );
+    expect(preview.changes[0]?.after).toBe('=B2*3');
+    // Запись уходит как значение: USER_ENTERED на стороне Google делает из него формулу,
+    // и это проверяется живой пробой, а не фейком (урок L3).
+    const outcome = await upsertRow(
+      client,
+      data,
+      { Проект: 'G connect' },
+      { Итого: '=B2*3' },
+      {
+        force: true,
+        dryRun: false,
+        confirm: preview.planId ?? '',
+      },
+    );
+    expect(outcome.status).toBe('ok');
+    expect(client.writes[0]?.values[0]?.[0]).toBe('=B2*3');
+    // Карта уже помечает такую колонку формульной — значит следующая правка потребует force.
+    expect(
+      buildSheetMap(snapshot([formulaSheet()])).columns.find((c) => c.name === 'Итого')?.hasFormula,
+    ).toBe(true);
+  });
+});
+
+/** Найдено живой проверкой 2026-09-03: карта отдавала строку за границей данных. */
+describe('карта не отдаёт пустой хвост сетки', () => {
+  const padded = () => {
+    const base = reportSheet();
+    return snapshot([
+      { ...base, rows: [...base.rows, ...Array.from({ length: 30 }, () => [{ value: null }])] },
+    ]);
+  };
+
+  it('sampleRows и rows кончаются там, где кончаются данные', () => {
+    const { map, rows } = buildSheetData(padded());
+    expect(map.dataRowCount).toBe(2);
+    expect(rows).toHaveLength(2);
+    expect(map.sampleRows).toHaveLength(2);
+  });
+
+  it('пустая строка ВНУТРИ данных не обрезает хвостовой блок', () => {
+    const base = reportSheet();
+    const withGap = snapshot([
+      {
+        ...base,
+        rows: [
+          ...base.rows,
+          [{ value: null }, { value: null }, { value: null }, { value: null }],
+          [{ value: '2026-09-03' }, { value: 'после пропуска' }, { value: 'готово' }, { value: 1 }],
+          [{ value: null }],
+        ],
+      },
+    ]);
+    const { rows } = buildSheetData(withGap);
+    // Три строки данных, пустая посередине сохранена, пустой хвост отрезан.
+    expect(rows).toHaveLength(4);
+    expect(rows[3]?.['Проект']).toBe('после пропуска');
   });
 });

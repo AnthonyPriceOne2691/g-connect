@@ -45,3 +45,51 @@ describe('B14 — код плана', () => {
     expect(planId(changed as PlanShape)).not.toBe(planId(base));
   });
 });
+
+/**
+ * Вид внутри кода плана. Мутационный гейт показал `plan.ts` 57.5% — самое слабое место
+ * фазы 2.5a, и ровно там жил блокер 2026-09-03 (вид сериализовался, но не заполнялся).
+ * Поэтому оракулы здесь на СВЯЗЬ, а не на концы: что именно попадает в подпись.
+ */
+describe('вид в коде плана', () => {
+  const withFormat = (cells: PlanShape['cells']): PlanShape => ({ ...base, cells });
+  const cell = (over: Partial<PlanShape['cells'][number]> = {}): PlanShape['cells'][number] => ({
+    a1: 'Лист1!C3',
+    column: 'Статус',
+    before: 'в работе',
+    after: 'в работе',
+    ...over,
+  });
+
+  it('порядок ключей вида кода не меняет', () => {
+    const a = withFormat([cell({ afterFormat: { bold: true, italic: true } })]);
+    const b = withFormat([cell({ afterFormat: { italic: true, bold: true } })]);
+    expect(planId(a)).toBe(planId(b));
+  });
+
+  it('другое ЗНАЧЕНИЕ поля вида — другой код', () => {
+    const on = withFormat([cell({ afterFormat: { bold: true } })]);
+    const off = withFormat([cell({ afterFormat: { bold: false } })]);
+    expect(planId(on)).not.toBe(planId(off));
+  });
+
+  it('другое ПОЛЕ вида — другой код', () => {
+    const bold = withFormat([cell({ afterFormat: { bold: true } })]);
+    const italic = withFormat([cell({ afterFormat: { italic: true } })]);
+    expect(planId(bold)).not.toBe(planId(italic));
+  });
+
+  it('вид «до» тоже входит в подпись: от него зависит откат', () => {
+    const from = withFormat([
+      cell({ beforeFormat: { align: 'right' }, afterFormat: { bold: true } }),
+    ]);
+    const clean = withFormat([cell({ afterFormat: { bold: true } })]);
+    expect(planId(from)).not.toBe(planId(clean));
+  });
+
+  it('план без вида и план с пустым видом дают один код', () => {
+    const none = withFormat([cell()]);
+    const empty = withFormat([cell({ afterFormat: {} })]);
+    expect(planId(none)).toBe(planId(empty));
+  });
+});

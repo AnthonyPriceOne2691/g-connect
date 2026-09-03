@@ -6,7 +6,7 @@
  * разъехалась бы с первой молча — и разъезд был бы виден только на живой таблице.
  */
 
-import type { CellValue, SheetSnapshot } from './types.js';
+import type { CellFormat, CellValue, SheetSnapshot } from './types.js';
 
 /** `Лист1!D3` → лист и индексы (1-based строка, 0-based колонка). `null` — не адрес. */
 export function parseA1(a1: string): { sheet: string; row: number; column: number } | null {
@@ -42,3 +42,41 @@ export function valueAt(
  */
 export const sameCell = (a: CellValue | undefined, b: CellValue | undefined): boolean =>
   String(a ?? '').trim() === String(b ?? '').trim();
+
+/** Явный вид ячейки по адресу — то же, что `valueAt`, но про формат. */
+export function formatAt(
+  snapshot: { readonly sheets: readonly SheetSnapshot[] },
+  a1: string,
+): CellFormat | undefined {
+  const parsed = parseA1(a1);
+  if (parsed === null) return undefined;
+  const sheet = snapshot.sheets.find((s) => s.title === parsed.sheet);
+  return sheet?.rows[parsed.row - 1]?.[parsed.column]?.format;
+}
+
+/**
+ * Сравнение видов по сути, а не по порядку ключей: `{bold, italic}` и `{italic, bold}` —
+ * один вид. Живёт здесь, а не в `rows.ts`, потому что нужно и плану, и охранникам.
+ */
+export function sameFormat(a: CellFormat | undefined, b: CellFormat | undefined): boolean {
+  return formatKey(a) === formatKey(b);
+}
+
+/**
+ * Вид как строка для сравнения. `bold: false` и «жирность не задана» — это ОДИН вид:
+ * ячейка выглядит одинаково, и просьба «снять жирность» там, где её нет, не должна
+ * становиться планом. Нашла живая проверка 2026-09-03: `{bold: false}` на неоформленной
+ * ячейке строило правку вместо `no_change`.
+ *
+ * Выравнивание и фон так не сворачиваются: у выравнивания значение по умолчанию зависит
+ * от типа данных (числа Google равняет вправо), а белый фон — осознанный выбор, а не
+ * «фона нет». Схлопывать их значило бы врать в другую сторону.
+ */
+export function formatKey(format: CellFormat | undefined): string {
+  const entries = Object.entries(format ?? {}).filter(([key, value]) => {
+    if (value === undefined) return false;
+    const isFlag = key === 'bold' || key === 'italic' || key === 'underline';
+    return !(isFlag && value === false);
+  });
+  return JSON.stringify(entries.sort(([x], [y]) => (x < y ? -1 : 1)));
+}

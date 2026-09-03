@@ -176,6 +176,20 @@
       "kind": "deny",
       "enforced_in": "src/core/sheets/write-guards.ts (assertPlanNotApplied)",
       "probe": "повторная запись того же плана даёт plan_already_applied; после отката план снова законен"
+    },
+    {
+      "id": "write.format-preserves-values",
+      "title": "Правка вида не меняет значений",
+      "kind": "invariant",
+      "enforced_in": "src/core/sheets/format-op.ts (formatChanges) + src/core/sheets/rows.ts (writeCells)",
+      "probe": "formatCells пишет только через batchUpdate: значения ячеек до и после совпадают, values-API не зовётся ни разу"
+    },
+    {
+      "id": "write.replace-preview-lists-cells",
+      "title": "Превью замены перечисляет ячейки, а не их число",
+      "kind": "invariant",
+      "enforced_in": "src/core/sheets/find-replace-op.ts (replaceChanges)",
+      "probe": "findReplace отдаёт по одной строке плана на каждую затронутую ячейку с «было → станет»"
     }
   ]
 }

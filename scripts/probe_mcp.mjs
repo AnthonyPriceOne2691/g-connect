@@ -114,6 +114,60 @@ try {
     );
     check('превью ничего не записало', preview.status === 'preview' || preview.status === 'no_change');
 
+    // Фаза 2.5a: вид и замена — тоже только превью, ничего не записываем.
+    const format = await callTool('gc_apply', {
+      op: 'formatCells',
+      target: TARGET,
+      where: { [key]: 'G connect' },
+      columns: ['Статус'],
+      format: { bold: true },
+    });
+    check(
+      'превью правки вида отдаёт код плана',
+      /^[0-9a-f]{6}$/.test(format.planId ?? '') || format.status === 'no_change',
+      `status=${format.status}, planId=${format.planId}`,
+    );
+    check(
+      'правка вида не выглядит записью',
+      format.status === 'preview' || format.status === 'no_change',
+      String(format.status),
+    );
+    const formatCell = format.changes?.[0];
+    check(
+      'в плане вида есть «было → станет» по виду',
+      format.status === 'no_change' ||
+        (formatCell?.kind === 'format' && formatCell?.afterFormat !== undefined),
+      formatCell === undefined ? 'плана нет' : `${formatCell.a1}: ${JSON.stringify(formatCell.afterFormat)}`,
+    );
+
+    const replace = await callTool('gc_apply', {
+      op: 'findReplace',
+      target: TARGET,
+      find: 'G connect',
+      replace: 'G connect',
+      matchEntireCell: true,
+    });
+    check(
+      'превью замены перечисляет ячейки, а не число',
+      replace.status === 'no_change' ||
+        (Array.isArray(replace.changes) && replace.changes.every((c) => typeof c.a1 === 'string')),
+      `status=${replace.status}, ячеек=${replace.changes?.length ?? 0}`,
+    );
+
+    const badRegex = await callTool('gc_apply', {
+      op: 'findReplace',
+      target: TARGET,
+      find: '[',
+      replace: 'x',
+      searchByRegex: true,
+      dryRun: false,
+    });
+    check(
+      'битое регулярное выражение отклонено до записи',
+      badRegex.code === 'bad_request' || badRegex.raw?.includes('bad_regex'),
+      badRegex.cause ?? badRegex.code ?? '',
+    );
+
     const noConfirm = await callTool('gc_apply', {
       op: 'upsertRow',
       target: TARGET,

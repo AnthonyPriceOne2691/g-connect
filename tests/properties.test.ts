@@ -18,7 +18,8 @@ import { isSilent, needsClarification, resolveColumn } from '../src/core/resolve
 import { buildSheetData, buildSheetMap } from '../src/core/sheets/map.js';
 import type { WriteRecord } from '../src/core/journal.js';
 import { limitOf } from '../src/core/policy.js';
-import { appendRow, setCells, upsertRow } from '../src/core/sheets/rows.js';
+import { appendRow, upsertRow } from '../src/core/sheets/rows.js';
+import { setCells } from '../src/core/sheets/set-cells-op.js';
 import { assertWritable, parseTargetUrl, resolveTarget } from '../src/core/targets.js';
 import { undoLast } from '../src/core/undo.js';
 import { normalizeValue } from '../src/core/values.js';

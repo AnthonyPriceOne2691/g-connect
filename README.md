@@ -31,6 +31,8 @@ IDE (Claude Code, Cursor, Claude Desktop — модель у клиента, д�
 
 - [DESIGN.md](DESIGN.md) — дизайн: решения D-1…D-10, контракт инструментов, план работ.
 - [delivery/](delivery/) — процессный контур поставки (Agent Delivery Harness).
+- [delivery/LIVE-RUN.md](delivery/LIVE-RUN.md) — живой прогон вторым агентом: зачем, три
+  роли, чего он не заменяет. Практика проекта, а не часть канона.
 - [AGENTS.md](AGENTS.md) — что читать агенту перед работой.
 
 ## Подключение

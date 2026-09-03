@@ -8,9 +8,29 @@
  */
 
 import { gcError } from '../errors.js';
-import { sameCell, valueAt } from './a1.js';
-import type { SheetMap, SheetsClient } from './types.js';
+import { formatAt, sameCell, sameFormat, valueAt } from './a1.js';
+import type { SheetMap, SheetSnapshot, SheetsClient } from './types.js';
 import type { ApplyOutcome, PlannedChange, RowOptions } from './write-types.js';
+
+/**
+ * Предусловие для правки вида: в ячейке всё ещё тот вид, который показывало превью.
+ *
+ * Отдельной веткой, потому что сравнивать надо не значение (оно у такой правки не
+ * меняется), а формат — иначе предусловие пропускало бы чужую правку вида молча.
+ */
+function assertFormatUnchanged(
+  snapshot: { readonly sheets: readonly SheetSnapshot[] },
+  change: PlannedChange,
+): void {
+  const current = formatAt(snapshot, change.a1);
+  if (sameFormat(current, change.beforeFormat)) return;
+  throw gcError('stale_value', {
+    detail:
+      `Вид ячейки ${change.a1} (${change.column}) изменился после превью. Запись не ` +
+      'выполнена — перечитай и подтверди новый план.',
+    cause: 'format_changed_after_preview',
+  });
+}
 
 /**
  * Подтверждение как подпись (D-16).
@@ -94,6 +114,10 @@ export async function assertBeforeValues(
 ): Promise<void> {
   const snapshot = await client.getSpreadsheet(map.spreadsheetId, { sheet: map.sheet });
   for (const change of changes) {
+    if (change.kind === 'format') {
+      assertFormatUnchanged(snapshot, change);
+      continue;
+    }
     const current = valueAt(snapshot, change.a1);
     if (sameCell(current, change.before)) continue;
     throw gcError('stale_value', {

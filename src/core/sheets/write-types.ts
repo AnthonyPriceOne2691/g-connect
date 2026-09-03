@@ -6,12 +6,12 @@
 
 import type { JournalSink, JournalSource } from '../journal.js';
 import type { ResolveOptions } from '../resolver.js';
-import type { CellValue } from './types.js';
+import type { CellFormat, CellValue } from './types.js';
 
 export type RowValues = Readonly<Record<string, unknown>>;
 
 /** Три операции записи (§5). Имя типа нужно и охранникам, и журналу. */
-export type OperationKind = 'appendRow' | 'upsertRow' | 'setCells';
+export type OperationKind = 'appendRow' | 'upsertRow' | 'setCells' | 'formatCells' | 'findReplace';
 
 export interface Question {
   readonly field: string;
@@ -24,20 +24,45 @@ export interface Question {
 }
 
 export interface PlannedChange {
-  readonly kind: 'set' | 'addRow';
+  /** `format` — правка вида: значения такая операция не трогает вовсе (§6.2). */
+  readonly kind: 'set' | 'addRow' | 'format';
   readonly a1: string;
   readonly column: string;
   readonly before: CellValue;
   readonly after: CellValue;
+  /**
+   * Вид «до» и «после» — только у `kind: 'format'`. Оба входят в код плана: иначе два
+   * разных плана правок вида (жирный против курсива) получили бы один код, и подпись
+   * человека перестала бы указывать на конкретную правку (D-16).
+   */
+  readonly beforeFormat?: CellFormat;
+  readonly afterFormat?: CellFormat;
 }
 
 /**
  * Текст статуса `no_change`. Живёт константой: его читает человек, и он же проверяется
  * оракулом — «пустой результат объясняет причину» (§13.7).
  */
-export const NO_CHANGE_NOTE =
-  'Ничего не изменится: в целевых ячейках уже такие значения. ' +
-  'Записи не было и строки журнала тоже — это не выполненная правка.';
+const NO_CHANGE_TAIL = 'Записи не было и строки журнала тоже — это не выполненная правка.';
+
+export const NO_CHANGE_NOTE = `Ничего не изменится: в целевых ячейках уже такие значения. ${NO_CHANGE_TAIL}`;
+
+/**
+ * Причина «нечего менять» зависит от операции.
+ *
+ * Живая проверка 2026-09-03: замена, не нашедшая ни одного совпадения, сообщала «в целевых
+ * ячейках уже такие значения» — то есть описывала ДРУГОЙ случай. Пустой результат обязан
+ * называть свою причину, а не ближайшую похожую (§13.7).
+ */
+export function noChangeNote(op: OperationKind): string {
+  if (op === 'findReplace') {
+    return `Совпадений не найдено: ни одна ячейка не подошла под условие поиска. ${NO_CHANGE_TAIL}`;
+  }
+  if (op === 'formatCells') {
+    return `Вид уже такой, каким его просят сделать. ${NO_CHANGE_TAIL}`;
+  }
+  return NO_CHANGE_NOTE;
+}
 
 export interface ApplyOutcome {
   readonly status: 'ok' | 'preview' | 'no_change' | 'plan_mismatch' | 'needs_clarification';
@@ -80,6 +105,8 @@ export interface RowOptions extends ResolveOptions {
   readonly force?: boolean;
   /** Код плана из превью — подпись человека под этой правкой (D-16). */
   readonly confirm?: string;
+  /** Правка вида: заодно поправить ячейку заголовка — «сделай шапку жирной». */
+  readonly includeHeader?: boolean;
   /**
    * Откуда читать историю, чтобы не записать тот же план дважды. Не задан — проверка
    * повторного «пиши» не работает, и это видно в тестах, а не по молчанию.
