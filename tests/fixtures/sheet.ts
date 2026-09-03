@@ -9,6 +9,9 @@ import type { ApplyOutcome, RowOptions } from '../../src/core/sheets/rows.js';
 import type {
   Cell,
   CellValue,
+  DeleteDimensionRequest,
+  FormatRequest,
+  InsertDimensionRequest,
   SheetRequest,
   SheetSnapshot,
   SheetsClient,
@@ -166,7 +169,7 @@ export interface RecordedWrite {
  * Применить правку вида к снимку. Один помощник на оба фейка: две копии этого цикла
  * поймал гейт копипаста, и он прав — разъехались бы они молча.
  */
-function withFormat(data: SpreadsheetSnapshot, request: SheetRequest): SpreadsheetSnapshot {
+function withFormat(data: SpreadsheetSnapshot, request: FormatRequest): SpreadsheetSnapshot {
   const sheet = data.sheets.find((s) => s.sheetId === request.sheetId);
   if (sheet === undefined) return data;
   const rows = sheet.rows.map((r) => [...r]);
@@ -177,6 +180,60 @@ function withFormat(data: SpreadsheetSnapshot, request: SheetRequest): Spreadshe
   return {
     ...data,
     sheets: data.sheets.map((s) => (s.sheetId === request.sheetId ? { ...s, rows } : s)),
+  };
+}
+
+/**
+ * Применить ЛЮБОЙ доменный запрос к снимку: вид или геометрию. Фейки обязаны
+ * соответствовать шву целиком — иначе оракул на откат структурной правки проверял бы
+ * «метод вызвали», а не «строка вернулась» (урок L3).
+ */
+function applyRequest(data: SpreadsheetSnapshot, request: SheetRequest): SpreadsheetSnapshot {
+  if (request.kind === 'format') return withFormat(data, request);
+  if (request.kind === 'addSheet') {
+    const sheetId = Math.max(0, ...data.sheets.map((s) => s.sheetId)) + 1;
+    return { ...data, sheets: [...data.sheets, { title: request.title, sheetId, rows: [] }] };
+  }
+  if (request.kind === 'deleteSheet') {
+    return { ...data, sheets: data.sheets.filter((s) => s.sheetId !== request.sheetId) };
+  }
+  if (request.kind === 'renameSheet') {
+    return {
+      ...data,
+      sheets: data.sheets.map((s) =>
+        s.sheetId === request.sheetId ? { ...s, title: request.title } : s,
+      ),
+    };
+  }
+  return withDimension(data, request);
+}
+
+/** Вставка и удаление измерения: строки или колонки, 1-based «перед этим номером». */
+function withDimension(
+  data: SpreadsheetSnapshot,
+  request: InsertDimensionRequest | DeleteDimensionRequest,
+): SpreadsheetSnapshot {
+  const insert = request.kind === 'insertDimension';
+  return {
+    ...data,
+    sheets: data.sheets.map((sheet) => {
+      if (sheet.sheetId !== request.sheetId) return sheet;
+      const rows = sheet.rows.map((r) => [...r]);
+      const start = request.at - 1;
+      if (request.dimension === 'rows') {
+        if (insert) rows.splice(start, 0, ...Array.from({ length: request.count }, () => []));
+        else rows.splice(start, request.count);
+        return { ...sheet, rows };
+      }
+      const next = rows.map((row) => {
+        const copy = [...row];
+        if (insert)
+          copy.splice(start, 0, ...Array.from({ length: request.count }, () => ({ value: null })));
+        else copy.splice(start, request.count);
+        return copy;
+      });
+      return { ...sheet, rows: next };
+    }),
   };
 }
 
@@ -217,7 +274,7 @@ export class FakeSheetsClient implements SheetsClient {
   async batchUpdate(_id: string, requests: readonly SheetRequest[]): Promise<void> {
     this.formatWrites.push(...requests);
     for (const request of requests) {
-      this.data = withFormat(this.data, request);
+      this.data = applyRequest(this.data, request);
     }
   }
 }
@@ -267,7 +324,7 @@ export class MutableSheetsClient implements SheetsClient {
   /** Тот же метод, что у настоящего клиента: шов один, и фейки обязаны ему соответствовать. */
   async batchUpdate(_id: string, requests: readonly SheetRequest[]): Promise<void> {
     for (const request of requests) {
-      this.data = withFormat(this.data, request);
+      this.data = applyRequest(this.data, request);
     }
   }
 }

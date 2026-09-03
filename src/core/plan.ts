@@ -34,10 +34,25 @@ export interface PlanCell {
 /** Что в плане опасного: формульная колонка, защищённый диапазон. */
 export type PlanTouch = 'formula' | 'protected';
 
+/**
+ * Структурная часть подписи (D-19). Без неё «вставить строку перед четвёртой» и «удалить
+ * четвёртую» получили бы один код плана: ячейки у первой пусты, а у второй — те же, что
+ * были. Ровно тот класс дыры, что нашли 2026-09-03 у правок вида (урок L14).
+ */
+export interface PlanStructure {
+  readonly kind: string;
+  readonly sheet: string;
+  readonly at?: number;
+  readonly count?: number;
+  readonly title?: string;
+  readonly anchor?: string;
+}
+
 export interface PlanShape {
   readonly targetId: string;
   readonly sheet: string;
   readonly op: string;
+  readonly structural?: PlanStructure;
   readonly cells: readonly PlanCell[];
   /**
    * Входит в код плана намеренно: подтверждая код, человек подтверждает и то, что правка
@@ -46,13 +61,24 @@ export interface PlanShape {
   readonly touches: readonly PlanTouch[];
 }
 
-/** Вид как отсортированные пары: порядок ключей в объекте не должен менять код плана. */
-function sortedFormat(format: CellFormat | undefined): readonly (readonly [string, unknown])[] {
-  if (format === undefined) return [];
-  return Object.entries(format)
-    .filter(([, value]) => value !== undefined)
+/**
+ * Объект как отсортированные пары: порядок ключей не должен менять код плана.
+ *
+ * Один помощник на вид ячейки и на структуру правки — гейт копипаста отклонил две копии
+ * этого цикла, и он прав: разъехавшись, они дали бы разные коды для одного плана в
+ * зависимости от того, что в нём заполнено.
+ */
+function sortedPairs(value: object | undefined): readonly (readonly [string, unknown])[] {
+  if (value === undefined) return [];
+  return Object.entries(value)
+    .filter(([, item]) => item !== undefined)
     .sort(([a], [b]) => (a < b ? -1 : 1))
-    .map(([key, value]) => [key, value] as const);
+    .map(([key, item]) => [key, item] as const);
+}
+
+/** Вид как отсортированные пары. */
+function sortedFormat(format: CellFormat | undefined): readonly (readonly [string, unknown])[] {
+  return sortedPairs(format);
 }
 
 /**
@@ -82,7 +108,12 @@ export function canonicalPlan(plan: PlanShape): string {
       sortedFormat(c.afterFormat),
     ]);
   const touches = [...plan.touches].sort();
-  return JSON.stringify([plan.targetId, plan.sheet, plan.op, cells, touches]);
+  return JSON.stringify([plan.targetId, plan.sheet, plan.op, cells, touches, structureOf(plan)]);
+}
+
+/** Структура как отсортированные пары — тем же помощником, что и вид. */
+function structureOf(plan: PlanShape): readonly (readonly [string, unknown])[] {
+  return sortedPairs(plan.structural);
 }
 
 /** Код плана: первые символы sha256 от канонического вида. */

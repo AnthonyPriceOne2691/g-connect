@@ -14,7 +14,9 @@ import type {
   Cell,
   CellFormat,
   CellValue,
+  DeleteDimensionRequest,
   FormatRequest,
+  InsertDimensionRequest,
   ReadOptions,
   SheetRequest,
   SheetSnapshot,
@@ -196,7 +198,48 @@ export function toSpreadsheetSnapshot(
   };
 }
 
-/** Доменная правка вида → запрос библиотеки. Единственное место такого перевода. */
+/**
+ * Доменный запрос → запрос библиотеки. Единственное место такого перевода (§2, гейт
+ * `core-no-library`): за этой функцией типы `googleapis` в ядро не проходят.
+ */
+export function toRequest(request: SheetRequest): sheets_v4.Schema$Request {
+  if (request.kind === 'format') return toRepeatCell(request);
+  if (request.kind === 'insertDimension') {
+    return { insertDimension: { range: toDimensionRange(request), inheritFromBefore: false } };
+  }
+  if (request.kind === 'deleteDimension') {
+    return { deleteDimension: { range: toDimensionRange(request) } };
+  }
+  if (request.kind === 'addSheet') {
+    return { addSheet: { properties: { title: request.title } } };
+  }
+  if (request.kind === 'deleteSheet') {
+    return { deleteSheet: { sheetId: request.sheetId } };
+  }
+  return {
+    updateSheetProperties: {
+      properties: { sheetId: request.sheetId, title: request.title },
+      fields: 'title',
+    },
+  };
+}
+
+/**
+ * Диапазон измерения. Google ждёт 0-based полуинтервал, домен говорит 1-based «перед
+ * этим номером» — перевод здесь, чтобы ядро не считало индексы библиотеки.
+ */
+function toDimensionRange(
+  request: InsertDimensionRequest | DeleteDimensionRequest,
+): sheets_v4.Schema$DimensionRange {
+  return {
+    sheetId: request.sheetId,
+    dimension: request.dimension === 'rows' ? 'ROWS' : 'COLUMNS',
+    startIndex: request.at - 1,
+    endIndex: request.at - 1 + request.count,
+  };
+}
+
+/** Доменная правка вида → запрос библиотеки. */
 function toRepeatCell(request: FormatRequest): sheets_v4.Schema$Request {
   const { format } = request;
   const textFields = (['bold', 'italic', 'underline'] as const).filter(
@@ -331,7 +374,7 @@ export class GoogleSheetsClient implements SheetsClient {
    */
   async batchUpdate(id: string, requests: readonly SheetRequest[]): Promise<void> {
     if (requests.length === 0) return;
-    const body = requests.map((request) => toRepeatCell(request));
+    const body = requests.map((request) => toRequest(request));
     try {
       await this.retry(() =>
         this.sheets.spreadsheets.batchUpdate({
@@ -340,7 +383,7 @@ export class GoogleSheetsClient implements SheetsClient {
         }),
       );
     } catch (error) {
-      throw fromGoogleError(error, `Не удалось применить ${requests.length} правк(и) вида.`);
+      throw fromGoogleError(error, `Не удалось применить ${requests.length} правк(и).`);
     }
   }
 

@@ -4,14 +4,42 @@
  * «что записываем» и «пускать ли записывать» разъехался бы первым же рефакторингом.
  */
 
-import type { JournalSink, JournalSource } from '../journal.js';
+import type { JournalSink, JournalSource, StructuralKind } from '../journal.js';
 import type { ResolveOptions } from '../resolver.js';
 import type { CellFormat, CellValue } from './types.js';
 
 export type RowValues = Readonly<Record<string, unknown>>;
 
-/** Три операции записи (§5). Имя типа нужно и охранникам, и журналу. */
-export type OperationKind = 'appendRow' | 'upsertRow' | 'setCells' | 'formatCells' | 'findReplace';
+/** Операции записи. Имя типа нужно и охранникам, и журналу. */
+export type OperationKind =
+  'appendRow' | 'upsertRow' | 'setCells' | 'formatCells' | 'findReplace' | StructuralKind;
+
+/**
+ * Структурная часть плана (D-19): превью правки геометрии описывает ПОЗИЦИИ, а не ячейки.
+ *
+ * Живёт рядом с `changes`, а не вместо них: у удаления строки есть и то и другое —
+ * геометрия («строка 4 исчезнет») и содержимое («в ней лежало вот это»), и человеку нужно
+ * второе, чтобы понять, что он теряет.
+ */
+export interface StructuralPlan {
+  readonly kind: StructuralKind;
+  readonly sheet: string;
+  readonly at?: number;
+  readonly count?: number;
+  readonly title?: string;
+  readonly previousTitle?: string;
+  /**
+   * Якорь, по которому найдена позиция: «строка проекта G connect». В плане он ЕСТЬ, потому
+   * что подтверждая правку, человек подтверждает «удалить строку проекта X, которая сейчас
+   * четвёртая», а не «удалить четвёртую» — номер к моменту записи может стать чужим.
+   */
+  readonly anchor?: string;
+  /**
+   * Что откат вернуть не сможет, названное числом (решение владельца 2026-09-03 про
+   * `deleteSheet`). Пусто — значит потерь нет, и это тоже утверждение.
+   */
+  readonly irreversible?: readonly string[];
+}
 
 export interface Question {
   readonly field: string;
@@ -104,6 +132,8 @@ export interface ApplyOutcome {
    * (урок L6): без id откат «именно этой» записи назвать нечем.
    */
   readonly correlationId?: string;
+  /** Структурная часть плана и записи: что произойдёт с геометрией листа (D-19). */
+  readonly structural?: StructuralPlan;
 }
 
 /**

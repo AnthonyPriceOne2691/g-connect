@@ -6,7 +6,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=kind=feature
 - **diagnosis:** n/a reason=kind=feature
-- **phase:** plan
+- **phase:** implement
 - **builder:** agent:claude-opus-5
 - **verifier:** human:anton
 - **human_ok_spec:** yes (by=human:anton, at=2026-09-03) reason=подписана спека с четырьмя ответами: бюджет снимка 2000, deleteSheet делать (моё возражение про свойства листа снято владельцем, цена названа механизмом), Drive-создание в эту поставку, финальное подтверждение для разрушающих — названием, а не кодом плана

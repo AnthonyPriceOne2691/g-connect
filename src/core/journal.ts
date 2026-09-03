@@ -22,6 +22,56 @@ export interface JournalChange {
   readonly afterFormat?: CellFormat;
 }
 
+/**
+ * Что сделали с геометрией листа (D-19, фаза 2.5b).
+ *
+ * Ячеечной формой `JournalChange` структурную правку описать нельзя: у исчезнувшей строки
+ * нет ячейки, в которую можно вернуть значение, — сначала надо вернуть саму строку.
+ * Поэтому откат структурной правки читает ЭТО поле и применяет обратную операцию, а уже
+ * потом заливает `snapshot`.
+ */
+export type StructuralKind =
+  | 'insertRows'
+  | 'insertColumns'
+  | 'deleteRows'
+  | 'deleteColumns'
+  | 'addSheet'
+  | 'renameSheet'
+  | 'deleteSheet'
+  | 'moveRows'
+  | 'sortRange'
+  | 'createFile';
+
+export interface StructuralChange {
+  readonly kind: StructuralKind;
+  /** Лист, чью геометрию правили. Для `createFile` — имя созданного файла. */
+  readonly sheet: string;
+  /** 1-based позиция «перед этим номером» — как в домене, а не как в библиотеке. */
+  readonly at?: number;
+  readonly count?: number;
+  /** Новое имя листа или файла; прежнее — в `previousTitle`. */
+  readonly title?: string;
+  readonly previousTitle?: string;
+  /** Id созданного файла Drive: по нему откат кладёт его в корзину. */
+  readonly fileId?: string;
+}
+
+export interface SnapshotCell {
+  readonly value: string | number | boolean | null;
+  readonly format?: CellFormat;
+}
+
+/**
+ * Снимок содержимого для восстановления. Только затронутый диапазон и только в пределах
+ * бюджета (`write.snapshot-max-cells`): журнал не должен расти пропорционально таблице, а
+ * операция, чей снимок в бюджет не влез, обязана отказать ДО записи, а не записаться
+ * необратимо.
+ */
+export interface RangeSnapshot {
+  readonly a1Range: string;
+  readonly rows: readonly (readonly SnapshotCell[])[];
+}
+
 export interface WriteRecord {
   /** ISO-время записи. */
   readonly at: string;
@@ -29,8 +79,19 @@ export interface WriteRecord {
   readonly targetId: string;
   readonly alias: string | null;
   readonly sheet: string;
-  readonly op: 'appendRow' | 'upsertRow' | 'setCells' | 'formatCells' | 'findReplace' | 'undo';
+  readonly op:
+    | 'appendRow'
+    | 'upsertRow'
+    | 'setCells'
+    | 'formatCells'
+    | 'findReplace'
+    | StructuralKind
+    | 'undo';
   readonly changes: readonly JournalChange[];
+  /** Геометрия: что сделали со строками, колонками, листами или файлами (D-19). */
+  readonly structure?: StructuralChange;
+  /** Содержимое затронутого диапазона «до» — им откат восстанавливает то, что исчезло. */
+  readonly snapshot?: RangeSnapshot;
   /** Ревизия таблицы до и после записи — по ним undo решает, безопасен ли откат. */
   readonly revisionBefore: string | null;
   readonly revisionAfter: string | null;

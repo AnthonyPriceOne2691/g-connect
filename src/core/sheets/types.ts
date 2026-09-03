@@ -154,7 +154,55 @@ export interface FormatRequest {
   readonly format: CellFormat;
 }
 
-export type SheetRequest = FormatRequest;
+/** Строки или колонки: у структурных операций это одно и то же с разной осью. */
+export type Dimension = 'rows' | 'columns';
+
+/**
+ * Вставка строк или колонок (§6.2, `Ctrl+Shift+=`). Позиция 1-based и означает «перед
+ * этим номером»: `at: 4, count: 1` вставляет одну строку так, что прежняя четвёртая
+ * становится пятой.
+ */
+export interface InsertDimensionRequest {
+  readonly kind: 'insertDimension';
+  readonly sheetId: number;
+  readonly dimension: Dimension;
+  readonly at: number;
+  readonly count: number;
+}
+
+/** Удаление строк или колонок. Обратная операция для вставки и наоборот. */
+export interface DeleteDimensionRequest {
+  readonly kind: 'deleteDimension';
+  readonly sheetId: number;
+  readonly dimension: Dimension;
+  readonly at: number;
+  readonly count: number;
+}
+
+/** Новый лист. Id не возвращаем: откат адресует лист по имени, оно уникально в книге. */
+export interface AddSheetRequest {
+  readonly kind: 'addSheet';
+  readonly title: string;
+}
+
+export interface DeleteSheetRequest {
+  readonly kind: 'deleteSheet';
+  readonly sheetId: number;
+}
+
+export interface RenameSheetRequest {
+  readonly kind: 'renameSheet';
+  readonly sheetId: number;
+  readonly title: string;
+}
+
+export type SheetRequest =
+  | FormatRequest
+  | InsertDimensionRequest
+  | DeleteDimensionRequest
+  | AddSheetRequest
+  | DeleteSheetRequest
+  | RenameSheetRequest;
 
 export interface SheetsClient {
   getSpreadsheet(id: string, options?: ReadOptions): Promise<SpreadsheetSnapshot>;
