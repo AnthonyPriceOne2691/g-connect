@@ -6,13 +6,13 @@
 - **kind:** feature
 - **repro_test:** n/a reason=kind=feature
 - **diagnosis:** n/a reason=kind=feature
-- **phase:** implement
+- **phase:** verify
 - **builder:** agent:claude-opus-5
 - **verifier:** human:anton
 - **human_ok_spec:** yes (by=human:anton, at=2026-09-03) reason=подписана спека с четырьмя ответами: бюджет снимка 2000, deleteSheet делать (моё возражение про свойства листа снято владельцем, цена названа механизмом), Drive-создание в эту поставку, финальное подтверждение для разрушающих — названием, а не кодом плана
 - **human_ok_plan:** deferred (reason=владелец объявил боевой контур работы: одна фраза = действие, а не подпись на каждом шаге; plan.md выводится из подписанной спеки и решений сверх неё не вносит — отклонённые альтернативы перечислены там же. Подпись закрывается на верификации вместе с живым прогоном)
 - **shape-oracles:** cqg-deployed
-- **behavior-oracles:** planned reason=G1-G14 в spec.md
+- **behavior-oracles:** tests-present reason=G1-G17 плюс арифметика перемещения на числах из документации Google
 - **artifact_oracle:** scripts/probe_mcp.mjs reason=структурная правка меняет геометрию листа, и отказ Google на `insertDimension`/`deleteDimension` виден живым ответом, а не фейком (урок L3)
 - **ci-oracles:** tooling
 - **worktree:** ветка feat/structural-ops reason=урок L2; мерж только через merge_guard.sh, сразу за ним contour_doctor
