@@ -8,7 +8,7 @@
 
 import { google, type drive_v3 } from 'googleapis';
 
-import { fromGoogleError } from '../errors.js';
+import { fromGoogleError, gcError } from '../errors.js';
 import { limitOf } from '../policy.js';
 import { withRetry } from '../retry.js';
 
@@ -144,9 +144,35 @@ export function incompletenessNotes(scope: SearchScope | undefined): string[] {
   return notes;
 }
 
+/** Что создаём: тип определяет mimeType, а он в Drive неизменяем после создания. */
+export type CreateKind = 'sheet' | 'doc' | 'folder';
+
+export interface CreatedFile {
+  readonly id: string;
+  readonly name: string;
+  readonly url: string;
+}
+
 export interface DriveClient {
   search(query: SearchQuery): Promise<SearchResult>;
+  /**
+   * Создать пустой файл или папку. `parentId` не задан — файл ложится в корень «Мой
+   * диск»: у Drive у файла ровно один родитель, и множественные не поддерживаются.
+   */
+  create(kind: CreateKind, name: string, parentId?: string): Promise<CreatedFile>;
+  /**
+   * В корзину, а не насовсем. `files.delete` уничтожает безвозвратно и вместе со всем
+   * содержимым папки — такого инструмента у агента не будет.
+   */
+  trash(fileId: string): Promise<void>;
 }
+
+/** Тип → mimeType Google. Значения из документации Drive, менять нельзя. */
+export const CREATE_MIME: Record<CreateKind, string> = {
+  sheet: 'application/vnd.google-apps.spreadsheet',
+  doc: 'application/vnd.google-apps.document',
+  folder: 'application/vnd.google-apps.folder',
+};
 
 export class GoogleDriveClient implements DriveClient {
   private readonly drive: drive_v3.Drive;
@@ -155,6 +181,45 @@ export class GoogleDriveClient implements DriveClient {
     const auth = new google.auth.OAuth2();
     auth.setCredentials({ access_token: accessToken });
     this.drive = google.drive({ version: 'v3', auth });
+  }
+
+  async create(kind: CreateKind, name: string, parentId?: string): Promise<CreatedFile> {
+    try {
+      // `fields` обязателен: по умолчанию Drive отдаёт минимум, и ссылки в ответе не
+      // будет — человек получил бы «создано» без возможности открыть.
+      const response = await this.drive.files.create({
+        supportsAllDrives: true,
+        fields: 'id,name,mimeType,webViewLink',
+        requestBody: {
+          name,
+          mimeType: CREATE_MIME[kind],
+          ...(parentId === undefined ? {} : { parents: [parentId] }),
+        },
+      });
+      const file = response.data;
+      if (file.id === undefined || file.id === null) {
+        throw gcError('internal', { detail: 'Drive не вернул id созданного файла.' });
+      }
+      return {
+        id: file.id,
+        name: file.name ?? name,
+        url: file.webViewLink ?? `https://drive.google.com/open?id=${file.id}`,
+      };
+    } catch (error) {
+      throw fromGoogleError(error, `Не удалось создать «${name}».`);
+    }
+  }
+
+  async trash(fileId: string): Promise<void> {
+    try {
+      await this.drive.files.update({
+        fileId,
+        supportsAllDrives: true,
+        requestBody: { trashed: true },
+      });
+    } catch (error) {
+      throw fromGoogleError(error, `Не удалось отправить ${fileId} в корзину.`);
+    }
   }
 
   async search(query: SearchQuery): Promise<SearchResult> {

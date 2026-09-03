@@ -27,6 +27,11 @@ export interface UndoOptions {
   /** Откатить, даже если наши ячейки изменили. Только по явному решению человека. */
   readonly force?: boolean;
   readonly journal?: JournalSink;
+  /**
+   * Чем отправить файл в корзину: откат создания принадлежит Drive, а не таблицам.
+   * Колбэком, потому что ядро отката не должно знать про клиента Drive.
+   */
+  readonly trash?: (fileId: string) => Promise<void>;
 }
 
 /**

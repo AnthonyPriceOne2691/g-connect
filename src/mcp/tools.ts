@@ -17,6 +17,7 @@ import { gcError, isGcError } from '../core/errors.js';
 import type { SearchQuery } from '../core/google/drive.js';
 import { operationJsonSchema, parseOperation } from '../core/ops.js';
 import { runOperation } from './run-operation.js';
+import { runCreate } from './run-create.js';
 import { limitOf, policyText, policyRules } from '../core/policy.js';
 import { listProfiles, profileStatus } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
@@ -27,8 +28,8 @@ import { undoLast } from '../core/undo.js';
 export type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
 import type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
 import { applyHint, applyOptions, maybeReport } from './apply-support.js';
-
-const targetArg = z.string().min(1).describe('alias из реестра, ссылка на файл или его ID');
+import { applyInput } from './apply-schema.js';
+import { targetArg } from './target-arg.js';
 
 /** Общий разбор цели: реестр + ссылка. Здесь же решается, можно ли писать. */
 async function resolve(deps: ToolDeps, target: string) {
@@ -274,94 +275,7 @@ export const gcApply: ToolDefinition = {
     '(status=preview) и ничего не пишет — покажи план человеку. Запись только с ' +
     'dryRun=false. Неизвестная колонка или значение вне списка допустимых дают ' +
     'status=needs_clarification с вариантами: спроси, не угадывай.',
-  input: {
-    op: z.enum([
-      'appendRow',
-      'upsertRow',
-      'setCells',
-      'formatCells',
-      'findReplace',
-      'insertRows',
-      'insertColumns',
-      'addSheet',
-      'renameSheet',
-    ]),
-    /** Превью файлом: широкую таблицу в терминале не читают (§13.3, ступень 0). */
-    report: z.boolean().default(false).describe('Дополнительно записать превью HTML-файлом'),
-    target: targetArg,
-    sheet: z.string().min(1).optional(),
-    headerRow: z.number().int().positive().optional(),
-    key: z.record(z.string(), z.unknown()).optional().describe('upsertRow: ключ строки'),
-    where: z.record(z.string(), z.unknown()).optional().describe('setCells: условие отбора'),
-    values: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .describe('Имена колонок → значения (для записи; formatCells их не требует)'),
-    columns: z
-      .array(z.string().min(1))
-      .optional()
-      .describe('formatCells: имена колонок, чей вид правим'),
-    format: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .describe(
-        'formatCells: bold, italic, underline, align (left|center|right), background #RRGGBB',
-      ),
-    includeHeader: z
-      .boolean()
-      .optional()
-      .describe('formatCells: заодно поправить ячейку заголовка этих колонок'),
-    find: z.string().min(1).optional().describe('findReplace: что искать'),
-    count: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe('insertRows/insertColumns: сколько вставить (по умолчанию 1)'),
-    below: z
-      .boolean()
-      .optional()
-      .describe('insertRows/insertColumns: вставить ниже (правее) якоря, а не выше'),
-    before: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .describe('moveRows: условие на строку, ПЕРЕД которой ставим перемещаемые'),
-    descending: z.boolean().optional().describe('sortRange: сортировать по убыванию'),
-    title: z.string().min(1).optional().describe('addSheet/renameSheet/duplicateSheet: имя листа'),
-    toColumn: z
-      .string()
-      .min(1)
-      .optional()
-      .describe('copyRange/cutRange: колонка-получатель по имени'),
-    paste: z
-      .enum(['all', 'values', 'format'])
-      .optional()
-      .describe('copyRange/cutRange: что переносить (Ctrl+Shift+V — values)'),
-    column: z.string().min(1).optional().describe('insertColumns/deleteColumns: колонка по имени'),
-    replace: z.string().optional().describe('findReplace: на что заменить'),
-    matchCase: z.boolean().optional().describe('findReplace: учитывать регистр'),
-    matchEntireCell: z.boolean().optional().describe('findReplace: совпадение по всей ячейке'),
-    searchByRegex: z
-      .boolean()
-      .optional()
-      .describe('findReplace: find — регулярное выражение (битое отклоняется до записи)'),
-    dryRun: z.boolean().default(true),
-    force: z.boolean().default(false),
-    confirm: z
-      .string()
-      .min(1)
-      .optional()
-      .describe(
-        'Подтверждение человека: код плана из превью, а для разрушающих операций — ' +
-          'фраза с НАЗВАНИЕМ предмета правки («удаляю строку AutoLink Platform»). ' +
-          'Одного «да» недостаточно',
-      ),
-    expectRevision: z
-      .string()
-      .min(1)
-      .optional()
-      .describe('Ревизия для вызовов БЕЗ превью (CLI, раннер): у превью её несёт код плана'),
-  },
+  input: applyInput,
   async handle(args, deps) {
     const operation = parseOperation(args);
 
@@ -371,6 +285,17 @@ export const gcApply: ToolDefinition = {
     // протокол, юнит-тесты вызывали обработчик и этого не видели.
     const resolved = await resolve(deps, operation.target);
     if (operation.dryRun === false) assertWritable(resolved);
+
+    // Создание файла идёт до всякого чтения таблицы: у него нет ни листа, ни карты, а
+    // цель — папка. Ветка ранняя намеренно — иначе `getSpreadsheet` на папке отказал бы
+    // «файл не найден» вместо понятного ответа.
+    if (
+      operation.op === 'createSheet' ||
+      operation.op === 'createDoc' ||
+      operation.op === 'createFolder'
+    ) {
+      return runCreate(operation, resolved, deps);
+    }
 
     const client = await deps.sheets();
     const wanted = sheetDefaults(resolved.entry, operation.sheet, operation.headerRow);
@@ -425,6 +350,10 @@ export const gcUndo: ToolDefinition = {
       force: input.force,
       currentRevision: await deps.revision(resolved.id),
       readRevision: () => deps.revision(resolved.id),
+      trash: async (fileId: string) => {
+        const drive = await deps.drive();
+        await drive.trash(fileId);
+      },
       journal: deps.journal,
     });
     return {

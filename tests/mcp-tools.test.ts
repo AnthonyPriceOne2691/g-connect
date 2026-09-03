@@ -31,6 +31,7 @@ import {
 } from './fixtures/sheet.js';
 
 const SHEET_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
+const FOLDER_ID = '1FOLDERaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 const registry: Registry = {
   targets: [
@@ -46,6 +47,8 @@ const registry: Registry = {
       key: ['Проект'],
       auto: { ops: ['upsertRow', 'setCells', 'formatCells', 'appendRow'], maxCells: 2 },
     },
+    // Папка с правом записи: в неё можно создавать файлы (§6.2, Ctrl+N).
+    { alias: 'folder', id: FOLDER_ID, type: 'folder', allow: 'write' },
     // Конверт написан неверно: запись по такой цели идёт через план и код, а причина
     // называется вслух — угадывать половину подписи нельзя.
     {
@@ -75,16 +78,42 @@ interface Harness {
   readonly deps: ToolDeps;
   readonly client: FakeSheetsClient;
   readonly journalled: WriteRecord[];
+  readonly drive: FakeDriveClient;
+}
+
+/** Фейк Drive: помнит созданное и отправленное в корзину — этим и проверяем откат. */
+class FakeDriveClient {
+  readonly created: { id: string; name: string; kind: string; parentId?: string }[] = [];
+  readonly trashed: string[] = [];
+
+  search(): Promise<{ files: never[]; incompleteBecause: never[] }> {
+    return Promise.resolve({ files: [], incompleteBecause: [] });
+  }
+
+  create(
+    kind: 'sheet' | 'doc' | 'folder',
+    name: string,
+    parentId?: string,
+  ): Promise<{ id: string; name: string; url: string }> {
+    const id = `FILE${this.created.length + 1}`;
+    this.created.push({ id, name, kind, ...(parentId === undefined ? {} : { parentId }) });
+    return Promise.resolve({ id, name, url: `https://drive.google.com/open?id=${id}` });
+  }
+
+  trash(fileId: string): Promise<void> {
+    this.trashed.push(fileId);
+    return Promise.resolve();
+  }
 }
 
 const harness = (over: Partial<ToolDeps> = {}): Harness => {
   const client = new FakeSheetsClient(snapshot());
+  const drive = new FakeDriveClient();
   const journalled: WriteRecord[] = [];
   const deps: ToolDeps = {
     account: 'default',
     sheets: () => Promise.resolve(client),
-    drive: () =>
-      Promise.resolve({ search: () => Promise.resolve({ files: [], incompleteBecause: [] }) }),
+    drive: () => Promise.resolve(drive),
     registry: () => Promise.resolve(registry),
     journal: async (record) => {
       journalled.push(record);
@@ -93,7 +122,7 @@ const harness = (over: Partial<ToolDeps> = {}): Harness => {
     revision: () => Promise.resolve('rev-1'),
     ...over,
   };
-  return { deps, client, journalled };
+  return { deps, client, journalled, drive };
 };
 
 /** Превью → код плана → запись через инструмент: подпись человека имитируется (D-16). */
@@ -152,7 +181,7 @@ describe('B2 — gc_targets отдаёт права, но не секреты', 
       targets: { alias: string; allow: string; auto: unknown }[];
       note: string;
     };
-    expect(data.targets).toHaveLength(4);
+    expect(data.targets).toHaveLength(5);
     expect(data.targets.find((t) => t.alias === 'log')?.allow).toBe('write');
     expect(data.targets.find((t) => t.alias === 'reference')?.allow).toBe('read');
     expect(data.note).toContain('write.allowlist');
@@ -791,5 +820,97 @@ describe('K4, K5, K6, K7 — что конверт НЕ разрешает ре�
     expect(second.status).toBe('no_change');
     expect(second.notes.join(' ')).toContain('уже дописана');
     expect(journalled.filter((r) => r.op === 'appendRow')).toHaveLength(1);
+  });
+});
+
+describe('G15, G16 — создание файлов Drive (D-19, слайс 8)', () => {
+  it('G15: таблица создаётся в папке реестра, ссылка и id в ответе', async () => {
+    const { deps, drive, journalled } = harness();
+    const preview = (
+      await runTool(gcApply, { op: 'createSheet', target: 'folder', name: 'Октябрь 2026' }, deps)
+    ).data as { status: string; planId: string | null };
+    expect(preview.status).toBe('preview');
+    expect(drive.created).toHaveLength(0);
+
+    const result = await runTool(
+      gcApply,
+      {
+        op: 'createSheet',
+        target: 'folder',
+        name: 'Октябрь 2026',
+        dryRun: false,
+        confirm: preview.planId ?? '',
+      },
+      deps,
+    );
+    const data = result.data as { status: string; notes: string[] };
+    expect(data.status).toBe('ok');
+    expect(drive.created[0]).toMatchObject({
+      name: 'Октябрь 2026',
+      kind: 'sheet',
+      parentId: FOLDER_ID,
+    });
+    expect(data.notes.join(' ')).toContain('drive.google.com');
+    // Право записи созданный файл НЕ получает, и ответ говорит это сразу.
+    expect(data.notes.join(' ')).toContain('Права записи у нового файла нет');
+    expect(journalled[0]?.structure).toMatchObject({ kind: 'createFile' });
+    expect(journalled[0]?.structure?.fileId).toBe('FILE1');
+  });
+
+  it('G15: откат отправляет файл в корзину и говорит, что достать — руками', async () => {
+    const { deps, drive, journalled } = harness();
+    const preview = (
+      await runTool(gcApply, { op: 'createFolder', target: 'folder', name: 'Архив' }, deps)
+    ).data as { planId: string | null };
+    await runTool(
+      gcApply,
+      {
+        op: 'createFolder',
+        target: 'folder',
+        name: 'Архив',
+        dryRun: false,
+        confirm: preview.planId ?? '',
+      },
+      deps,
+    );
+    const undone = (await runTool(gcUndo, { target: 'folder' }, deps)).data as {
+      status: string;
+      structureUndone?: string;
+    };
+    expect(undone.status).toBe('ok');
+    expect(drive.trashed).toEqual(['FILE1']);
+    expect(undone.structureUndone).toContain('корзину');
+    expect(undone.structureUndone).toContain('руками');
+    expect(journalled.some((r) => r.op === 'undo')).toBe(true);
+  });
+
+  it('G16: создать в таблице нельзя — отказ со списком того, что делать', async () => {
+    const { deps, drive } = harness();
+    const result = await runTool(
+      gcApply,
+      { op: 'createSheet', target: 'log', name: 'Октябрь', dryRun: false, confirm: 'x' },
+      deps,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.cause).toBe('create_needs_folder');
+    expect(drive.created).toHaveLength(0);
+  });
+
+  it('G16: в созданный файл писать нельзя — его нет в реестре', async () => {
+    const { deps, client } = harness();
+    const result = await runTool(
+      gcApply,
+      {
+        op: 'upsertRow',
+        target: 'FILE1000000000000000000000',
+        key: { Проект: 'X' },
+        values: { Часы: 1 },
+        dryRun: false,
+      },
+      deps,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error?.cause).toBe('write.allowlist');
+    expect(client.writes).toHaveLength(0);
   });
 });

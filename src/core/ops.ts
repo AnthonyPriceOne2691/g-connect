@@ -230,6 +230,20 @@ export const duplicateSheetOp = z.object({
   ...commonFields,
 });
 
+/**
+ * Создание файлов Drive (§6.2, `Ctrl+N`). `target` здесь — ПАПКА из реестра с правом
+ * записи (или `root` для корня «Мой диск»): право создавать даёт реестр, как и право
+ * писать. Созданный файл права записи не получает.
+ */
+const createFields = {
+  name: z.string().min(1),
+  ...commonFields,
+};
+
+export const createSheetOp = z.object({ op: z.literal('createSheet'), ...createFields });
+export const createDocOp = z.object({ op: z.literal('createDoc'), ...createFields });
+export const createFolderOp = z.object({ op: z.literal('createFolder'), ...createFields });
+
 export const operationSchema = z.discriminatedUnion('op', [
   appendRowOp,
   upsertRowOp,
@@ -249,6 +263,9 @@ export const operationSchema = z.discriminatedUnion('op', [
   sortRangeOp,
   autoFillOp,
   duplicateSheetOp,
+  createSheetOp,
+  createDocOp,
+  createFolderOp,
 ]);
 
 export type Operation = z.infer<typeof operationSchema>;
@@ -273,6 +290,9 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'sortRange',
   'autoFill',
   'duplicateSheet',
+  'createSheet',
+  'createDoc',
+  'createFolder',
 ];
 
 /**

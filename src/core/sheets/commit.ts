@@ -33,6 +33,7 @@ import type {
 import {
   noChangeNote,
   type ApplyOutcome,
+  type EnvelopeDecision,
   type OperationKind,
   type PlannedChange,
   type Question,
@@ -51,7 +52,12 @@ import {
 export interface WriteShape {
   readonly structural?: StructuralPlan;
   readonly snapshots?: readonly RangeSnapshot[];
-  readonly apply?: (client: SheetsClient, context: WriteContext) => Promise<void>;
+  /**
+   * Чем применить правку. Может вернуть факты, известные ТОЛЬКО по факту записи: id
+   * созданного файла Drive появляется в ответе Google, а не в плане, и без него откат
+   * не знал бы, что отправлять в корзину.
+   */
+  readonly apply?: (client: SheetsClient, context: WriteContext) => Promise<StructuralFacts | void>;
   readonly precondition?: (client: SheetsClient, context: WriteContext) => Promise<void>;
 }
 
@@ -75,6 +81,11 @@ export const contextOf = (map: SheetMap): WriteContext => ({
   sheetId: map.sheetId,
   revisionId: map.revisionId,
 });
+
+/** Что стало известно при записи, а не при планировании. */
+export interface StructuralFacts {
+  readonly fileId?: string;
+}
 
 type Base = Omit<ApplyOutcome, 'status' | 'revisionAfter'>;
 
@@ -177,11 +188,7 @@ async function commit(
   op: OperationKind,
   shape: WriteShape,
 ): Promise<ApplyOutcome> {
-  const decision = options.authorize?.(op, changes.length) ?? {
-    authorized: false,
-    reason: 'Разрешения на запись без кода плана у этого вызова нет.',
-  };
-  const unconfirmed = confirmationOutcome(base, options, decision);
+  const unconfirmed = confirmationOutcome(base, options, decisionFor(options, op, changes.length));
   if (unconfirmed !== null) return unconfirmed;
 
   // Дубль дописанной строки ловится ДО записи и только там, где человек план не читал.
@@ -194,14 +201,14 @@ async function commit(
     throw gcError('internal', { detail: 'Контур записи вызван без применения правки.' });
   }
   if (shape.precondition !== undefined) await shape.precondition(client, map);
-  await shape.apply(client, map);
+  const facts = (await shape.apply(client, map)) ?? {};
   const revisionAfter = (await options.readRevision?.()) ?? null;
   const correlationId = newCorrelationId();
 
   // Журнал пишется ПОСЛЕ успешной записи и до возврата: если журналирование упало,
   // вызывающий обязан узнать об этом — «записали, но не знаем что» хуже отказа.
   await options.journal?.(
-    journalRecord({ map, op, changes, base, options, shape, revisionAfter, correlationId }),
+    journalRecord({ map, op, changes, base, options, shape, revisionAfter, correlationId, facts }),
   );
 
   return { status: 'ok', ...base, revisionAfter, correlationId };
@@ -242,7 +249,7 @@ export async function finishWrite(
   return commit(client, map, changes, base, options, op, shape);
 }
 /** План геометрии → запись журнала: поля те же, но у записи нет якоря и списка потерь. */
-function toStructuralChange(plan: StructuralPlan): StructuralChange {
+function toStructuralChange(plan: StructuralPlan, facts: StructuralFacts): StructuralChange {
   return {
     kind: plan.kind,
     sheet: plan.sheet,
@@ -255,6 +262,7 @@ function toStructuralChange(plan: StructuralPlan): StructuralChange {
     // Названная потеря уезжает в журнал: ответ отката обязан сказать не только что
     // вернулось, но и что нет — иначе он отчитается успехом, вернув не всё (урок L5).
     ...(plan.irreversible === undefined ? {} : { irreversible: plan.irreversible }),
+    ...(facts.fileId === undefined ? {} : { fileId: facts.fileId }),
   };
 }
 
@@ -274,6 +282,21 @@ export function formatRequest(map: SheetMap, a1: string, format: CellFormat): Fo
 }
 
 /**
+ * Кто разрешил эту запись: судья конверта, а если его не передали — никто.
+ *
+ * Отказ в безопасную сторону назван явно: отсутствие судьи означает «разрешения нет», а
+ * не «разрешено по умолчанию». Вынесено из `commit` по гейту сложности.
+ */
+function decisionFor(options: RowOptions, op: OperationKind, cells: number): EnvelopeDecision {
+  return (
+    options.authorize?.(op, cells) ?? {
+      authorized: false,
+      reason: 'Разрешения на запись без кода плана у этого вызова нет.',
+    }
+  );
+}
+
+/**
  * Запись журнала. Вынесена из `commit` по гейту сложности — и по делу: «пускать ли
  * писать» и «что записать в журнал» это разные вопросы, а необязательных полей у записи
  * стало пять.
@@ -287,6 +310,7 @@ function journalRecord(input: {
   shape: WriteShape;
   revisionAfter: string | null;
   correlationId: string;
+  facts: StructuralFacts;
 }): WriteRecord {
   const { map, base, options, shape } = input;
   return {
@@ -302,7 +326,9 @@ function journalRecord(input: {
     correlationId: input.correlationId,
     ...(base.planId === null ? {} : { planId: base.planId }),
     // Геометрия и снимок — то, чем откат вернёт исчезнувшее (D-19).
-    ...(shape.structural === undefined ? {} : { structure: toStructuralChange(shape.structural) }),
+    ...(shape.structural === undefined
+      ? {}
+      : { structure: toStructuralChange(shape.structural, input.facts) }),
     ...(shape.snapshots === undefined ? {} : { snapshots: shape.snapshots }),
   };
 }

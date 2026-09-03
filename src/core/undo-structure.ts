@@ -37,6 +37,9 @@ export async function undoStructure(
 ): Promise<UndoOutcome> {
   const structure = record.structure;
   if (structure === undefined) throw gcError('internal', { detail: 'Запись без геометрии.' });
+  // Создание файла откатывается не в таблице, а в Drive: обратная операция — корзина.
+  if (structure.kind === 'createFile')
+    return undoCreate(record, structure, options, journal, targetId);
   const book = await client.getSpreadsheet(targetId);
   // Перенос содержимого (копирование, вырезание, автозаполнение) откатывается ОДНИМ
   // снимком: геометрия там не менялась, менялось наполнение прямоугольника. Обратной
@@ -338,5 +341,47 @@ function removeInserted(
     dimension,
     at: structure.at ?? 1,
     count: structure.count ?? 1,
+  };
+}
+
+/**
+ * Откат создания файла: в корзину Drive.
+ *
+ * Единственная форма отката, которая нам не принадлежит целиком: из корзины файл достаёт
+ * человек сам, в интерфейсе Drive. Поэтому ответ говорит это прямо, а не «удалено» —
+ * «удалено» человек прочитает как «насовсем», и будет неправ в обе стороны.
+ */
+async function undoCreate(
+  record: WriteRecord,
+  structure: NonNullable<WriteRecord['structure']>,
+  options: UndoOptions,
+  journal: (record: WriteRecord, targetId: string, options: UndoOptions) => Promise<void>,
+  targetId: string,
+): Promise<UndoOutcome> {
+  const fileId = structure.fileId;
+  if (fileId === undefined) {
+    throw gcError('internal', {
+      detail: 'В записи о создании файла нет его id — откатывать нечем.',
+    });
+  }
+  if (options.trash === undefined) {
+    throw gcError('bad_request', {
+      detail:
+        'Откат создания файла требует доступа к Drive, а этот вызов его не получил. ' +
+        'Отправь файл в корзину руками либо повтори откат из клиента с полным доступом.',
+      cause: 'trash_unavailable',
+    });
+  }
+  await options.trash(fileId);
+  await journal(record, targetId, options);
+  return {
+    status: 'ok',
+    restored: [],
+    undoneCorrelationId: record.correlationId,
+    at: record.at,
+    structureUndone:
+      `Файл «${structure.title ?? structure.sheet}» отправлен в корзину Drive. ` +
+      'Достать его оттуда можно только руками, в интерфейсе Drive — насовсем он не удалён.',
+    notRestored: ['содержимое файла, если человек успел в него что-то написать'],
   };
 }

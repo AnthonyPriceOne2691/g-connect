@@ -26,7 +26,14 @@ import type { parseOperation } from '../core/ops.js';
 import type { SheetData, SheetsClient } from '../core/sheets/types.js';
 
 /** Разводка по операциям. Вынесено: в обработчике это была четвёртая ветка подряд. */
-type Operation = ReturnType<typeof parseOperation>;
+/**
+ * Операции НАД ТАБЛИЦЕЙ. Создание файлов Drive сюда не входит: у него нет ни листа, ни
+ * карты, и разводится он раньше — в обработчике `gc_apply`, до чтения таблицы.
+ */
+type Operation = Exclude<
+  ReturnType<typeof parseOperation>,
+  { op: 'createSheet' | 'createDoc' | 'createFolder' }
+>;
 type Options = Parameters<typeof upsertRow>[4];
 
 /**
