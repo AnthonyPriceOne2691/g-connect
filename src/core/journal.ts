@@ -40,6 +40,10 @@ export type StructuralKind =
   | 'deleteSheet'
   | 'moveRows'
   | 'sortRange'
+  | 'copyRange'
+  | 'cutRange'
+  | 'autoFill'
+  | 'duplicateSheet'
   | 'createFile';
 
 export interface StructuralChange {
@@ -49,6 +53,12 @@ export interface StructuralChange {
   /** 1-based позиция «перед этим номером» — как в домене, а не как в библиотеке. */
   readonly at?: number;
   readonly count?: number;
+  /**
+   * Куда переносили: 0-based `destinationIndex` в том виде, в каком его понимает Google —
+   * по координатам ДО удаления блока. Обратный ход считается из него формулой, покрытой
+   * оракулом на числах.
+   */
+  readonly to?: number;
   /** Новое имя листа или файла; прежнее — в `previousTitle`. */
   readonly title?: string;
   readonly previousTitle?: string;

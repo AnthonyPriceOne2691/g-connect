@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { toRequest } from '../src/core/google/sheets.js';
+import { toRequest } from '../src/core/google/requests.js';
 import { canonicalPlan, planId, type PlanShape } from '../src/core/plan.js';
 
 describe('G1 — доменный запрос → запрос библиотеки', () => {

@@ -28,6 +28,8 @@ export interface StructuralPlan {
   readonly count?: number;
   readonly title?: string;
   readonly previousTitle?: string;
+  /** Куда переносили (0-based, по координатам до удаления блока). */
+  readonly to?: number;
   /** Свойства листа для восстановления после удаления (D-19). */
   readonly properties?: SheetProperties;
   /**

@@ -13,12 +13,14 @@
 
 import { gcError } from '../errors.js';
 import type { RangeSnapshot, SnapshotCell } from '../journal.js';
-import { buildSheetData } from './map.js';
 import { contextOf, finishWrite, type Prepared } from './commit.js';
 import { rowsUnderCondition } from './rows.js';
 import {
-  anchorColumn,
+  anchorText,
+  assertAnchorRow,
+  freshData,
   assertContiguous,
+  columnAnchored,
   assertSnapshotBudget,
   columnSnapshot,
   rowChanges,
@@ -42,12 +44,6 @@ const empty = (): Prepared => ({
   questions: [],
   touches: [],
 });
-
-/** Якорь словами: то, что человек подтверждает, — «строка проекта X», а не «строка 7». */
-function anchorText(where: RowValues): string {
-  const parts = Object.entries(where).map(([field, value]) => `${field} = ${String(value)}`);
-  return parts.length === 0 ? 'весь лист' : parts.join(', ');
-}
 
 /**
  * Вставка строк относительно строки-якоря (§6.2, `Ctrl+Shift+=`).
@@ -96,11 +92,10 @@ export async function insertColumns(
   count: number,
   options: RowOptions = {},
 ): Promise<ApplyOutcome> {
-  const map = data.map;
   assertCount(count);
-  const anchor = anchorColumn(map, columnName, options);
-  if ('refusal' in anchor) return anchor.refusal;
-  const column = anchor.column;
+  const anchored = columnAnchored(data, columnName, options);
+  if ('refusal' in anchored) return anchored.refusal;
+  const { map, column } = anchored;
   const at = options.below === true ? column.index + 2 : column.index + 1;
   const structural: StructuralPlan = {
     kind: 'insertColumns',
@@ -195,32 +190,6 @@ function assertNoSuchSheet(map: SheetMap, title: string): void {
   });
 }
 
-/**
- * Предусловие для строки-якоря: та же строка на том же месте (D-17 для геометрии).
- *
- * Без этого вставка «выше проекта X» между планом и записью попала бы выше ЧУЖОЙ строки:
- * номер в плане уже не тот, если кто-то вставил строку раньше нас.
- */
-async function assertAnchorRow(
-  client: SheetsClient,
-  map: SheetMap,
-  where: RowValues,
-  options: RowOptions,
-  expected: number,
-): Promise<void> {
-  const fresh = await freshData(client, map);
-  const selected = rowsUnderCondition(fresh, where, options, 'Строка-якорь исчезла.');
-  const now = 'refusal' in selected ? null : Math.min(...selected.rows);
-  if (now === expected) return;
-  throw gcError('stale_value', {
-    detail:
-      `Строка, где ${anchorText(where)}, была ${expected}-й, а сейчас ` +
-      `${now === null ? 'её нет вовсе' : `${now}-я`}. Правка не выполнена: перечитай и ` +
-      'подтверди новый план.',
-    cause: 'anchor_moved',
-  });
-}
-
 /** То же для колонки: имя на месте и на том же индексе. */
 async function assertColumnStill(
   client: SheetsClient,
@@ -247,16 +216,6 @@ async function assertTitleFree(client: SheetsClient, map: SheetMap, title: strin
     detail: `Лист «${title}» появился в книге после построения плана. Правка не выполнена.`,
     cause: 'anchor_moved',
   });
-}
-
-/**
- * Перечитанный лист для предусловия. Один помощник на строки и колонки: гейт копипаста
- * отклонил вторую копию этого чтения, и он прав — разъехавшись, они читали бы лист с
- * разной шапкой, и один якорь проверялся бы не по той карте.
- */
-async function freshData(client: SheetsClient, map: SheetMap): Promise<SheetData> {
-  const snapshot = await client.getSpreadsheet(map.spreadsheetId, { sheet: map.sheet });
-  return buildSheetData(snapshot, { sheet: map.sheet, headerRow: map.headerRow });
 }
 
 /**
@@ -314,10 +273,9 @@ export async function deleteColumns(
   columnName: string,
   options: RowOptions = {},
 ): Promise<ApplyOutcome> {
-  const map = data.map;
-  const anchor = anchorColumn(map, columnName, options);
-  if ('refusal' in anchor) return anchor.refusal;
-  const column = anchor.column;
+  const anchored = columnAnchored(data, columnName, options);
+  if ('refusal' in anchored) return anchored.refusal;
+  const { map, column } = anchored;
   const at = column.index + 1;
   const changes: PlannedChange[] = data.rows.map((row, index) => ({
     kind: 'set',
@@ -420,6 +378,13 @@ function lostWith(sheet: SheetSnapshot): readonly string[] {
   // Заметки к ячейкам ядро не читает вовсе, поэтому и не обещает вернуть: непокрытость
   // названа здесь, а не спрятана в «прочее».
   if (lost.length > 0) lost.push('плюс заметки к ячейкам, если они есть: ядро их не читает');
+  // Потери ЗА ПРЕДЕЛАМИ листа в его полях не видны, а человек их заметит первым: формулы
+  // с других листов станут `#REF!`, именованные диапазоны и диаграммы, смотревшие сюда,
+  // осиротеют. Числа тут нет и врать его нельзя — названо словами.
+  lost.push(
+    'плюс то, что смотрело на этот лист снаружи: формулы других листов станут #REF!, ' +
+      'именованные диапазоны и диаграммы на него — осиротеют',
+  );
   return lost;
 }
 

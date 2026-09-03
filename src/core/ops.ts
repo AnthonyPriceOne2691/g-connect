@@ -186,6 +186,50 @@ export const renameSheetOp = z.object({
   ...commonFields,
 });
 
+/**
+ * Перенос содержимого (§6.2, Ctrl+C / Ctrl+X / Ctrl+V). Колонки по ИМЕНИ: произвольного
+ * прямоугольника на границе нет, потому что выделения в продукте не существует.
+ */
+/** Поля переноса общие у копирования и вырезания: гейт копипаста отклонил вторую копию. */
+const pasteFields = {
+  column: z.string().min(1),
+  toColumn: z.string().min(1),
+  paste: z.enum(['all', 'values', 'format']).default('all'),
+  ...commonFields,
+};
+
+export const copyRangeOp = z.object({ op: z.literal('copyRange'), ...pasteFields });
+
+export const cutRangeOp = z.object({ op: z.literal('cutRange'), ...pasteFields });
+
+/** Перемещение строк: оба конца — якоря, номеров на границе нет. */
+export const moveRowsOp = z.object({
+  op: z.literal('moveRows'),
+  where: rowValues,
+  /** Перед какой строкой поставить: условие на строку-ориентир. */
+  before: rowValues,
+  ...commonFields,
+});
+
+export const sortRangeOp = z.object({
+  op: z.literal('sortRange'),
+  column: z.string().min(1),
+  descending: z.boolean().default(false),
+  ...commonFields,
+});
+
+export const autoFillOp = z.object({
+  op: z.literal('autoFill'),
+  column: z.string().min(1),
+  ...commonFields,
+});
+
+export const duplicateSheetOp = z.object({
+  op: z.literal('duplicateSheet'),
+  title: z.string().min(1),
+  ...commonFields,
+});
+
 export const operationSchema = z.discriminatedUnion('op', [
   appendRowOp,
   upsertRowOp,
@@ -199,6 +243,12 @@ export const operationSchema = z.discriminatedUnion('op', [
   deleteSheetOp,
   addSheetOp,
   renameSheetOp,
+  copyRangeOp,
+  cutRangeOp,
+  moveRowsOp,
+  sortRangeOp,
+  autoFillOp,
+  duplicateSheetOp,
 ]);
 
 export type Operation = z.infer<typeof operationSchema>;
@@ -217,6 +267,12 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'deleteSheet',
   'addSheet',
   'renameSheet',
+  'copyRange',
+  'cutRange',
+  'moveRows',
+  'sortRange',
+  'autoFill',
+  'duplicateSheet',
 ];
 
 /**

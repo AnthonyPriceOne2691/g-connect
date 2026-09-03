@@ -322,7 +322,21 @@ export const gcApply: ToolDefinition = {
       .boolean()
       .optional()
       .describe('insertRows/insertColumns: вставить ниже (правее) якоря, а не выше'),
-    title: z.string().min(1).optional().describe('addSheet/renameSheet: имя листа'),
+    before: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe('moveRows: условие на строку, ПЕРЕД которой ставим перемещаемые'),
+    descending: z.boolean().optional().describe('sortRange: сортировать по убыванию'),
+    title: z.string().min(1).optional().describe('addSheet/renameSheet/duplicateSheet: имя листа'),
+    toColumn: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('copyRange/cutRange: колонка-получатель по имени'),
+    paste: z
+      .enum(['all', 'values', 'format'])
+      .optional()
+      .describe('copyRange/cutRange: что переносить (Ctrl+Shift+V — values)'),
     column: z.string().min(1).optional().describe('insertColumns/deleteColumns: колонка по имени'),
     replace: z.string().optional().describe('findReplace: на что заменить'),
     matchCase: z.boolean().optional().describe('findReplace: учитывать регистр'),

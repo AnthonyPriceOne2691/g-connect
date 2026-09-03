@@ -11,8 +11,15 @@ import { gcError } from '../errors.js';
 import type { RangeSnapshot, SnapshotCell } from '../journal.js';
 import { denyByRule, limitOf } from '../policy.js';
 import { needsClarification, resolveColumn } from '../resolver.js';
-import { columnQuestion, clarify } from './rows.js';
-import { columnLetter, type ColumnProfile, type SheetData, type SheetMap } from './types.js';
+import { columnQuestion, clarify, rowsUnderCondition } from './rows.js';
+import { buildSheetData } from './map.js';
+import {
+  columnLetter,
+  type ColumnProfile,
+  type SheetData,
+  type SheetMap,
+  type SheetsClient,
+} from './types.js';
 import type { ApplyOutcome, PlannedChange, RowOptions, RowValues } from './write-types.js';
 
 /** Предмет правки словами: то, что человек произносит в подтверждении (D-20). */
@@ -96,14 +103,17 @@ export function columnSnapshot(
   data: SheetData,
   name: string,
   letter: string,
+  options: { readonly includeHeader?: boolean } = {},
 ): RangeSnapshot {
-  const rows: SnapshotCell[][] = [[{ value: name }]];
-  data.rows.forEach((row, index) => {
+  const withHeader = options.includeHeader !== false;
+  const body = data.rows.map((row, index): SnapshotCell[] => {
     const format = data.formats[index]?.[name];
-    rows.push([{ value: row[name] ?? null, ...(format === undefined ? {} : { format }) }]);
+    return [{ value: row[name] ?? null, ...(format === undefined ? {} : { format }) }];
   });
+  const rows = withHeader ? [[{ value: name }], ...body] : body;
+  const first = withHeader ? map.headerRow : map.headerRow + 1;
   return {
-    a1Range: `${map.sheet}!${letter}${map.headerRow}:${letter}${map.headerRow + data.rows.length}`,
+    a1Range: `${map.sheet}!${letter}${first}:${letter}${first + rows.length - 1}`,
     rows,
   };
 }
@@ -124,4 +134,65 @@ export function anchorColumn(
     return { refusal: clarify([columnQuestion(columnName, resolution, map)], map) };
   }
   return { column: resolution.column };
+}
+
+/**
+ * Колонка-якорь вместе с картой листа: то, чем начинается любая операция «по имени
+ * колонки».
+ *
+ * Гейт копипаста нашёл одиннадцать одинаковых строк в удалении колонки и в
+ * автозаполнении — и он прав: это один вопрос «какая колонка на какой карте», а две его
+ * копии разъехались бы на первом же уточнении резолвера.
+ */
+export function columnAnchored(
+  data: SheetData,
+  columnName: string,
+  options: RowOptions,
+): { map: SheetMap; column: ColumnProfile } | { refusal: ApplyOutcome } {
+  const map = data.map;
+  const anchor = anchorColumn(map, columnName, options);
+  if ('refusal' in anchor) return anchor;
+  return { map, column: anchor.column };
+}
+
+/** Якорь словами: то, что человек подтверждает, — «строка проекта X», а не «строка 7». */
+export function anchorText(where: RowValues): string {
+  const parts = Object.entries(where).map(([field, value]) => `${field} = ${String(value)}`);
+  return parts.length === 0 ? 'весь лист' : parts.join(', ');
+}
+
+/**
+ * Предусловие для строки-якоря: та же строка на том же месте (D-17 для геометрии).
+ *
+ * Без этого вставка «выше проекта X» между планом и записью попала бы выше ЧУЖОЙ строки:
+ * номер в плане уже не тот, если кто-то вставил строку раньше нас.
+ */
+export async function assertAnchorRow(
+  client: SheetsClient,
+  map: SheetMap,
+  where: RowValues,
+  options: RowOptions,
+  expected: number,
+): Promise<void> {
+  const fresh = await freshData(client, map);
+  const selected = rowsUnderCondition(fresh, where, options, 'Строка-якорь исчезла.');
+  const now = 'refusal' in selected ? null : Math.min(...selected.rows);
+  if (now === expected) return;
+  throw gcError('stale_value', {
+    detail:
+      `Строка, где ${anchorText(where)}, была ${expected}-й, а сейчас ` +
+      `${now === null ? 'её нет вовсе' : `${now}-я`}. Правка не выполнена: перечитай и ` +
+      'подтверди новый план.',
+    cause: 'anchor_moved',
+  });
+}
+
+/**
+ * Перечитанный лист для предусловия. Один помощник на строки и колонки: гейт копипаста
+ * отклонил вторую копию этого чтения, и он прав — разъехавшись, они читали бы лист с
+ * разной шапкой, и один якорь проверялся бы не по той карте.
+ */
+export async function freshData(client: SheetsClient, map: SheetMap): Promise<SheetData> {
+  const snapshot = await client.getSpreadsheet(map.spreadsheetId, { sheet: map.sheet });
+  return buildSheetData(snapshot, { sheet: map.sheet, headerRow: map.headerRow });
 }

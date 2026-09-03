@@ -11,6 +11,7 @@ import { appendRow, upsertRow, type ApplyOutcome } from '../core/sheets/rows.js'
 import { findReplace } from '../core/sheets/find-replace-op.js';
 import { formatCells } from '../core/sheets/format-op.js';
 import { setCells } from '../core/sheets/set-cells-op.js';
+import { autoFill, copyRange, cutRange, duplicateSheet } from '../core/sheets/range-op.js';
 import {
   addSheet,
   deleteColumns,
@@ -20,6 +21,7 @@ import {
   insertRows,
   renameSheet,
 } from '../core/sheets/structure-op.js';
+import { moveRows, sortRange } from '../core/sheets/order-op.js';
 import type { parseOperation } from '../core/ops.js';
 import type { SheetData, SheetsClient } from '../core/sheets/types.js';
 
@@ -83,6 +85,27 @@ const HANDLERS: {
   addSheet: (client, data, operation, options) => addSheet(client, data, operation.title, options),
   renameSheet: (client, data, operation, options) =>
     renameSheet(client, data, operation.title, options),
+  copyRange: (client, data, operation, options) =>
+    copyRange(
+      client,
+      data,
+      { column: operation.column, toColumn: operation.toColumn, paste: operation.paste },
+      options,
+    ),
+  cutRange: (client, data, operation, options) =>
+    cutRange(
+      client,
+      data,
+      { column: operation.column, toColumn: operation.toColumn, paste: operation.paste },
+      options,
+    ),
+  moveRows: (client, data, operation, options) =>
+    moveRows(client, data, operation.where, operation.before, options),
+  sortRange: (client, data, operation, options) =>
+    sortRange(client, data, operation.column, { ...options, descending: operation.descending }),
+  autoFill: (client, data, operation, options) => autoFill(client, data, operation.column, options),
+  duplicateSheet: (client, data, operation, options) =>
+    duplicateSheet(client, data, operation.title, options),
 };
 
 export function runOperation(

@@ -227,13 +227,93 @@ export interface RenameSheetRequest {
   readonly title: string;
 }
 
+/**
+ * Прямоугольник листа для доменных запросов: 1-based строка, 0-based колонка — как в
+ * остальном домене, а не как в библиотеке. Перевод в полуинтервал Google живёт в шве.
+ */
+export interface DomainRange {
+  readonly row: number;
+  readonly column: number;
+  readonly rowCount: number;
+  readonly columnCount: number;
+}
+
+/** Что переносить при вставке: всё, только значения или только вид (§6.2, Ctrl+Shift+V). */
+export type PasteKind = 'all' | 'values' | 'format';
+
+export interface CopyPasteRequest {
+  readonly kind: 'copyPaste';
+  readonly sheetId: number;
+  readonly source: DomainRange;
+  readonly destination: DomainRange;
+  readonly paste: PasteKind;
+}
+
+/** Вырезать и вставить: источник очищается тем же запросом Google. */
+export interface CutPasteRequest {
+  readonly kind: 'cutPaste';
+  readonly sheetId: number;
+  readonly source: DomainRange;
+  readonly destination: DomainRange;
+  readonly paste: PasteKind;
+}
+
+/** Автозаполнение: Google экстраполирует по образцу из `source` на `destination`. */
+export interface AutoFillRequest {
+  readonly kind: 'autoFill';
+  readonly sheetId: number;
+  readonly source: DomainRange;
+  readonly destination: DomainRange;
+}
+
+/**
+ * Перемещение строк (§6.2). `destinationIndex` — 0-based и считается ПО КООРДИНАТАМ ДО
+ * удаления блока, как требует Google: `at=2, count=3, destinationIndex=9` оставляет блок
+ * на позиции 6 (проверено по документации и её же примеру). Формула обратного хода живёт
+ * в `undo-structure.ts` и покрыта оракулом на числах.
+ */
+export interface MoveDimensionRequest {
+  readonly kind: 'moveDimension';
+  readonly sheetId: number;
+  readonly dimension: Dimension;
+  readonly at: number;
+  readonly count: number;
+  readonly destinationIndex: number;
+}
+
+/**
+ * Сортировка диапазона по одной колонке. Диапазон всегда начинается с колонки A: в
+ * документации не сказано, относительно чего считается `dimensionIndex` у `sortSpecs` —
+ * листа или диапазона, — а при начале от A оба чтения совпадают.
+ */
+export interface SortRangeRequest {
+  readonly kind: 'sortRange';
+  readonly sheetId: number;
+  readonly range: DomainRange;
+  /** 0-based индекс колонки листа. */
+  readonly column: number;
+  readonly descending?: boolean;
+}
+
+export interface DuplicateSheetRequest {
+  readonly kind: 'duplicateSheet';
+  readonly sheetId: number;
+  readonly title: string;
+}
+
 export type SheetRequest =
   | FormatRequest
   | InsertDimensionRequest
   | DeleteDimensionRequest
   | AddSheetRequest
   | DeleteSheetRequest
-  | RenameSheetRequest;
+  | RenameSheetRequest
+  | CopyPasteRequest
+  | CutPasteRequest
+  | AutoFillRequest
+  | DuplicateSheetRequest
+  | MoveDimensionRequest
+  | SortRangeRequest;
 
 export interface SheetsClient {
   getSpreadsheet(id: string, options?: ReadOptions): Promise<SpreadsheetSnapshot>;

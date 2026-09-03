@@ -10,6 +10,7 @@
 import { gcError } from './errors.js';
 import type { WriteRecord } from './journal.js';
 import { parseA1 } from './sheets/a1.js';
+import { inverseMove } from './sheets/move-math.js';
 import {
   columnLetter,
   type SheetRequest,
@@ -37,8 +38,14 @@ export async function undoStructure(
   const structure = record.structure;
   if (structure === undefined) throw gcError('internal', { detail: 'Запись без геометрии.' });
   const book = await client.getSpreadsheet(targetId);
-  const request = inverseOf(book, structure, options);
-  await client.batchUpdate(targetId, [request]);
+  // Перенос содержимого (копирование, вырезание, автозаполнение) откатывается ОДНИМ
+  // снимком: геометрия там не менялась, менялось наполнение прямоугольника. Обратной
+  // структурной операции для них нет и быть не должно — «отменить вставку» это и есть
+  // «вернуть то, что было в получателе».
+  if (!SNAPSHOT_ONLY.has(structure.kind)) {
+    const request = inverseOf(book, structure, options);
+    await client.batchUpdate(targetId, [request]);
+  }
   // Геометрию вернули — теперь возвращаем содержимое. Порядок обязателен: залить снимок
   // в ещё не существующие строки нельзя, а вернуть строки без снимка значит вернуть
   // пустые (то есть отчитаться успехом, не вернув ничего).
@@ -76,6 +83,15 @@ function inverseOf(
   return build(book, structure, options);
 }
 
+/** Формы, у которых обратной структурной операции нет: откат — это заливка снимка. */
+const SNAPSHOT_ONLY: ReadonlySet<NonNullable<WriteRecord['structure']>['kind']> = new Set([
+  'copyRange',
+  'cutRange',
+  'autoFill',
+  // Сортировку обратной операцией не отменить: она не помнит, откуда приехала строка.
+  'sortRange',
+]);
+
 /**
  * Обратная операция по форме правки. Таблица, а не цепочка ветвей: гейт сложности
  * отклонил четырнадцать путей в одной функции, и он прав — здесь не логика, а
@@ -112,6 +128,38 @@ const INVERSE: Partial<Record<NonNullable<WriteRecord['structure']>['kind'], Inv
     const sheet = sheetByTitle(book, structure.title ?? structure.sheet);
     if (options.force !== true) assertSheetEmpty(sheet);
     return { kind: 'deleteSheet', sheetId: sheet.sheetId };
+  },
+  // Копия листа удаляется, если её не тронули: непустых ячеек столько же, сколько было
+  // при создании. Названная непокрытость: правку, не изменившую ЧИСЛО ячеек, охранник не
+  // заметит — он сторожит «копию заполнили», а не «в копии поправили слово».
+  duplicateSheet: (book, structure, options) => {
+    const copy = sheetByTitle(book, structure.title ?? structure.sheet);
+    const cells = copy.rows.flat().filter((cell) => (cell.value ?? null) !== null).length;
+    if (options.force !== true && cells !== (structure.count ?? cells)) {
+      throw gcError('revision_conflict', {
+        detail:
+          `В копии «${copy.title}» было ${structure.count ?? 0} непустых ячеек, сейчас ` +
+          `${cells}: её правили после создания. Откат удалил бы лист вместе с этой работой.`,
+        cause: 'copy_changed',
+      });
+    }
+    return { kind: 'deleteSheet', sheetId: copy.sheetId };
+  },
+  // Перемещение возвращается перемещением, но НЕ «туда, откуда взяли»: индекс назначения
+  // у Google считается по координатам до удаления блока, и наивный обратный ход
+  // промахивается на размер блока. Формула — в `move-math.ts`, с оракулом на числах.
+  moveRows: (book, structure) => {
+    const at = (structure.at ?? 1) - 1;
+    const count = structure.count ?? 1;
+    const back = inverseMove(at, count, structure.to ?? at);
+    return {
+      kind: 'moveDimension',
+      sheetId: sheetByTitle(book, structure.sheet).sheetId,
+      dimension: 'rows',
+      at: back.from + 1,
+      count,
+      destinationIndex: back.to,
+    };
   },
   renameSheet: (book, structure) => ({
     kind: 'renameSheet',
@@ -262,6 +310,12 @@ function undoneText(structure: NonNullable<WriteRecord['structure']>): string {
     deleteRows: `Удалённые строки возвращены на место: ${count} шт. с ${at}-й, со значениями и видом.`,
     deleteColumns: `Удалённая колонка возвращена на место (${at}-я), со значениями и видом.`,
     renameSheet: `Лист переименован обратно: «${title}» → «${structure.previousTitle ?? ''}».`,
+    copyRange: `Колонка-получатель возвращена к прежним значениям и виду (${count} строк).`,
+    cutRange: `Возвращены обе колонки: и та, из которой вырезали, и та, в которую вставили (${count} строк).`,
+    autoFill: `Автозаполнение снято: ${count} строк снова пусты, как было до правки.`,
+    duplicateSheet: `Копия листа «${title}» удалена — её не правили после создания.`,
+    moveRows: `Перемещённые строки вернулись на прежнее место: ${count} шт. с ${at}-й.`,
+    sortRange: `Порядок строк восстановлен из снимка: ${count} строк, со значениями и видом.`,
     deleteSheet:
       `Лист «${structure.sheet}» создан заново: значения, вид ячеек и свойства листа ` +
       'на месте. Что не вернулось — в notRestored.',

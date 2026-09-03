@@ -8,16 +8,14 @@
 import { google, type sheets_v4 } from 'googleapis';
 
 import { fromGoogleError, gcError } from '../errors.js';
+import { toRequest } from './requests.js';
 import { limitOf } from '../policy.js';
 import { withRetry } from '../retry.js';
 import type {
   Cell,
   CellFormat,
   CellValue,
-  DeleteDimensionRequest,
-  FormatRequest,
   GridRange,
-  InsertDimensionRequest,
   ReadOptions,
   SheetExtras,
   SheetProperties,
@@ -262,112 +260,6 @@ export function toSpreadsheetSnapshot(
     ...(revisionId === undefined ? {} : { revisionId }),
     sheets,
   };
-}
-
-/**
- * Доменный запрос → запрос библиотеки. Единственное место такого перевода (§2, гейт
- * `core-no-library`): за этой функцией типы `googleapis` в ядро не проходят.
- */
-export function toRequest(request: SheetRequest): sheets_v4.Schema$Request {
-  if (request.kind === 'format') return toRepeatCell(request);
-  if (request.kind === 'insertDimension') {
-    return { insertDimension: { range: toDimensionRange(request), inheritFromBefore: false } };
-  }
-  if (request.kind === 'deleteDimension') {
-    return { deleteDimension: { range: toDimensionRange(request) } };
-  }
-  if (request.kind === 'addSheet') {
-    const properties = request.properties ?? {};
-    const grid = {
-      ...(properties.frozenRows === undefined ? {} : { frozenRowCount: properties.frozenRows }),
-      ...(properties.frozenColumns === undefined
-        ? {}
-        : { frozenColumnCount: properties.frozenColumns }),
-    };
-    return {
-      addSheet: {
-        properties: {
-          title: request.title,
-          ...(Object.keys(grid).length === 0 ? {} : { gridProperties: grid }),
-          ...(properties.tabColor === undefined
-            ? {}
-            : { tabColorStyle: { rgbColor: fromHex(properties.tabColor) } }),
-          ...(properties.hidden === undefined ? {} : { hidden: properties.hidden }),
-        },
-      },
-    };
-  }
-  if (request.kind === 'deleteSheet') {
-    return { deleteSheet: { sheetId: request.sheetId } };
-  }
-  return {
-    updateSheetProperties: {
-      properties: { sheetId: request.sheetId, title: request.title },
-      fields: 'title',
-    },
-  };
-}
-
-/**
- * Диапазон измерения. Google ждёт 0-based полуинтервал, домен говорит 1-based «перед
- * этим номером» — перевод здесь, чтобы ядро не считало индексы библиотеки.
- */
-function toDimensionRange(
-  request: InsertDimensionRequest | DeleteDimensionRequest,
-): sheets_v4.Schema$DimensionRange {
-  return {
-    sheetId: request.sheetId,
-    dimension: request.dimension === 'rows' ? 'ROWS' : 'COLUMNS',
-    startIndex: request.at - 1,
-    endIndex: request.at - 1 + request.count,
-  };
-}
-
-/** Доменная правка вида → запрос библиотеки. */
-function toRepeatCell(request: FormatRequest): sheets_v4.Schema$Request {
-  const { format } = request;
-  const textFields = (['bold', 'italic', 'underline'] as const).filter(
-    (key) => format[key] !== undefined,
-  );
-  const fields = [
-    ...textFields.map((key) => `userEnteredFormat.textFormat.${key}`),
-    ...(format.align === undefined ? [] : ['userEnteredFormat.horizontalAlignment']),
-    ...(format.background === undefined ? [] : ['userEnteredFormat.backgroundColor']),
-  ];
-  return {
-    repeatCell: {
-      range: {
-        sheetId: request.sheetId,
-        startRowIndex: request.row - 1,
-        endRowIndex: request.row,
-        startColumnIndex: request.column,
-        endColumnIndex: request.column + 1,
-      },
-      cell: {
-        userEnteredFormat: {
-          ...(textFields.length === 0
-            ? {}
-            : {
-                textFormat: Object.fromEntries(textFields.map((key) => [key, format[key]])),
-              }),
-          ...(format.align === undefined
-            ? {}
-            : { horizontalAlignment: format.align.toUpperCase() }),
-          ...(format.background === undefined
-            ? {}
-            : { backgroundColor: fromHex(format.background) }),
-        },
-      },
-      fields: fields.join(','),
-    },
-  };
-}
-
-/** `#ff8000` → доли, как их ждёт Google. Обратная сторона `toHex`. */
-function fromHex(hex: string): sheets_v4.Schema$Color {
-  const clean = hex.replace('#', '');
-  const part = (at: number): number => parseInt(clean.slice(at, at + 2), 16) / 255;
-  return { red: part(0), green: part(2), blue: part(4) };
 }
 
 export interface GoogleSheetsClientOptions {

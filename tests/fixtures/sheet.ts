@@ -7,9 +7,14 @@ import { appendRow, upsertRow } from '../../src/core/sheets/rows.js';
 import { setCells } from '../../src/core/sheets/set-cells-op.js';
 import type { ApplyOutcome, RowOptions } from '../../src/core/sheets/rows.js';
 import type {
+  AutoFillRequest,
   Cell,
   CellValue,
+  CopyPasteRequest,
+  CutPasteRequest,
   DeleteDimensionRequest,
+  MoveDimensionRequest,
+  SortRangeRequest,
   FormatRequest,
   InsertDimensionRequest,
   SheetRequest,
@@ -211,7 +216,102 @@ function applyRequest(data: SpreadsheetSnapshot, request: SheetRequest): Spreads
       ),
     };
   }
-  return withDimension(data, request);
+  if (request.kind === 'insertDimension' || request.kind === 'deleteDimension') {
+    return withDimension(data, request);
+  }
+  if (request.kind === 'duplicateSheet') {
+    const source = data.sheets.find((s) => s.sheetId === request.sheetId);
+    if (source === undefined) return data;
+    const sheetId = Math.max(0, ...data.sheets.map((s) => s.sheetId)) + 1;
+    return {
+      ...data,
+      sheets: [...data.sheets, { ...source, title: request.title, sheetId }],
+    };
+  }
+  if (request.kind === 'moveDimension') return withMove(data, request);
+  if (request.kind === 'sortRange') return withSort(data, request);
+  // copyPaste / cutPaste / autoFill: фейк копирует ячейки сам, чтобы оракул проверял
+  // «значения переехали», а не «метод вызвали» (урок L3).
+  return withPaste(data, request);
+}
+
+/**
+ * Перемещение строк ровно так, как это делает Google: `destinationIndex` считается по
+ * координатам ДО удаления блока. Фейк повторяет эту семантику, а не удобную — иначе
+ * оракул на откат перемещения был бы зелёным при неверной формуле.
+ */
+function withMove(data: SpreadsheetSnapshot, request: MoveDimensionRequest): SpreadsheetSnapshot {
+  return {
+    ...data,
+    sheets: data.sheets.map((sheet) => {
+      if (sheet.sheetId !== request.sheetId) return sheet;
+      const rows = sheet.rows.map((r) => [...r]);
+      const start = request.at - 1;
+      const block = rows.splice(start, request.count);
+      const target =
+        request.destinationIndex -
+        Math.min(Math.max(request.destinationIndex - start, 0), request.count);
+      rows.splice(target, 0, ...block);
+      return { ...sheet, rows };
+    }),
+  };
+}
+
+/** Сортировка диапазона по колонке: строки внутри диапазона, остальные не двигаются. */
+function withSort(data: SpreadsheetSnapshot, request: SortRangeRequest): SpreadsheetSnapshot {
+  return {
+    ...data,
+    sheets: data.sheets.map((sheet) => {
+      if (sheet.sheetId !== request.sheetId) return sheet;
+      const rows = sheet.rows.map((r) => [...r]);
+      const from = request.range.row - 1;
+      const block = rows.splice(from, request.range.rowCount);
+      block.sort((a, b) => {
+        const left = String(a[request.column]?.value ?? '');
+        const right = String(b[request.column]?.value ?? '');
+        return request.descending === true ? right.localeCompare(left) : left.localeCompare(right);
+      });
+      rows.splice(from, 0, ...block);
+      return { ...sheet, rows };
+    }),
+  };
+}
+
+/** Перенос прямоугольника: копирование, вырезание и автозаполнение по образцу. */
+function withPaste(
+  data: SpreadsheetSnapshot,
+  request: CopyPasteRequest | CutPasteRequest | AutoFillRequest,
+): SpreadsheetSnapshot {
+  return {
+    ...data,
+    sheets: data.sheets.map((sheet) => {
+      if (sheet.sheetId !== request.sheetId) return sheet;
+      const rows = sheet.rows.map((r) => [...r]);
+      const { source, destination } = request;
+      for (let dr = 0; dr < destination.rowCount; dr += 1) {
+        for (let dc = 0; dc < destination.columnCount; dc += 1) {
+          const from = rows[source.row - 1 + (dr % Math.max(1, source.rowCount))]?.[
+            source.column + (dc % Math.max(1, source.columnCount))
+          ] ?? { value: null };
+          const targetRow = destination.row - 1 + dr;
+          while (rows.length <= targetRow) rows.push([]);
+          const row = rows[targetRow] as Cell[];
+          while (row.length <= destination.column + dc) row.push({ value: null });
+          row[destination.column + dc] = { ...from };
+        }
+      }
+      if (request.kind === 'cutPaste') {
+        for (let sr = 0; sr < source.rowCount; sr += 1) {
+          const row = rows[source.row - 1 + sr];
+          if (row === undefined) continue;
+          for (let sc = 0; sc < source.columnCount; sc += 1) {
+            row[source.column + sc] = { value: null };
+          }
+        }
+      }
+      return { ...sheet, rows };
+    }),
+  };
 }
 
 /** Вставка и удаление измерения: строки или колонки, 1-based «перед этим номером». */
