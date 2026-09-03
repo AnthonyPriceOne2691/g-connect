@@ -323,7 +323,7 @@ export const gcApply: ToolDefinition = {
       .optional()
       .describe('insertRows/insertColumns: вставить ниже (правее) якоря, а не выше'),
     title: z.string().min(1).optional().describe('addSheet/renameSheet: имя листа'),
-    column: z.string().min(1).optional().describe('insertColumns: якорь — имя колонки'),
+    column: z.string().min(1).optional().describe('insertColumns/deleteColumns: колонка по имени'),
     replace: z.string().optional().describe('findReplace: на что заменить'),
     matchCase: z.boolean().optional().describe('findReplace: учитывать регистр'),
     matchEntireCell: z.boolean().optional().describe('findReplace: совпадение по всей ячейке'),
@@ -337,7 +337,11 @@ export const gcApply: ToolDefinition = {
       .string()
       .min(1)
       .optional()
-      .describe('Код плана из превью — им человек подтверждает ИМЕННО эту правку'),
+      .describe(
+        'Подтверждение человека: код плана из превью, а для разрушающих операций — ' +
+          'фраза с НАЗВАНИЕМ предмета правки («удаляю строку AutoLink Platform»). ' +
+          'Одного «да» недостаточно',
+      ),
     expectRevision: z
       .string()
       .min(1)

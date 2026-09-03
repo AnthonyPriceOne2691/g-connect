@@ -57,6 +57,9 @@ export function confirmationOutcome(
   decision: EnvelopeDecision,
 ): ApplyOutcome | null {
   const code = base.planId;
+  // Разрушающая правка (D-20): подтверждение НАЗЫВАЕТ предмет — «да, удаляю AutoLink
+  // Platform». Отдельной функцией, потому что гейт сложности отклонил тринадцатую ветвь.
+  if (base.structural?.confirmToken !== undefined) return namedConfirmOutcome(base, options);
   if (options.confirm === undefined) {
     if (decision.authorized) return null;
     return {
@@ -222,4 +225,52 @@ async function standingWrites(
     history.filter((r) => r.op === 'undo' && r.undoOf !== undefined).map((r) => r.undoOf),
   );
   return history.filter((r) => r.op !== 'undo' && !undone.has(r.correlationId));
+}
+
+/**
+ * Названо ли в подтверждении то, что правим (D-20).
+ *
+ * Нормализация перечислена, а не «умная»: регистр, кавычки любых видов, повторные
+ * пробелы. Совпадением считается ВХОЖДЕНИЕ имени — «да, удаляю „AutoLink Platform“»
+ * проходит, «да» нет. Код плана принимается тоже: у вызовов без превью названия нет.
+ */
+function namesTheSubject(confirm: string, token: string, code: string | null): boolean {
+  const normalized = normalizeConfirm(confirm);
+  if (code !== null && normalized === normalizeConfirm(code)) return true;
+  return normalized.includes(normalizeConfirm(token));
+}
+
+function normalizeConfirm(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[«»"'`„“”]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Подтверждение названием (D-20): «как очистка корзины в Windows».
+ *
+ * Код плана продолжает приниматься — он нужен вызовам без превью (CLI, раннер). Голое
+ * «да» не проходит: это разница между диалогом «вы уверены?» и подписью под конкретной
+ * правкой.
+ */
+function namedConfirmOutcome(
+  base: Omit<ApplyOutcome, 'status' | 'revisionAfter'>,
+  options: RowOptions,
+): ApplyOutcome | null {
+  const token = base.structural?.confirmToken ?? '';
+  const code = base.planId;
+  if (options.confirm !== undefined && namesTheSubject(options.confirm, token, code)) return null;
+  const phrase = base.structural?.confirmPhrase ?? token;
+  return {
+    status: 'confirm_required',
+    ...base,
+    notes: [
+      ...base.notes,
+      `Записи не было. Подтверди правку, назвав её предмет: «${phrase}»` +
+        `${code === null ? '' : ` (или кодом плана ${code})`}. Одного «да» недостаточно.`,
+    ],
+    revisionAfter: null,
+  };
 }

@@ -201,11 +201,11 @@
     },
     {
       "id": "write.irreversible-outside-envelope",
-      "title": "В конверт кладутся только операции, откат которых построен",
+      "title": "В конверт кладутся только операции, которые не уничтожают данные",
       "kind": "default",
       "value": true,
-      "enforced_in": "src/core/envelope.ts (ENVELOPE_OPS, parseOps)",
-      "probe": "структурная операция в auto отклоняется при разборе конверта с названной причиной"
+      "enforced_in": "src/core/envelope.ts (ENVELOPE_OPS, NAMED_CONFIRM_OPS, parseOps, envelopeAuthorizes)",
+      "probe": "разрушающая операция в auto отклоняется при разборе конверта с названной причиной"
     },
     {
       "id": "write.plan-cells-only",
@@ -222,6 +222,14 @@
       "value": 10,
       "enforced_in": "src/core/sheets/write-guards.ts (recentDuplicateAppend)",
       "probe": "второй appendRow с тем же содержимым без кода плана даёт no_change, а не вторую строку"
+    },
+    {
+      "id": "write.snapshot-max-cells",
+      "title": "Операция, чей снимок для отката больше 2000 ячеек, отказывает до записи",
+      "kind": "limit",
+      "value": 2000,
+      "enforced_in": "src/core/sheets/structure-op.ts (assertSnapshotBudget)",
+      "probe": "удаление диапазона больше бюджета отказывает ДО записи, назвав оба числа"
     }
   ]
 }

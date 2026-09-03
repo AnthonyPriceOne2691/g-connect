@@ -11,23 +11,47 @@ import { appendRow, upsertRow, type ApplyOutcome } from '../core/sheets/rows.js'
 import { findReplace } from '../core/sheets/find-replace-op.js';
 import { formatCells } from '../core/sheets/format-op.js';
 import { setCells } from '../core/sheets/set-cells-op.js';
-import { addSheet, insertColumns, insertRows, renameSheet } from '../core/sheets/structure-op.js';
+import {
+  addSheet,
+  deleteColumns,
+  deleteRows,
+  insertColumns,
+  insertRows,
+  renameSheet,
+} from '../core/sheets/structure-op.js';
 import type { parseOperation } from '../core/ops.js';
 import type { SheetData, SheetsClient } from '../core/sheets/types.js';
 
 /** Разводка по операциям. Вынесено: в обработчике это была четвёртая ветка подряд. */
-export async function runOperation(
-  client: SheetsClient,
-  data: SheetData,
-  operation: ReturnType<typeof parseOperation>,
-  options: Parameters<typeof appendRow>[3],
-): Promise<ApplyOutcome> {
-  if (operation.op === 'appendRow') return appendRow(client, data, operation.values, options);
-  if (operation.op === 'upsertRow') {
-    return upsertRow(client, data, operation.key, operation.values, options);
-  }
-  if (operation.op === 'findReplace') {
-    return findReplace(
+type Operation = ReturnType<typeof parseOperation>;
+type Options = Parameters<typeof upsertRow>[4];
+
+/**
+ * Таблица вместо девяти ветвей подряд: гейт сложности отклонил цепочку `if`, и он прав —
+ * разводка это соответствие, а не логика. Каждый обработчик берёт из операции ровно те
+ * поля, которые ему нужны; типизация сужается по `op`, поэтому лишнего поля не взять.
+ */
+const HANDLERS: {
+  [K in Operation['op']]: (
+    client: SheetsClient,
+    data: SheetData,
+    operation: Extract<Operation, { op: K }>,
+    options: Options,
+  ) => Promise<ApplyOutcome>;
+} = {
+  appendRow: (client, data, operation, options) =>
+    appendRow(client, data, operation.values, options),
+  upsertRow: (client, data, operation, options) =>
+    upsertRow(client, data, operation.key, operation.values, options),
+  setCells: (client, data, operation, options) =>
+    setCells(client, data, operation.where, operation.values, options),
+  formatCells: (client, data, operation, options) =>
+    formatCells(client, data, operation.where, operation.columns, operation.format, {
+      ...options,
+      includeHeader: operation.includeHeader,
+    }),
+  findReplace: (client, data, operation, options) =>
+    findReplace(
       client,
       data,
       {
@@ -39,31 +63,39 @@ export async function runOperation(
         searchByRegex: operation.searchByRegex,
       },
       options,
-    );
-  }
-  if (operation.op === 'insertRows') {
-    return insertRows(client, data, operation.where, operation.count, {
+    ),
+  insertRows: (client, data, operation, options) =>
+    insertRows(client, data, operation.where, operation.count, {
       ...options,
       below: operation.below,
-    });
-  }
-  if (operation.op === 'insertColumns') {
-    return insertColumns(client, data, operation.column, operation.count, {
+    }),
+  insertColumns: (client, data, operation, options) =>
+    insertColumns(client, data, operation.column, operation.count, {
       ...options,
       below: operation.below,
-    });
-  }
-  if (operation.op === 'addSheet') {
-    return addSheet(client, data, operation.title, options);
-  }
-  if (operation.op === 'renameSheet') {
-    return renameSheet(client, data, operation.title, options);
-  }
-  if (operation.op === 'formatCells') {
-    return formatCells(client, data, operation.where, operation.columns, operation.format, {
-      ...options,
-      includeHeader: operation.includeHeader,
-    });
-  }
-  return setCells(client, data, operation.where, operation.values, options);
+    }),
+  deleteRows: (client, data, operation, options) =>
+    deleteRows(client, data, operation.where, options),
+  deleteColumns: (client, data, operation, options) =>
+    deleteColumns(client, data, operation.column, options),
+  addSheet: (client, data, operation, options) => addSheet(client, data, operation.title, options),
+  renameSheet: (client, data, operation, options) =>
+    renameSheet(client, data, operation.title, options),
+};
+
+export function runOperation(
+  client: SheetsClient,
+  data: SheetData,
+  operation: Operation,
+  options: Options,
+): Promise<ApplyOutcome> {
+  // Приведение здесь одно и названо: сузить `Operation` до `Extract<…, {op: K}>` внутри
+  // индексации TypeScript не умеет, а таблица гарантирует, что ключ и обработчик совпали.
+  const handler = HANDLERS[operation.op] as (
+    c: SheetsClient,
+    d: SheetData,
+    o: Operation,
+    p: Options,
+  ) => Promise<ApplyOutcome>;
+  return handler(client, data, operation, options);
 }

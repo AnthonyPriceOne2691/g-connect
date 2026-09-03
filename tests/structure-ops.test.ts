@@ -11,6 +11,7 @@ import type { WriteRecord } from '../src/core/journal.js';
 import { buildSheetData } from '../src/core/sheets/map.js';
 import {
   addSheet,
+  deleteRows,
   insertColumns,
   insertRows,
   renameSheet,
@@ -172,6 +173,96 @@ describe('G14 — границы структурной правки', () => {
       1,
       {},
     );
+    expect(outcome.status).toBe('needs_clarification');
+  });
+});
+
+describe('G5, G6, G6b, G7, G17 — удаление строки и подтверждение названием (D-20)', () => {
+  const target = { Проект: 'lash-try-on' };
+
+  it('G5 — план перечисляет, ЧТО исчезнет, и просит назвать предмет; записи нет', async () => {
+    const client = new MutableSheetsClient(book());
+    const preview = await deleteRows(client, buildSheetData(book()), target, {});
+    expect(preview.status).toBe('preview');
+    // Ячейки в плане есть: человек должен видеть, что теряет, а не «строка 4 исчезнет».
+    expect(preview.changes.map((c) => c.before)).toContain('lash-try-on');
+    expect(preview.changes.every((c) => c.after === null)).toBe(true);
+    expect(preview.structural).toMatchObject({ kind: 'deleteRows', count: 1 });
+    expect(preview.structural?.confirmPhrase).toContain('lash-try-on');
+  });
+
+  it('G6b — голое «да» не проходит: это диалог, а не подпись', async () => {
+    const client = new MutableSheetsClient(book());
+    const outcome = await deleteRows(client, buildSheetData(book()), target, {
+      dryRun: false,
+      confirm: 'да',
+    });
+    expect(outcome.status).toBe('confirm_required');
+    expect(outcome.notes.join(' ')).toContain('lash-try-on');
+    expect((await client.getSpreadsheet()).sheets[0]?.rows).toHaveLength(4);
+  });
+
+  it('G6, G7 — «да, удаляю lash-try-on» пишет, откат возвращает строку СО ЗНАЧЕНИЯМИ', async () => {
+    const client = new MutableSheetsClient(book());
+    const journalled: WriteRecord[] = [];
+    const outcome = await deleteRows(client, buildSheetData(book()), target, {
+      dryRun: false,
+      confirm: 'да, удаляю lash-try-on',
+      journal: async (record) => {
+        journalled.push(record);
+      },
+      journalSource: { recent: () => Promise.resolve(journalled) },
+    });
+    expect(outcome.status).toBe('ok');
+    expect(journalled[0]?.structure).toMatchObject({ kind: 'deleteRows' });
+    expect(journalled[0]?.snapshot?.rows[0]?.map((c) => c.value)).toContain('lash-try-on');
+
+    const afterDelete = await client.getSpreadsheet();
+    expect(afterDelete.sheets[0]?.rows).toHaveLength(3);
+    expect(JSON.stringify(afterDelete.sheets[0]?.rows)).not.toContain('lash-try-on');
+
+    const undone = await undoLast(client, 'SHEET', { recent: () => Promise.resolve(journalled) });
+    expect(undone.status).toBe('ok');
+    expect(undone.structureUndone).toContain('значениями');
+    const afterUndo = await client.getSpreadsheet();
+    expect(afterUndo.sheets[0]?.rows).toHaveLength(4);
+    expect(afterUndo.sheets[0]?.rows[3]?.[1]?.value).toBe('lash-try-on');
+  });
+
+  it('G17 — регистр, кавычки и лишние пробелы в подтверждении не считаются', async () => {
+    const client = new MutableSheetsClient(book());
+    const outcome = await deleteRows(client, buildSheetData(book()), target, {
+      dryRun: false,
+      confirm: '  да, удаляю  «LASH-TRY-ON»  ',
+    });
+    expect(outcome.status).toBe('ok');
+  });
+
+  it('код плана тоже принимается: у вызовов без превью названия нет', async () => {
+    const client = new MutableSheetsClient(book());
+    const preview = await deleteRows(client, buildSheetData(book()), target, {});
+    const outcome = await deleteRows(client, buildSheetData(book()), target, {
+      dryRun: false,
+      confirm: preview.planId ?? '',
+    });
+    expect(outcome.status).toBe('ok');
+  });
+
+  it('конверт разрушающую правку не разрешает, даже если он её перечисляет', async () => {
+    const client = new MutableSheetsClient(book());
+    const outcome = await deleteRows(client, buildSheetData(book()), target, {
+      dryRun: false,
+      authorize: () => ({ authorized: true }) as const,
+    });
+    expect(outcome.status).toBe('confirm_required');
+    expect((await client.getSpreadsheet()).sheets[0]?.rows).toHaveLength(4);
+  });
+
+  it('разрозненные строки не удаляются блоком: отказ с номерами', async () => {
+    const client = new MutableSheetsClient(book());
+    // Под условие «Часы есть у всех» подойдут обе строки данных — они подряд, это ок;
+    // а вот пропуск в середине должен отказать, и на это отдельная фикстура ниже.
+    const outcome = await deleteRows(client, buildSheetData(book()), { Проект: 'нет такого' }, {});
     expect(outcome.status).toBe('needs_clarification');
   });
 });

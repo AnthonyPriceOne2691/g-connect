@@ -39,6 +39,17 @@ export interface StructuralPlan {
    * `deleteSheet`). Пусто — значит потерь нет, и это тоже утверждение.
    */
   readonly irreversible?: readonly string[];
+  /**
+   * Что человек должен произнести, чтобы правка прошла (D-20): «удаляю строку AutoLink
+   * Platform». Шесть hex тут не нужны — подтверждение и так привязано к конкретной
+   * правке, потому что называет её предмет. Голое «да» не проходит.
+   */
+  readonly confirmPhrase?: string;
+  /**
+   * Имя предмета правки, которое обязано встретиться в подтверждении. Сравнение
+   * нормализованное: регистр, пробелы и кавычки не считаются.
+   */
+  readonly confirmToken?: string;
 }
 
 export interface Question {

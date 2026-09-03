@@ -152,6 +152,22 @@ export const insertColumnsOp = z.object({
   ...commonFields,
 });
 
+/**
+ * Удаления (§6.2). Подтверждение — названием предмета (D-20), поэтому `confirm` здесь
+ * принимает не только код плана: «да, удаляю AutoLink Platform» — законная подпись.
+ */
+export const deleteRowsOp = z.object({
+  op: z.literal('deleteRows'),
+  where: rowValues,
+  ...commonFields,
+});
+
+export const deleteColumnsOp = z.object({
+  op: z.literal('deleteColumns'),
+  column: z.string().min(1),
+  ...commonFields,
+});
+
 export const addSheetOp = z.object({
   op: z.literal('addSheet'),
   title: z.string().min(1),
@@ -172,6 +188,8 @@ export const operationSchema = z.discriminatedUnion('op', [
   findReplaceOp,
   insertRowsOp,
   insertColumnsOp,
+  deleteRowsOp,
+  deleteColumnsOp,
   addSheetOp,
   renameSheetOp,
 ]);
@@ -187,6 +205,8 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'findReplace',
   'insertRows',
   'insertColumns',
+  'deleteRows',
+  'deleteColumns',
   'addSheet',
   'renameSheet',
 ];

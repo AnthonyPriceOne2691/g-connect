@@ -27,6 +27,28 @@ export const ENVELOPE_OPS: readonly OperationKind[] = [
   'setCells',
   'formatCells',
   'findReplace',
+  // Позиционные структурные (2.5b): добавляют место, ничего не уничтожая, и их откат —
+  // обратная операция с охранником «вставленное ещё пусто».
+  'insertRows',
+  'insertColumns',
+  'addSheet',
+  'renameSheet',
+];
+
+/**
+ * Операции, которые требуют финального подтверждения ВСЕГДА (D-20), сколько бы конверт ни
+ * разрешал: «как очистка корзины в Windows» (решение владельца 2026-09-03).
+ *
+ * Деление не «опасно на слух», а проверяемое: здесь одна фраза уничтожает или
+ * перемешивает то, чего в ответе не видно целиком. Такую операцию нельзя положить в
+ * конверт — разбор реестра её отклонит.
+ */
+export const NAMED_CONFIRM_OPS: readonly OperationKind[] = [
+  'deleteRows',
+  'deleteColumns',
+  'deleteSheet',
+  'moveRows',
+  'sortRange',
 ];
 
 /** Граница по числу ячеек, когда конверт её не назвал. */
@@ -67,10 +89,15 @@ function parseOps(raw: unknown, where: string): readonly OperationKind[] {
   }
   for (const op of raw) {
     if (typeof op === 'string' && ENVELOPE_OPS.includes(op as OperationKind)) continue;
+    const destructive = typeof op === 'string' && NAMED_CONFIRM_OPS.includes(op as OperationKind);
     throw envelopeError(
       `Конверт ${where}: операция «${String(op)}» в конверт не кладётся. ` +
-        `Можно: ${ENVELOPE_OPS.join(', ')}. Структурные операции остаются снаружи, ` +
-        'пока журнал хранит ячейки, а не строки: их откат нечем построить.',
+        (destructive
+          ? 'Она уничтожает или перемешивает то, чего в ответе не видно целиком, и ' +
+            'требует финального подтверждения названием — всегда, сколько бы конверт ни ' +
+            'разрешал (D-20). '
+          : '') +
+        `Можно: ${ENVELOPE_OPS.join(', ')}.`,
     );
   }
   return raw as readonly OperationKind[];
@@ -109,6 +136,14 @@ export function envelopeAuthorizes(
   op: OperationKind,
   cellCount: number,
 ): EnvelopeDecision {
+  // Разрушающая операция не авторизуется конвертом никогда — даже если её туда как-то
+  // занесло: разбор реестра её отклоняет, но охранник записи не полагается на разбор.
+  if (NAMED_CONFIRM_OPS.includes(op)) {
+    return {
+      authorized: false,
+      reason: 'Эта правка уничтожает или перемешивает данные — нужно назвать её предмет.',
+    };
+  }
   if (envelope === null) {
     return { authorized: false, reason: 'У цели нет конверта: правка показывается планом.' };
   }

@@ -29,6 +29,7 @@ import { findReplace } from '../src/core/sheets/find-replace-op.js';
 import { formatCells } from '../src/core/sheets/format-op.js';
 import { setCells } from '../src/core/sheets/set-cells-op.js';
 import { assertWritable, resolveTarget } from '../src/core/targets.js';
+import { deleteColumns } from '../src/core/sheets/structure-op.js';
 import { undoLast } from '../src/core/undo.js';
 import {
   upsertConfirmed,
@@ -299,8 +300,27 @@ const probes: Record<string, () => Promise<void>> = {
     } catch (error) {
       const { payload } = error as { payload: { detail: string; cause?: string } };
       expect(payload.cause).toBe('write.envelope-invalid');
-      expect(payload.detail).toContain('журнал хранит ячейки');
+      // Причина сменилась с 2.5b: снимок строки построен, и в конверт такая операция не
+      // кладётся не «потому что нечем откатить», а потому что требует названия (D-20).
+      expect(payload.detail).toContain('названием');
     }
+  },
+
+  'write.snapshot-max-cells': async () => {
+    // Правка, которую нечем вернуть, не делается вовсе: отказ ДО записи, с обоими числами.
+    const wide = snapshot([wideSheet(2100)]);
+    const c = new FakeSheetsClient(wide);
+    try {
+      await deleteColumns(c, buildSheetData(wide), 'Значение', { dryRun: false });
+      expect.unreachable('снимок больше бюджета должен отказать');
+    } catch (error) {
+      const { payload } = error as { payload: { code: string; cause?: string; detail: string } };
+      expect(payload.code).toBe('policy_denied');
+      expect(payload.cause).toBe('write.snapshot-max-cells');
+      expect(payload.detail).toContain('2000');
+    }
+    expect(c.writes).toHaveLength(0);
+    expect(limitOf('write.snapshot-max-cells', 0)).toBe(2000);
   },
 
   'write.plan-cells-only': async () => {
@@ -586,7 +606,7 @@ describe('правила как механизм (D-12)', () => {
       // оракул ниже, но здесь важно, что именно эти четыре правила не остались текстом.
       expect(rule.enforced_in).toMatch(/src\//);
     }
-    expect(policyRules()).toHaveLength(30);
+    expect(policyRules()).toHaveLength(31);
   });
 
   it('у КАЖДОГО правила есть проба — и наоборот', () => {
