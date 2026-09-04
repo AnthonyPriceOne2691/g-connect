@@ -7,7 +7,7 @@
       "title": "Записывающая операция по умолчанию возвращает план, а не пишет",
       "kind": "default",
       "value": true,
-      "enforced_in": "src/core/ops.ts (dryRun.default) + src/core/sheets/rows.ts (finish)",
+      "enforced_in": "src/core/ops.ts (commonFields, dryRun) + src/core/sheets/commit.ts (finishWrite)",
       "probe": "операция без dryRun не пишет ни одной ячейки"
     },
     {
@@ -50,7 +50,7 @@
       "id": "columns.no-silent-create",
       "title": "Неизвестная колонка не создаётся молча — задаётся вопрос",
       "kind": "ask",
-      "enforced_in": "src/core/resolver.ts (ступень 6) + rows.ts (prepare)",
+      "enforced_in": "src/core/resolver.ts (resolveColumn, needsClarification)",
       "probe": "values с несуществующей колонкой → needs_clarification, колонка не создана"
     },
     {
@@ -72,7 +72,7 @@
       "title": "Чтение ограничено по строкам, а усечение помечается",
       "kind": "limit",
       "value": 500,
-      "enforced_in": "src/core/google/sheets.ts (DEFAULT_MAX_ROWS, ReadOptions.maxRows)",
+      "enforced_in": "src/core/google/sheets.ts (DEFAULT_MAX_ROWS)",
       "probe": "чтение без maxRows берёт не больше значения правила"
     },
     {
@@ -123,7 +123,7 @@
       "title": "Тесты должны убивать мутантов: порог объявлен и проверяется прогоном",
       "kind": "limit",
       "value": 50,
-      "enforced_in": "src/core/policy.ts (limitOf) + stryker.config.json (thresholds.break)",
+      "enforced_in": "src/core/policy.ts (limitOf) + stryker.config.json",
       "probe": "порог из правила совпадает с порогом, на котором падает мутационный прогон"
     },
     {
@@ -146,7 +146,7 @@
       "id": "auth.testing-mode-warning",
       "title": "О приближении семидневного предела доступа предупреждаем заранее",
       "kind": "invariant",
-      "enforced_in": "src/core/profiles.ts (profileStatus.warnings)",
+      "enforced_in": "src/core/profiles.ts (profileStatus)",
       "probe": "профиль с токеном старше шести дней отдаёт предупреждение с указанием, что делать"
     },
     {

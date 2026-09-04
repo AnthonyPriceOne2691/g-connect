@@ -31,7 +31,14 @@ export const applyInput = {
   sheet: z.string().min(1).optional(),
   headerRow: z.number().int().positive().optional(),
   key: z.record(z.string(), z.unknown()).optional().describe('upsertRow: ключ строки'),
-  where: z.record(z.string(), z.unknown()).optional().describe('setCells: условие отбора'),
+  where: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe(
+      'Условие отбора строк: им адресуют правку setCells, formatCells, findReplace, ' +
+        'insertRows, deleteRows и moveRows. Ключ строки или значение любой колонки; ' +
+        'пустое условие у удаления и перемещения отклоняется',
+    ),
   values: z
     .record(z.string(), z.unknown())
     .optional()

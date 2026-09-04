@@ -15,11 +15,13 @@ import type { RangeSnapshot } from '../journal.js';
 import { contextOf, finishWrite } from './commit.js';
 import {
   anchorColumn,
+  assertColumnStill,
   assertSnapshotBudget,
   columnAnchored,
   columnSnapshot,
   prepared,
 } from './structure-support.js';
+import { assertBeforeValues } from './write-guards.js';
 import {
   columnLetter,
   type ColumnProfile,
@@ -99,7 +101,9 @@ async function pasteOperation(
     ...pasteChanges(map, data, from, to, rows),
     ...(op === 'cutRange' ? clearedChanges(map, data, from, rows) : []),
   ];
-  assertSnapshotBudget(changes.length * (op === 'cutRange' ? 2 : 1));
+  // Снимков у вырезания два, но `changes` уже содержат обе стороны — умножать ещё раз
+  // значило назвать человеку вдвое большее число (нашёл читатель без прогона).
+  assertSnapshotBudget(changes.length);
 
   const cut = op === 'cutRange';
   const structural: StructuralPlan = {
@@ -125,6 +129,9 @@ async function pasteOperation(
   return finishWrite(client, contextOf(map), changes, prepared(notes), options, structural.kind, {
     structural,
     snapshots,
+    // Предусловие D-17: у переноса `changes` уже несут «было», и не подключить сверку
+    // значило обещать предусловие «у каждой записи» и не иметь его у половины операций.
+    precondition: (c) => assertBeforeValues(c, map, changes),
     apply: (c) =>
       c.batchUpdate(map.spreadsheetId, [
         {
@@ -180,7 +187,11 @@ export async function autoFill(
   };
   return finishWrite(client, contextOf(map), [], prepared(), options, 'autoFill', {
     structural,
+    cells: destination.rowCount,
     snapshots: [emptyTailSnapshot(map, column, destination)],
+    // Колонка-якорь всё ещё та же и на том же месте: между планом и записью её могли
+    // переставить, и тогда автозаполнение поехало бы по чужому столбцу.
+    precondition: (c) => assertColumnStill(c, map, column.name, column.index),
     apply: (c) =>
       c.batchUpdate(map.spreadsheetId, [
         { kind: 'autoFill', sheetId: map.sheetId, source, destination },
@@ -220,6 +231,7 @@ export async function duplicateSheet(
   };
   return finishWrite(client, contextOf(map), [], prepared(), options, 'duplicateSheet', {
     structural,
+    cells,
     apply: (c) =>
       c.batchUpdate(map.spreadsheetId, [{ kind: 'duplicateSheet', sheetId: map.sheetId, title }]),
   });

@@ -13,8 +13,11 @@ import { rowsUnderCondition } from './rows.js';
 import {
   anchorText,
   assertAnchorRow,
+  assertColumnStill,
   assertContiguous,
+  assertNamedRows,
   assertSnapshotBudget,
+  snapshotOf,
   columnAnchored,
   subjectOf,
   prepared,
@@ -39,6 +42,7 @@ export async function moveRows(
   options: RowOptions = {},
 ): Promise<ApplyOutcome> {
   const map = data.map;
+  assertNamedRows(where, 'Перемещение строк');
   const source = rowsUnderCondition(data, where, options, 'Нечего перемещать: строк нет.');
   if ('refusal' in source) return source.refusal;
   const rows = [...source.rows].sort((a, b) => a - b);
@@ -78,8 +82,13 @@ export async function moveRows(
       `${anchor < at ? 'выше' : 'ниже'} строки «${anchorKey}». Значения не меняются, ` +
       'меняется порядок; откат вернёт строки на прежнее место.',
   ];
+  assertSnapshotBudget(count * Math.max(1, map.columns.length));
   return finishWrite(client, contextOf(map), [], prepared(notes), options, 'moveRows', {
     structural,
+    // Снимок перемещаемых строк — обещание четырёх документов и вторая линия обороны:
+    // вся обратимость иначе держалась бы на арифметике `inverseMove`, чья ошибка выглядит
+    // как успех. Нашёл читатель без прогона 2026-09-04.
+    snapshots: [snapshotOf(map, data, rows)],
     apply: (c) =>
       c.batchUpdate(map.spreadsheetId, [
         {
@@ -150,6 +159,9 @@ export async function sortRange(
   return finishWrite(client, contextOf(map), [], prepared(notes), options, 'sortRange', {
     structural,
     snapshots: [sortSnapshot(map, data, rows)],
+    // Колонка сортировки всё ещё на том же месте: иначе Google отсортирует по чужому
+    // индексу, а снимок в журнале окажется от другого порядка.
+    precondition: (c) => assertColumnStill(c, map, column.name, column.index),
     apply: (c) =>
       c.batchUpdate(map.spreadsheetId, [
         {

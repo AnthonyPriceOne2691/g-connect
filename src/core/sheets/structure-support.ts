@@ -16,12 +16,31 @@ import { columnQuestion, clarify, rowsUnderCondition } from './rows.js';
 import { buildSheetData } from './map.js';
 import {
   columnLetter,
+  type CellValue,
   type ColumnProfile,
   type SheetData,
   type SheetMap,
   type SheetsClient,
 } from './types.js';
 import type { ApplyOutcome, PlannedChange, RowOptions, RowValues } from './write-types.js';
+
+/**
+ * Пустое условие у разрушающей правки — не «все строки», а отсутствие адреса.
+ *
+ * `findRows` на пустом условии возвращает ВСЁ (пустой `every` истинен), и `deleteRows`
+ * без условия снёс бы весь блок данных, а подтверждать человеку предлагалось бы «весь
+ * лист» — то есть подпись перестала называть предмет. Нашёл читатель без прогона.
+ */
+export function assertNamedRows(where: RowValues, what: string): void {
+  if (Object.keys(where).length > 0) return;
+  throw gcError('bad_request', {
+    detail:
+      `${what} без условия означало бы «все строки блока данных», а подтверждение — ` +
+      '«весь лист», то есть подпись перестала бы называть предмет. Назови условие: ключ ' +
+      'строки или значение колонки.',
+    cause: 'empty_condition',
+  });
+}
 
 /** Предмет правки словами: то, что человек произносит в подтверждении (D-20). */
 export function subjectOf(where: RowValues): string {
@@ -108,15 +127,19 @@ export function columnSnapshot(
   data: SheetData,
   name: string,
   letter: string,
-  options: { readonly includeHeader?: boolean } = {},
+  options: { readonly includeHeader?: boolean; readonly aboveHeader?: readonly CellValue[] } = {},
 ): RangeSnapshot {
   const withHeader = options.includeHeader !== false;
   const body = data.rows.map((row, index): SnapshotCell[] => {
     const format = data.formats[index]?.[name];
     return [{ value: row[name] ?? null, ...(format === undefined ? {} : { format }) }];
   });
-  const rows = withHeader ? [[{ value: name }], ...body] : body;
-  const first = withHeader ? map.headerRow : map.headerRow + 1;
+  // Строки НАД шапкой тоже уходят в снимок: у владельца над ней живёт заголовок отчёта,
+  // и удаление колонки без них теряло ячейки безвозвратно, обещая «откат вернёт значения
+  // и вид». Нашёл читатель без прогона 2026-09-04 — оба живых прогона это пропустили.
+  const above = withHeader ? (options.aboveHeader ?? []).map((value) => [{ value }]) : [];
+  const rows = withHeader ? [...above, [{ value: name }], ...body] : body;
+  const first = withHeader ? map.headerRow - above.length : map.headerRow + 1;
   return {
     a1Range: `${map.sheet}!${letter}${first}:${letter}${first + rows.length - 1}`,
     rows,
@@ -215,3 +238,21 @@ export const prepared = (notes: readonly string[] = []): Prepared => ({
   questions: [],
   touches: [],
 });
+
+/** То же для колонки: имя на месте и на том же индексе. */
+export async function assertColumnStill(
+  client: SheetsClient,
+  map: SheetMap,
+  name: string,
+  index: number,
+): Promise<void> {
+  const fresh = await freshData(client, map);
+  const column = fresh.map.columns.find((c) => c.name === name);
+  if (column !== undefined && column.index === index) return;
+  throw gcError('stale_value', {
+    detail:
+      `Колонка «${name}» была ${index + 1}-й, а сейчас ` +
+      `${column === undefined ? 'её нет вовсе' : `${column.index + 1}-я`}. Правка не выполнена.`,
+    cause: 'anchor_moved',
+  });
+}

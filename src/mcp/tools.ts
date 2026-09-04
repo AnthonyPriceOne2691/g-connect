@@ -351,8 +351,8 @@ function undoHint(outcome: Awaited<ReturnType<typeof undoLast>>): string | undef
   if (outcome.status === 'nothing_to_undo') {
     return `Откатывать нечего. ${outcome.detail ?? ''}`.trim();
   }
-  const values = outcome.restored.filter((r) => r.kind === 'value').length;
-  const formats = outcome.restored.filter((r) => r.kind === 'format').length;
+  const values = outcome.restored.filter((r) => r.kind !== 'format').length;
+  const formats = outcome.restored.filter((r) => r.kind !== 'value').length;
   const parts = [
     ...(values === 0 ? [] : [`значения в ${values} ячейк(ах)`]),
     ...(formats === 0 ? [] : [`вид ${formats} ячейк(и)`]),

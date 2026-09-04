@@ -22,6 +22,7 @@ import { formatCells } from '../src/core/sheets/format-op.js';
 import {
   MutableSheetsClient,
   formattedSheet,
+  gappedSheet,
   instructionSheet,
   reportSheet,
   snapshot,
@@ -267,12 +268,63 @@ describe('G5, G6, G6b, G7, G17 — удаление строки и подтве
     expect((await client.getSpreadsheet()).sheets[0]?.rows).toHaveLength(4);
   });
 
-  it('разрозненные строки не удаляются блоком: отказ с номерами', async () => {
+  it('под условие не подошла ни одна строка — вопрос, а не удаление наугад', async () => {
     const client = new MutableSheetsClient(book());
-    // Под условие «Часы есть у всех» подойдут обе строки данных — они подряд, это ок;
-    // а вот пропуск в середине должен отказать, и на это отдельная фикстура ниже.
     const outcome = await deleteRows(client, buildSheetData(book()), { Проект: 'нет такого' }, {});
     expect(outcome.status).toBe('needs_clarification');
+  });
+
+  it('разрозненные строки не удаляются блоком: отказ НАЗЫВАЕТ номера', async () => {
+    // Оракул переписан после разбора читателя: прежний тест с этим названием проверял
+    // ноль подошедших строк, то есть разрыв не проверял никто. Цена поломки:
+    // `deleteDimension` снёс бы 2,3,4 вместо 2 и 4, а снимок был бы от 2 и 4 — откат
+    // залил бы чужие значения в чужие строки.
+    const gapped = snapshot([gappedSheet()]);
+    const client = new MutableSheetsClient(gapped);
+    const data = buildSheetData(gapped, { headerRow: 1 });
+    try {
+      await deleteRows(client, data, { Статус: 'в работе' }, {});
+      expect.unreachable('разрыв в подошедших строках обязан отказать');
+    } catch (error) {
+      const { payload } = error as { payload: { cause?: string; detail: string } };
+      expect(payload.cause).toBe('rows_not_contiguous');
+      expect(payload.detail).toContain('2');
+      expect(payload.detail).toContain('4');
+    }
+  });
+
+  it('удаление без условия отказывает: подпись перестала бы называть предмет', async () => {
+    const client = new MutableSheetsClient(book());
+    await expect(deleteRows(client, buildSheetData(book()), {}, {})).rejects.toMatchObject({
+      payload: { cause: 'empty_condition' },
+    });
+  });
+
+  it('G12 — якорь сдвинулся между планом и записью: stale_value, ни одной правки', async () => {
+    // Отказная ветка предусловия не была покрыта ни для одной операции: happy-path её
+    // вызывает и проходит, поэтому удаление ветки тесты бы не заметили.
+    const shifted = () => {
+      const base = book();
+      const sheet = base.sheets[0]!;
+      // Кто-то вставил строку выше: якорь «G connect» уехал вниз.
+      const rows = [sheet.rows[0]!, sheet.rows[1]!, [], ...sheet.rows.slice(2)];
+      return { ...base, sheets: [{ ...sheet, rows }, base.sheets[1]!] };
+    };
+    class ShiftedClient extends MutableSheetsClient {
+      override getSpreadsheet(): ReturnType<MutableSheetsClient['getSpreadsheet']> {
+        return Promise.resolve(shifted());
+      }
+    }
+    const client = new ShiftedClient(book());
+    const failure = await insertRows(client, buildSheetData(book()), where, 1, {
+      dryRun: false,
+      authorize: () => ({ authorized: true }) as const,
+    }).then(
+      () => null,
+      (error: unknown) => error as { payload: { code: string; cause?: string } },
+    );
+    expect(failure?.payload.code).toBe('stale_value');
+    expect(failure?.payload.cause).toBe('anchor_moved');
   });
 });
 

@@ -149,6 +149,24 @@ export function protectedSheet(): SheetSnapshot {
 }
 
 /** Лист на `rows` строк с одинаковым значением ключа — для правила write.max-changes. */
+/**
+ * Лист, где под одно условие подходят НЕПОДРЯД идущие строки: между двумя «в работе»
+ * стоит «готово». Нужен ровно для того, чтобы оракул на непрерывность блока проверял
+ * разрыв, а не «ноль подошедших» (находка читателя без прогона 2026-09-04).
+ */
+export function gappedSheet(): SheetSnapshot {
+  return {
+    title: 'Разрыв',
+    sheetId: 9,
+    rows: [
+      row('Проект', 'Статус', 'Часы'),
+      row('первый', 'в работе', 1),
+      row('второй', 'готово', 2),
+      row('третий', 'в работе', 3),
+    ],
+  };
+}
+
 export function wideSheet(rows: number): SheetSnapshot {
   const data: Cell[][] = [row('Группа', 'Значение')];
   for (let i = 0; i < rows; i += 1) data.push(row('все', i));

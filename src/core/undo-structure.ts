@@ -9,7 +9,7 @@
 
 import { gcError } from './errors.js';
 import type { WriteRecord } from './journal.js';
-import { parseA1 } from './sheets/a1.js';
+import { parseA1, sameCell, valueAt } from './sheets/a1.js';
 import { inverseMove } from './sheets/move-math.js';
 import {
   columnLetter,
@@ -41,6 +41,12 @@ export async function undoStructure(
   if (structure.kind === 'createFile')
     return undoCreate(record, structure, options, journal, targetId);
   const book = await client.getSpreadsheet(targetId);
+
+  // Наши ли ещё ячейки. Живой прогон этого не увидел, а читатель без прогона увидел:
+  // структурный откат уходил в обход `assertSafeToUndo`, и заливка снимка поверх чужой
+  // правки шла молча. Проверяем там, где есть чем: у копирования, вырезания и удалений в
+  // записи лежат ячейки с тем, что мы написали.
+  if (options.force !== true) assertOursStill(book, record);
   // Перенос содержимого (копирование, вырезание, автозаполнение) откатывается ОДНИМ
   // снимком: геометрия там не менялась, менялось наполнение прямоугольника. Обратной
   // структурной операции для них нет и быть не должно — «отменить вставку» это и есть
@@ -65,6 +71,16 @@ export async function undoStructure(
     at: record.at,
     structureUndone: undoneText(structure),
     ...(structure.irreversible === undefined ? {} : { notRestored: structure.irreversible }),
+    ...(UNVERIFIABLE.has(structure.kind)
+      ? {
+          notRestored: [
+            ...(structure.irreversible ?? []),
+            'проверить, что после нашей правки в этот диапазон никто не писал, ядру нечем: ' +
+              'у перемещения, сортировки и автозаполнения нет ячеек в записи. Поэтому такой ' +
+              'откат работает только на свежих записях',
+          ],
+        }
+      : {}),
   };
 }
 
@@ -85,6 +101,16 @@ function inverseOf(
   }
   return build(book, structure, options);
 }
+
+/**
+ * Формы, у которых сверить «в ячейках всё ещё наше» нечем: в записи нет ячеек с тем, что
+ * мы написали. Названная непокрытость, а не забытая проверка.
+ */
+const UNVERIFIABLE: ReadonlySet<NonNullable<WriteRecord['structure']>['kind']> = new Set([
+  'moveRows',
+  'sortRange',
+  'autoFill',
+]);
 
 /** Формы, у которых обратной структурной операции нет: откат — это заливка снимка. */
 const SNAPSHOT_ONLY: ReadonlySet<NonNullable<WriteRecord['structure']>['kind']> = new Set([
@@ -236,7 +262,7 @@ async function restoreOne(
       restored.push({
         a1,
         column: columnLetter(columnIndex),
-        kind: cell.format === undefined ? 'value' : 'format',
+        kind: cell.format === undefined ? 'value' : 'value+format',
         value: cell.value,
         ...(cell.format === undefined ? {} : { format: cell.format }),
       });
@@ -390,4 +416,29 @@ async function undoCreate(
       'Достать его оттуда можно только руками, в интерфейсе Drive — насовсем он не удалён.',
     notRestored: ['содержимое файла, если человек успел в него что-то написать'],
   };
+}
+
+/**
+ * Сверка «в ячейках всё ещё наше» для структурных записей.
+ *
+ * У перемещения, сортировки и автозаполнения ячеек в записи нет — там сверять нечем, и
+ * это НАЗВАННАЯ непокрытость: их откат заливает записанное состояние безусловно, и
+ * поэтому работает только на свежих записях (`undo.recency-minutes`). У остальных форм
+ * сверка та же, что у ячеечного отката: если наше значение переписали, откат перетёр бы
+ * чужую правку.
+ */
+function assertOursStill(book: SpreadsheetSnapshot, record: WriteRecord): void {
+  for (const change of record.changes) {
+    // Удаление: ячейки больше нет, и «текущее пусто» — ожидаемое состояние.
+    if (change.after === null) continue;
+    const current = valueAt(book, change.a1);
+    if (sameCell(current, change.after)) continue;
+    throw gcError('revision_conflict', {
+      detail:
+        `Ячейку ${change.a1} (${change.column}) после нашей записи изменили: мы записали ` +
+        `«${String(change.after ?? '')}», сейчас там «${String(current ?? '')}». Откат ` +
+        'перетёр бы чужую правку, поэтому не выполнен: перечитай и реши, что вернуть.',
+      cause: 'cell_changed_after_write',
+    });
+  }
 }

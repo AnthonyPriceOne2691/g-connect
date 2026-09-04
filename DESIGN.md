@@ -130,7 +130,7 @@ G connect/
 
 *Sheets:* `updateValues`, `setFormula`, `setFormulas`, `clearValues`, `formatCells`, `mergeCells`, `unmergeCells`, `updateBorders`, `findReplace`
 
-*Drive:* `createDoc`, `createSheet`, `createFolder` — с `saveAs`, чтобы следующие операции того же вызова адресовали только что созданный файл (поведение уже есть в `run.js`).
+*Drive:* `createDoc`, `createSheet`, `createFolder`. `saveAs` из `run.js` НЕ переносится (решение 2026-09-04): чтобы следующая операция адресовала только что созданный файл, понадобилось бы понятие «сессии разговора», которого в ядре нет, а без него `saveAs` стал бы четвёртой копией правды рядом с реестром. Ссылку человек получает в ответе и сам решает, добавлять ли файл в реестр.
 
 ### `gc_scan`
 ```

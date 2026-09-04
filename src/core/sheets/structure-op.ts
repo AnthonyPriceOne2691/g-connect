@@ -19,7 +19,8 @@ import { rowsUnderCondition } from './rows.js';
 import {
   anchorText,
   assertAnchorRow,
-  freshData,
+  assertColumnStill,
+  assertNamedRows,
   assertContiguous,
   columnAnchored,
   assertSnapshotBudget,
@@ -29,7 +30,7 @@ import {
   subjectOf,
   prepared,
 } from './structure-support.js';
-import { columnLetter } from './types.js';
+import { columnLetter, type CellValue } from './types.js';
 import type { SheetData, SheetMap, SheetSnapshot, SheetsClient } from './types.js';
 import type {
   ApplyOutcome,
@@ -73,6 +74,7 @@ export async function insertRows(
   };
   return finishWrite(client, contextOf(map), [], prepared(), options, 'insertRows', {
     structural,
+    cells: count * Math.max(1, map.columns.length),
     apply: (c) => insertDimension(c, map, 'rows', at, count),
     precondition: (c) => assertAnchorRow(c, map, where, options, anchorRow),
   });
@@ -100,6 +102,7 @@ export async function insertColumns(
   };
   return finishWrite(client, contextOf(map), [], prepared(), options, 'insertColumns', {
     structural,
+    cells: count * Math.max(1, map.dataRowCount),
     apply: (c) => insertDimension(c, map, 'columns', at, count),
     precondition: (c) => assertColumnStill(c, map, column.name, column.index),
   });
@@ -219,24 +222,6 @@ async function assertTitleUnused(
   });
 }
 
-/** То же для колонки: имя на месте и на том же индексе. */
-async function assertColumnStill(
-  client: SheetsClient,
-  map: SheetMap,
-  name: string,
-  index: number,
-): Promise<void> {
-  const fresh = await freshData(client, map);
-  const column = fresh.map.columns.find((c) => c.name === name);
-  if (column !== undefined && column.index === index) return;
-  throw gcError('stale_value', {
-    detail:
-      `Колонка «${name}» была ${index + 1}-й, а сейчас ` +
-      `${column === undefined ? 'её нет вовсе' : `${column.index + 1}-я`}. Правка не выполнена.`,
-    cause: 'anchor_moved',
-  });
-}
-
 /** Имя листа всё ещё свободно: между планом и записью его мог занять другой. */
 async function assertTitleFree(client: SheetsClient, map: SheetMap, title: string): Promise<void> {
   const snapshot = await client.getSpreadsheet(map.spreadsheetId);
@@ -264,6 +249,7 @@ export async function deleteRows(
   options: RowOptions = {},
 ): Promise<ApplyOutcome> {
   const map = data.map;
+  assertNamedRows(where, 'Удаление строк');
   const selected = rowsUnderCondition(
     data,
     where,
@@ -325,7 +311,11 @@ export async function deleteColumns(
   };
   return finishWrite(client, contextOf(map), changes, prepared(), options, 'deleteColumns', {
     structural,
-    snapshots: [columnSnapshot(map, data, column.name, column.letter)],
+    snapshots: [
+      columnSnapshot(map, data, column.name, column.letter, {
+        aboveHeader: await aboveHeaderCells(client, map, column.index),
+      }),
+    ],
     apply: (c) => deleteDimension(c, map, 'columns', at, 1),
     precondition: (c) => assertColumnStill(c, map, column.name, column.index),
   });
@@ -447,4 +437,21 @@ async function assertSheetStill(
     detail: `Лист «${title}» исчез после построения плана. Правка не выполнена.`,
     cause: 'anchor_moved',
   });
+}
+
+/**
+ * Ячейки колонки НАД строкой шапки: их в `SheetData` нет по построению, а терять их
+ * нельзя — обещание «откат вернёт значения и вид» не делает исключений для заголовка
+ * отчёта над таблицей.
+ */
+async function aboveHeaderCells(
+  client: SheetsClient,
+  map: SheetMap,
+  columnIndex: number,
+): Promise<readonly CellValue[]> {
+  if (map.headerRow <= 1) return [];
+  const book = await client.getSpreadsheet(map.spreadsheetId, { sheet: map.sheet });
+  const sheet = book.sheets.find((s) => s.title === map.sheet);
+  const rows = (sheet?.rows ?? []).slice(0, map.headerRow - 1);
+  return rows.map((row) => row[columnIndex]?.value ?? null);
 }

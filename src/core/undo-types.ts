@@ -54,8 +54,12 @@ export interface UndoOutcome {
   readonly restored: readonly {
     a1: string;
     column: string;
-    /** Что вернули: значение ячейки или её вид. */
-    kind: 'value' | 'format';
+    /**
+     * Что вернули: значение, вид или и то и то. Третий вариант появился после разбора
+     * читателя: заливка снимка возвращает и значение, и оформление, а отчёт называл
+     * только вид — то есть врал в другую сторону.
+     */
+    kind: 'value' | 'format' | 'value+format';
     value: string | number | boolean | null;
     /** Заполнено у `kind: 'format'` — вид, который вернули. */
     format?: CellFormat;

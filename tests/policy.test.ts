@@ -8,7 +8,7 @@
  * Меты обязательны: добавить правило и не исполнить его → тест красный.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -671,12 +671,27 @@ describe('правила как механизм (D-12)', () => {
     }
   });
 
-  it('enforced_in каждого правила указывает на существующий файл', () => {
+  it('enforced_in каждого правила указывает на существующий файл И на функцию в нём', () => {
+    // Проверка усилена после разбора читателя без прогона 2026-09-04: она смотрела только
+    // существование ФАЙЛА, поэтому четыре правила годами указывали на функции, уехавшие в
+    // другие модули (`assertSnapshotBudget`, `finish`, `writeCells`), и оракул молчал.
+    // Цена ошибки — потерянное время того, кто пойдёт искать механизм по указателю.
     for (const rule of policyRules()) {
       const paths = rule.enforced_in.match(/src\/[\w./-]+\.ts/g) ?? [];
       expect(paths.length, `${rule.id}: в enforced_in нет пути к файлу`).toBeGreaterThan(0);
-      for (const path of paths) {
+      const sources = paths.map((path) => {
         expect(existsSync(path), `${rule.id}: файла ${path} нет`).toBe(true);
+        return readFileSync(path, 'utf8');
+      });
+      // Имена в скобках — это точки отказа: «src/core/x.ts (funcA, funcB)».
+      for (const named of rule.enforced_in.matchAll(/\(([^)]+)\)/g)) {
+        for (const name of named[1]!.split(',').map((part) => part.trim())) {
+          if (name.length === 0 || name.includes(' ')) continue;
+          expect(
+            sources.some((source) => source.includes(name)),
+            `${rule.id}: в файлах ${paths.join(', ')} нет упоминания «${name}»`,
+          ).toBe(true);
+        }
       }
     }
   });

@@ -945,3 +945,34 @@ describe('связь схемы транспорта с ядром (находк
     }
   });
 });
+
+describe('тексты, которые читает МОДЕЛЬ (находка читателя без прогона)', () => {
+  it('подсказка разрушающей правки просит название, а не код плана', async () => {
+    // Этот текст — источник правды для модели: живой прогон нашёл, что он требовал код,
+    // когда механизм ждал фразу. Правку сделали, а оракула на неё не было — то есть
+    // следующая правка текста могла бы вернуть дефект молча.
+    const { deps } = harness();
+    const result = await runTool(
+      gcApply,
+      { op: 'deleteRows', target: 'log', where: { Проект: 'G connect' } },
+      deps,
+    );
+    const data = result.data as { hint?: string; structural?: { confirmPhrase?: string } };
+    expect(data.hint).toContain('НАЗВАНИЕМ');
+    expect(data.hint).toContain(data.structural?.confirmPhrase ?? '—');
+    expect(data.hint).toContain('Одного «да» ядро не примет');
+  });
+
+  it('подсказка отката перечисляет, что вернулось, и что НЕ вернулось', async () => {
+    const applied = new MutableSheetsClient(snapshot());
+    const { deps } = harness({ sheets: () => Promise.resolve(applied) });
+    await applyConfirmed(
+      { op: 'upsertRow', target: 'log', key: { Проект: 'G connect' }, values: { Часы: 9 } },
+      deps,
+    );
+    const undone = (await runTool(gcUndo, { target: 'log' }, deps)).data as { hint?: string };
+    expect(undone.hint).toContain('Вернулось');
+    expect(undone.hint).toContain('значения');
+    expect(undone.hint).toContain('а не «откачено»');
+  });
+});

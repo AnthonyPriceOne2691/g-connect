@@ -53,6 +53,15 @@ export interface WriteShape {
   readonly structural?: StructuralPlan;
   readonly snapshots?: readonly RangeSnapshot[];
   /**
+   * Сколько ячеек трогает правка, если по `changes` этого не видно.
+   *
+   * Читатель без прогона нашёл дыру: граница конверта по числу ячеек судила
+   * `changes.length`, а у вставки, автозаполнения, дублирования листа и создания файла
+   * `changes` пуст — значит `maxCells: 1` разрешал вставку 200 строк с первой фразы.
+   * D-18 обещает границу, и она обязана судить их тоже.
+   */
+  readonly cells?: number;
+  /**
    * Чем применить правку. Может вернуть факты, известные ТОЛЬКО по факту записи: id
    * созданного файла Drive появляется в ответе Google, а не в плане, и без него откат
    * не знал бы, что отправлять в корзину.
@@ -188,7 +197,11 @@ async function commit(
   op: OperationKind,
   shape: WriteShape,
 ): Promise<ApplyOutcome> {
-  const unconfirmed = confirmationOutcome(base, options, decisionFor(options, op, changes.length));
+  const unconfirmed = confirmationOutcome(
+    base,
+    options,
+    decisionFor(options, op, shape.cells ?? changes.length),
+  );
   if (unconfirmed !== null) return unconfirmed;
 
   // Дубль дописанной строки ловится ДО записи и только там, где человек план не читал.
@@ -223,7 +236,11 @@ export async function finishWrite(
   op: OperationKind,
   shape: WriteShape = {},
 ): Promise<ApplyOutcome> {
-  assertChangeBudget(changes.length);
+  // Бюджет изменений — про записываемые ЯЧЕЙКИ. У структурной правки `changes`
+  // информационные (что исчезнет), и судить их этим бюджетом значило запретить удаление
+  // одиннадцати строк на девятнадцати колонках. Предел структурной правки — бюджет
+  // снимка; названо в правилах. Нашёл читатель без прогона 2026-09-04.
+  if (shape.structural === undefined) assertChangeBudget(changes.length);
   const base: Base = {
     changes,
     assumptions: prepared.assumptions,
