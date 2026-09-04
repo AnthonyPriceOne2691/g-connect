@@ -8,7 +8,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { WriteRecord } from '../src/core/journal.js';
 import { noopJournal } from '../src/core/journal.js';
+import { OPERATION_NAMES } from '../src/core/ops.js';
 import { profileDir } from '../src/core/profiles.js';
+import { applyInput } from '../src/mcp/apply-schema.js';
 import type { Registry } from '../src/core/targets.js';
 import {
   EXPECTED_TOOL_COUNT,
@@ -912,5 +914,34 @@ describe('G15, G16 — создание файлов Drive (D-19, слайс 8)'
     expect(result.ok).toBe(false);
     expect(result.error?.cause).toBe('write.allowlist');
     expect(client.writes).toHaveLength(0);
+  });
+});
+
+describe('связь схемы транспорта с ядром (находка живого прогона 2026-09-04)', () => {
+  /**
+   * Оракул на СВЯЗЬ, а не на список.
+   *
+   * Живой прогон нашёл, что схема `gc_apply` объявляла девять операций, пока ядро знало
+   * двадцать одну: рукописный список отставал, схема отклоняла правки до ядра, а правила
+   * уверяли агента, что операции есть. Ни один из существовавших оракулов этого не видел —
+   * они звали ядро напрямую. Проверять надо связь двух сторон, а не каждую по отдельности
+   * (урок L14, третье появление того же класса).
+   */
+  it('перечисление операций инструмента совпадает с тем, что знает ядро', () => {
+    const schema = applyInput.op;
+    const exposed = [...schema.options].sort();
+    const known = [...OPERATION_NAMES].sort();
+    expect(exposed).toEqual(known);
+  });
+
+  it('каждое имя операции ядра проходит схему транспорта', () => {
+    // Проверяется САМА схема, а не вызов инструмента: `runTool` в тестах зовут напрямую,
+    // и схему входа применяет только MCP-сервер — то есть отказ транспорта в тестах не
+    // наблюдаем в принципе. Это второе лицо той же дыры: оракул, который «проверяет
+    // операцию», мог быть зелёным, пока протокол её отклонял. Сквозная проверка — в
+    // `probe_mcp.mjs`, там схема читается у собранного сервера.
+    for (const op of OPERATION_NAMES) {
+      expect(applyInput.op.safeParse(op).success, `операция ${op}`).toBe(true);
+    }
   });
 });

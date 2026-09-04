@@ -18,8 +18,10 @@ import {
   renameSheet,
 } from '../src/core/sheets/structure-op.js';
 import { undoLast } from '../src/core/undo.js';
+import { formatCells } from '../src/core/sheets/format-op.js';
 import {
   MutableSheetsClient,
+  formattedSheet,
   instructionSheet,
   reportSheet,
   snapshot,
@@ -350,5 +352,53 @@ describe('G9, G9b — удаление листа: потеря названа �
     await expect(deleteSheet(client, buildSheetData(single), {})).rejects.toMatchObject({
       payload: { cause: 'last_sheet' },
     });
+  });
+});
+
+describe('находки живого прогона 2026-09-04', () => {
+  it('переименование листа предупреждает, что рвёт привязку цели в реестре', async () => {
+    const client = new MutableSheetsClient(book());
+    const plan = await renameSheet(client, buildSheetData(book()), 'Отчёт 2026', {
+      alias: 'infra-test',
+      registrySheet: 'Лист1',
+    });
+    expect(plan.status).toBe('preview');
+    expect(plan.notes.join(' ')).toContain('привязка перестанет совпадать');
+    expect(plan.notes.join(' ')).toContain('infra-test');
+  });
+
+  it('привязка к другому листу — предупреждения нет: врать в обе стороны нельзя', async () => {
+    const client = new MutableSheetsClient(book());
+    const plan = await renameSheet(client, buildSheetData(book()), 'Отчёт 2026', {
+      alias: 'infra-test',
+      registrySheet: 'Инструкция',
+    });
+    expect(plan.notes).toHaveLength(0);
+  });
+
+  it('откат правки ВИДА отчитывается видом, а не значением ячейки', async () => {
+    const client = new MutableSheetsClient(snapshot([formattedSheet()]));
+    const journalled: WriteRecord[] = [];
+    const data = () => buildSheetData(snapshot([formattedSheet()]));
+    const where = { Проект: 'G connect' };
+    const preview = await formatCells(client, data(), where, ['Часы'], { bold: true }, {});
+    await formatCells(
+      client,
+      data(),
+      where,
+      ['Часы'],
+      { bold: true },
+      {
+        dryRun: false,
+        confirm: preview.planId ?? '',
+        journal: async (record) => {
+          journalled.push(record);
+        },
+        journalSource: { recent: () => Promise.resolve(journalled) },
+      },
+    );
+    const undone = await undoLast(client, 'SHEET', { recent: () => Promise.resolve(journalled) });
+    expect(undone.restored[0]?.kind).toBe('format');
+    expect(undone.restored[0]?.format).toMatchObject({ bold: false });
   });
 });

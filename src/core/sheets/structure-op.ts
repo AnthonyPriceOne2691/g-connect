@@ -13,7 +13,7 @@
 
 import { gcError } from '../errors.js';
 import type { RangeSnapshot, SnapshotCell } from '../journal.js';
-import { contextOf, finishWrite, type Prepared } from './commit.js';
+import { contextOf, finishWrite } from './commit.js';
 import { rowsUnderCondition } from './rows.js';
 import {
   anchorText,
@@ -26,6 +26,7 @@ import {
   rowChanges,
   snapshotOf,
   subjectOf,
+  prepared,
 } from './structure-support.js';
 import { columnLetter } from './types.js';
 import type { SheetData, SheetMap, SheetSnapshot, SheetsClient } from './types.js';
@@ -36,14 +37,6 @@ import type {
   RowValues,
   StructuralPlan,
 } from './write-types.js';
-
-const empty = (): Prepared => ({
-  resolved: [],
-  assumptions: [],
-  notes: [],
-  questions: [],
-  touches: [],
-});
 
 /**
  * Вставка строк относительно строки-якоря (§6.2, `Ctrl+Shift+=`).
@@ -77,7 +70,7 @@ export async function insertRows(
     count,
     anchor: `строка, где ${anchorText(where)}`,
   };
-  return finishWrite(client, contextOf(map), [], empty(), options, 'insertRows', {
+  return finishWrite(client, contextOf(map), [], prepared(), options, 'insertRows', {
     structural,
     apply: (c) => insertDimension(c, map, 'rows', at, count),
     precondition: (c) => assertAnchorRow(c, map, where, options, anchorRow),
@@ -104,7 +97,7 @@ export async function insertColumns(
     count,
     anchor: `колонка «${column.name}» (${column.letter})`,
   };
-  return finishWrite(client, contextOf(map), [], empty(), options, 'insertColumns', {
+  return finishWrite(client, contextOf(map), [], prepared(), options, 'insertColumns', {
     structural,
     apply: (c) => insertDimension(c, map, 'columns', at, count),
     precondition: (c) => assertColumnStill(c, map, column.name, column.index),
@@ -122,7 +115,7 @@ export async function addSheet(
   assertTitle(title);
   assertNoSuchSheet(map, title);
   const structural: StructuralPlan = { kind: 'addSheet', sheet: title, title };
-  return finishWrite(client, contextOf(map), [], empty(), options, 'addSheet', {
+  return finishWrite(client, contextOf(map), [], prepared(), options, 'addSheet', {
     structural,
     apply: (c) => c.batchUpdate(map.spreadsheetId, [{ kind: 'addSheet', title }]),
     precondition: (c) => assertTitleFree(c, map, title),
@@ -139,7 +132,7 @@ export async function renameSheet(
   const map = data.map;
   assertTitle(title);
   if (title === map.sheet) {
-    return finishWrite(client, contextOf(map), [], empty(), options, 'renameSheet', {});
+    return finishWrite(client, contextOf(map), [], prepared(), options, 'renameSheet', {});
   }
   assertNoSuchSheet(map, title);
   const structural: StructuralPlan = {
@@ -148,7 +141,18 @@ export async function renameSheet(
     title,
     previousTitle: map.sheet,
   };
-  return finishWrite(client, contextOf(map), [], empty(), options, 'renameSheet', {
+  // Реестр держит цель за ИМЕНЕМ листа. Переименование его сносит, и молчать об этом
+  // нельзя: следующий вызов по тому же алиасу уйдёт на лист, которого нет (найдено живым
+  // прогоном 2026-09-04).
+  const breaksTarget = options.registrySheet === map.sheet;
+  const notes = breaksTarget
+    ? [
+        `Внимание: цель «${options.alias ?? 'из реестра'}» привязана в реестре к листу ` +
+          `«${map.sheet}». После переименования привязка перестанет совпадать — поправь ` +
+          'поле `sheet` у этой цели в реестре, иначе следующий вызов уйдёт на первый лист книги.',
+      ]
+    : [];
+  return finishWrite(client, contextOf(map), [], prepared(notes), options, 'renameSheet', {
     structural,
     apply: (c) =>
       c.batchUpdate(map.spreadsheetId, [{ kind: 'renameSheet', sheetId: map.sheetId, title }]),
@@ -258,7 +262,7 @@ export async function deleteRows(
     confirmPhrase: `удаляю ${count === 1 ? 'строку' : `строки (${count})`} ${subject}`,
     confirmToken: subject,
   };
-  return finishWrite(client, contextOf(map), changes, empty(), options, 'deleteRows', {
+  return finishWrite(client, contextOf(map), changes, prepared(), options, 'deleteRows', {
     structural,
     snapshots: [snapshotOf(map, data, rows)],
     apply: (c) => deleteDimension(c, map, 'rows', at, count),
@@ -294,7 +298,7 @@ export async function deleteColumns(
     confirmPhrase: `удаляю колонку ${column.name}`,
     confirmToken: column.name,
   };
-  return finishWrite(client, contextOf(map), changes, empty(), options, 'deleteColumns', {
+  return finishWrite(client, contextOf(map), changes, prepared(), options, 'deleteColumns', {
     structural,
     snapshots: [columnSnapshot(map, data, column.name, column.letter)],
     apply: (c) => deleteDimension(c, map, 'columns', at, 1),
@@ -354,7 +358,7 @@ export async function deleteSheet(
     confirmPhrase: `удаляю лист ${map.sheet}`,
     confirmToken: map.sheet,
   };
-  return finishWrite(client, contextOf(map), [], empty(), options, 'deleteSheet', {
+  return finishWrite(client, contextOf(map), [], prepared(), options, 'deleteSheet', {
     structural,
     snapshots: [sheetSnapshotOf(map.sheet, sheet)],
     apply: (c) =>

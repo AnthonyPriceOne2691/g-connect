@@ -34,6 +34,7 @@ export function applyOptions(
     ...(operation.confirm === undefined ? {} : { confirm: operation.confirm }),
     ...(operation.expectRevision === undefined ? {} : { expectRevision: operation.expectRevision }),
     ...(resolved.entry?.aliases === undefined ? {} : { aliases: resolved.entry.aliases }),
+    ...(resolved.entry?.sheet === undefined ? {} : { registrySheet: resolved.entry.sheet }),
   };
 }
 

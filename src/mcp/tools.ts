@@ -332,6 +332,30 @@ const undoInput = {
   force: z.boolean().default(false).describe('Откатить, даже если документ правили после'),
 };
 
+/**
+ * Что сказать человеку после отката. Форма отчёта обязана совпадать с формой правки:
+ * живой прогон 2026-09-04 показал, что откат правки ВИДА отчитывался значением ячейки —
+ * значением, которого правка не касалась (урок L5).
+ */
+function undoHint(outcome: Awaited<ReturnType<typeof undoLast>>): string | undefined {
+  if (outcome.status === 'nothing_to_undo') {
+    return `Откатывать нечего. ${outcome.detail ?? ''}`.trim();
+  }
+  const values = outcome.restored.filter((r) => r.kind === 'value').length;
+  const formats = outcome.restored.filter((r) => r.kind === 'format').length;
+  const parts = [
+    ...(values === 0 ? [] : [`значения в ${values} ячейк(ах)`]),
+    ...(formats === 0 ? [] : [`вид ${formats} ячейк(и)`]),
+    ...(outcome.structureUndone === undefined ? [] : [outcome.structureUndone]),
+  ];
+  const what = parts.length === 0 ? 'ничего: список возвращённого пуст' : parts.join('; ');
+  const not =
+    outcome.notRestored === undefined || outcome.notRestored.length === 0
+      ? ''
+      : ` НЕ вернулось: ${outcome.notRestored.join('; ')}.`;
+  return `Откат выполнен. Вернулось — ${what}.${not} Скажи человеку именно это, а не «откачено».`;
+}
+
 export const gcUndo: ToolDefinition = {
   name: 'gc_undo',
   title: 'Откатить последнюю запись',
@@ -361,10 +385,7 @@ export const gcUndo: ToolDefinition = {
       target: { id: resolved.id, alias: resolved.alias },
       // Раньше здесь стояло «журнал по этой цели пуст» — утверждение, неверное в двух
       // из трёх случаев (всё уже откачено; записи с таким id нет). Причину называет ядро.
-      hint:
-        outcome.status === 'nothing_to_undo'
-          ? `Откатывать нечего. ${outcome.detail ?? ''}`.trim()
-          : undefined,
+      hint: undoHint(outcome),
     };
   },
 };

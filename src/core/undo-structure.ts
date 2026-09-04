@@ -200,7 +200,7 @@ async function restoreSnapshot(
   record: WriteRecord,
 ): Promise<UndoOutcome['restored']> {
   const snapshots = record.snapshots ?? [];
-  const restored: { a1: string; column: string; value: string | number | boolean | null }[] = [];
+  const restored: UndoOutcome['restored'][number][] = [];
   for (const snapshot of snapshots) {
     restored.push(...(await restoreOne(client, targetId, book, snapshot)));
   }
@@ -216,7 +216,7 @@ async function restoreOne(
 ): Promise<UndoOutcome['restored']> {
   const parsed = parseRange(snapshot.a1Range);
   const sheetId = book.sheets.find((s) => s.title === parsed.sheet)?.sheetId ?? 0;
-  const restored: { a1: string; column: string; value: string | number | boolean | null }[] = [];
+  const restored: UndoOutcome['restored'][number][] = [];
   const formats: SheetRequest[] = [];
   for (const [rowOffset, row] of snapshot.rows.entries()) {
     for (const [columnOffset, cell] of row.entries()) {
@@ -233,7 +233,13 @@ async function restoreOne(
           format: cell.format,
         });
       }
-      restored.push({ a1, column: columnLetter(columnIndex), value: cell.value });
+      restored.push({
+        a1,
+        column: columnLetter(columnIndex),
+        kind: cell.format === undefined ? 'value' : 'format',
+        value: cell.value,
+        ...(cell.format === undefined ? {} : { format: cell.format }),
+      });
     }
   }
   if (formats.length > 0) await client.batchUpdate(targetId, formats);

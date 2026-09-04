@@ -12,12 +12,13 @@
 
 import { gcError } from '../errors.js';
 import type { RangeSnapshot } from '../journal.js';
-import { contextOf, finishWrite, type Prepared } from './commit.js';
+import { contextOf, finishWrite } from './commit.js';
 import {
   anchorColumn,
   assertSnapshotBudget,
   columnAnchored,
   columnSnapshot,
+  prepared,
 } from './structure-support.js';
 import {
   columnLetter,
@@ -29,17 +30,6 @@ import {
   type SheetsClient,
 } from './types.js';
 import type { ApplyOutcome, PlannedChange, RowOptions, StructuralPlan } from './write-types.js';
-
-const empty = (): Prepared => prepared([]);
-
-/** Заготовка плана с оговорками: `notes` уезжают человеку в ответ, а не в комментарий. */
-const prepared = (notes: string[]): Prepared => ({
-  resolved: [],
-  assumptions: [],
-  notes,
-  questions: [],
-  touches: [],
-});
 
 export interface RangeInput {
   /** Откуда: имя колонки-источника. */
@@ -188,7 +178,7 @@ export async function autoFill(
     count: destination.rowCount,
     anchor: `колонка «${column.name}», образец из ${filled} строк`,
   };
-  return finishWrite(client, contextOf(map), [], empty(), options, 'autoFill', {
+  return finishWrite(client, contextOf(map), [], prepared(), options, 'autoFill', {
     structural,
     snapshots: [emptyTailSnapshot(map, column, destination)],
     apply: (c) =>
@@ -225,7 +215,7 @@ export async function duplicateSheet(
     title,
     count: cells,
   };
-  return finishWrite(client, contextOf(map), [], empty(), options, 'duplicateSheet', {
+  return finishWrite(client, contextOf(map), [], prepared(), options, 'duplicateSheet', {
     structural,
     apply: (c) =>
       c.batchUpdate(map.spreadsheetId, [{ kind: 'duplicateSheet', sheetId: map.sheetId, title }]),

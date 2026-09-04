@@ -86,6 +86,22 @@ try {
 
   const applySchema = (tools.result?.tools ?? []).find((t) => t.name === 'gc_apply')?.inputSchema;
   check('gc_apply объявляет confirm', applySchema?.properties?.confirm !== undefined);
+
+  // Сквозная проверка связи схемы транспорта с ядром. Живой прогон 2026-09-04 нашёл, что
+  // схема объявляла девять операций при двадцати одной в ядре: правки отклонялись ДО
+  // ядра, а правила уверяли агента, что они есть. В процессе такое не видно — схему входа
+  // применяет только сервер, — поэтому проверка живёт здесь, где говорят по протоколу.
+  const { OPERATION_NAMES } = await import('../dist/core/ops.js');
+  const declared = applySchema?.properties?.op?.enum ?? [];
+  const missing = OPERATION_NAMES.filter((name) => !declared.includes(name));
+  const extra = declared.filter((name) => !OPERATION_NAMES.includes(name));
+  check(
+    'протокол отдаёт ровно те операции, которые знает ядро',
+    missing.length === 0 && extra.length === 0,
+    `объявлено ${declared.length}, ядро знает ${OPERATION_NAMES.length}` +
+      `${missing.length === 0 ? '' : `, нет в схеме: ${missing.join(', ')}`}` +
+      `${extra.length === 0 ? '' : `, лишние: ${extra.join(', ')}`}`,
+  );
   // D-18: конверт цели виден там же, где права. Иначе о разрешении узнают по факту записи.
   check(
     'instructions объясняют конверт',

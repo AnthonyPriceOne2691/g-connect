@@ -7,6 +7,7 @@
  */
 
 import type { JournalSink } from './journal.js';
+import type { CellFormat } from './sheets/types.js';
 
 export type NothingToUndoReason = 'journal_empty' | 'all_undone' | 'id_not_found';
 
@@ -42,11 +43,22 @@ export interface UndoOptions {
 
 export interface UndoOutcome {
   readonly status: 'ok' | 'nothing_to_undo';
-  /** Что вернули: те же ячейки, но значения из снимка «до». */
+  /**
+   * Что вернули по каждой ячейке — и ЧТО ИМЕННО: значение или вид.
+   *
+   * Живой прогон 2026-09-04: откат правки вида отчитывался строкой
+   * `{a1, column, value: "Запущено"}` — то есть называл значение, которого правка не
+   * касалась, и молчал про вид, который единственно и восстановил. Человек читал это как
+   * возврат значения. Форма отчёта обязана совпадать с формой правки (урок L5).
+   */
   readonly restored: readonly {
     a1: string;
     column: string;
+    /** Что вернули: значение ячейки или её вид. */
+    kind: 'value' | 'format';
     value: string | number | boolean | null;
+    /** Заполнено у `kind: 'format'` — вид, который вернули. */
+    format?: CellFormat;
   }[];
   readonly undoneCorrelationId: string | null;
   readonly at: string | null;

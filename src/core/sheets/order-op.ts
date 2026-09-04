@@ -8,7 +8,7 @@
 
 import { gcError } from '../errors.js';
 import type { RangeSnapshot, SnapshotCell } from '../journal.js';
-import { contextOf, finishWrite, type Prepared } from './commit.js';
+import { contextOf, finishWrite } from './commit.js';
 import { rowsUnderCondition } from './rows.js';
 import {
   anchorText,
@@ -17,17 +17,10 @@ import {
   assertSnapshotBudget,
   columnAnchored,
   subjectOf,
+  prepared,
 } from './structure-support.js';
 import { columnLetter, type SheetData, type SheetMap, type SheetsClient } from './types.js';
 import type { ApplyOutcome, RowOptions, RowValues, StructuralPlan } from './write-types.js';
-
-const empty = (): Prepared => ({
-  resolved: [],
-  assumptions: [],
-  notes: [],
-  questions: [],
-  touches: [],
-});
 
 /**
  * Перемещение строк относительно другой строки (§6.2).
@@ -74,7 +67,7 @@ export async function moveRows(
     confirmPhrase: `перемещаю ${subjectOf(where)}`,
     confirmToken: subjectOf(where),
   };
-  return finishWrite(client, contextOf(map), [], empty(), options, 'moveRows', {
+  return finishWrite(client, contextOf(map), [], prepared(), options, 'moveRows', {
     structural,
     apply: (c) =>
       c.batchUpdate(map.spreadsheetId, [
@@ -129,7 +122,7 @@ export async function sortRange(
     confirmPhrase: `сортирую лист ${map.sheet} по колонке ${column.name}`,
     confirmToken: column.name,
   };
-  return finishWrite(client, contextOf(map), [], empty(), options, 'sortRange', {
+  return finishWrite(client, contextOf(map), [], prepared(), options, 'sortRange', {
     structural,
     snapshots: [sortSnapshot(map, data, rows)],
     apply: (c) =>

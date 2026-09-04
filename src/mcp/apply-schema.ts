@@ -8,20 +8,23 @@
 
 import { z } from 'zod';
 
+import { OPERATION_NAMES, type OperationName } from '../core/ops.js';
 import { targetArg } from './target-arg.js';
 
 export const applyInput = {
-  op: z.enum([
-    'appendRow',
-    'upsertRow',
-    'setCells',
-    'formatCells',
-    'findReplace',
-    'insertRows',
-    'insertColumns',
-    'addSheet',
-    'renameSheet',
-  ]),
+  /**
+   * Операции берутся ИЗ ЯДРА, а не перечисляются здесь.
+   *
+   * Живой прогон 2026-09-04 нашёл ровно эту дыру: рукописный список отставал от ядра на
+   * десять операций, схема транспорта отклоняла их до ядра, а `policy://rules` уверял
+   * агента, что они есть. Гейты молчали, потому что тесты звали ядро и типизированную
+   * разводку, а схему транспорта с ядром не сверял никто (урок L14: поле, которое одна
+   * сторона объявляет, а другая не заполняет, — дыра между двумя наборами оракулов).
+   *
+   * Приведение к непустому кортежу нужно `zod` и названо здесь: `OPERATION_NAMES`
+   * непуст по построению — он и есть источник правды о составе операций.
+   */
+  op: z.enum(OPERATION_NAMES as unknown as [OperationName, ...OperationName[]]),
   /** Превью файлом: широкую таблицу в терминале не читают (§13.3, ступень 0). */
   report: z.boolean().default(false).describe('Дополнительно записать превью HTML-файлом'),
   target: targetArg,

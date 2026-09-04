@@ -11,6 +11,7 @@ import { gcError } from '../errors.js';
 import type { RangeSnapshot, SnapshotCell } from '../journal.js';
 import { denyByRule, limitOf } from '../policy.js';
 import { needsClarification, resolveColumn } from '../resolver.js';
+import type { Prepared } from './commit.js';
 import { columnQuestion, clarify, rowsUnderCondition } from './rows.js';
 import { buildSheetData } from './map.js';
 import {
@@ -196,3 +197,17 @@ export async function freshData(client: SheetsClient, map: SheetMap): Promise<Sh
   const snapshot = await client.getSpreadsheet(map.spreadsheetId, { sheet: map.sheet });
   return buildSheetData(snapshot, { sheet: map.sheet, headerRow: map.headerRow });
 }
+
+/**
+ * Заготовка плана: пустая или с оговорками. `notes` уезжают человеку в ответ, а не в
+ * комментарий кода — поэтому заготовка одна на все структурные операции: гейт копипаста
+ * отклонил вторую копию, и он прав, иначе половина операций молчала бы там, где другая
+ * половина предупреждает.
+ */
+export const prepared = (notes: readonly string[] = []): Prepared => ({
+  resolved: [],
+  assumptions: [],
+  notes: [...notes],
+  questions: [],
+  touches: [],
+});

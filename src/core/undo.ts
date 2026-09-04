@@ -103,17 +103,24 @@ async function restoreChanges(
   targetId: string,
   sheetId: number,
   record: WriteRecord,
-): Promise<{ a1: string; column: string; value: string | number | boolean | null }[]> {
-  const restored: { a1: string; column: string; value: string | number | boolean | null }[] = [];
+): Promise<UndoOutcome['restored'][number][]> {
+  const restored: UndoOutcome['restored'][number][] = [];
   for (const change of [...record.changes].reverse()) {
     if (change.afterFormat === undefined) {
       await client.updateValues(targetId, change.a1, [[change.before]]);
-    } else {
-      await client.batchUpdate(targetId, [
-        { kind: 'format', sheetId, ...cellAt(change.a1), format: undoFormat(change) },
-      ]);
+      restored.push({ a1: change.a1, column: change.column, kind: 'value', value: change.before });
+      continue;
     }
-    restored.push({ a1: change.a1, column: change.column, value: change.before });
+    const format = undoFormat(change);
+    await client.batchUpdate(targetId, [{ kind: 'format', sheetId, ...cellAt(change.a1), format }]);
+    // Значение здесь идёт справочно и не менялось — поэтому `kind: 'format'` стоит рядом.
+    restored.push({
+      a1: change.a1,
+      column: change.column,
+      kind: 'format',
+      value: change.before,
+      format,
+    });
   }
   return restored;
 }
