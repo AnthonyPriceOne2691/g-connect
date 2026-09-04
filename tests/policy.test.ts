@@ -598,7 +598,10 @@ const probes: Record<string, () => Promise<void>> = {
           recent: () =>
             Promise.resolve([
               {
-                at: '2026-09-01T10:00:00.000Z',
+                // Время СВЕЖЕЕ намеренно: охранник свежести стоит раньше сверки ячеек, и
+                // с датой из прошлого проба проверяла бы не то правило, которое названа
+                // проверять (порядок ветвей — урок L11).
+                at: new Date().toISOString(),
                 account: 'default',
                 targetId: 'SHEET1',
                 alias: null,

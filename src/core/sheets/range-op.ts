@@ -92,7 +92,13 @@ async function pasteOperation(
   const paste = input.paste ?? 'all';
   const source = bodyRange(map, from, rows);
   const destination = bodyRange(map, to, rows);
-  const changes = pasteChanges(map, data, from, to, rows);
+  // У вырезания в плане ДВА прямоугольника: получатель и опустошаемый источник. Живой
+  // прогон 2026-09-04 показал, что источник в плане не виден вовсе — человек подтверждал
+  // половину правки, не видя второй.
+  const changes = [
+    ...pasteChanges(map, data, from, to, rows),
+    ...(op === 'cutRange' ? clearedChanges(map, data, from, rows) : []),
+  ];
   assertSnapshotBudget(changes.length * (op === 'cutRange' ? 2 : 1));
 
   const cut = op === 'cutRange';
@@ -114,13 +120,7 @@ async function pasteOperation(
     columnSnapshot(map, data, column.name, column.letter, { includeHeader: false });
   const snapshots = [body(to)];
   if (cut) snapshots.push(body(from));
-  const notes =
-    cut && paste !== 'all'
-      ? [
-          `Вырезание вычищает источник целиком, а переносит только «${paste}»: ` +
-            'остальное (вид, формулы) исчезнет и на получателе не появится. Откат вернёт.',
-        ]
-      : [];
+  const notes = pasteNotes({ cut, paste, from, to, data });
 
   return finishWrite(client, contextOf(map), changes, prepared(notes), options, structural.kind, {
     structural,
@@ -199,10 +199,13 @@ export async function duplicateSheet(
   if (title.trim().length === 0) {
     throw gcError('bad_request', { detail: 'Имя копии не может быть пустым.' });
   }
-  const known = [map.sheet, ...map.otherSheets.map((s) => s.title)];
-  if (known.includes(title)) {
+  const titles = await client.sheetTitles(map.spreadsheetId);
+  if (titles.includes(title)) {
     throw gcError('bad_request', {
-      detail: `Лист «${title}» в книге уже есть. Известные листы: ${known.join(', ')}.`,
+      detail:
+        `Лист «${title}» в книге уже есть. Листы книги: ${titles.join(', ')}. ` +
+        `Назови другое имя для копии — например «${title} 2».`,
+      cause: 'sheet_title_taken',
     });
   }
   // Число НЕПУСТЫХ ячеек, а не строк: им откат проверяет, что копию не трогали.
@@ -225,6 +228,22 @@ export async function duplicateSheet(
 /** Тело колонки как прямоугольник: от первой строки данных до последней. */
 function bodyRange(map: SheetMap, column: ColumnProfile, rows: number): DomainRange {
   return { row: map.headerRow + 1, column: column.index, rowCount: rows, columnCount: 1 };
+}
+
+/** Что исчезнет в источнике при вырезании: те же ячейки, но «значение → пусто». */
+function clearedChanges(
+  map: SheetMap,
+  data: SheetData,
+  from: ColumnProfile,
+  rows: number,
+): PlannedChange[] {
+  return Array.from({ length: rows }, (_unused, index) => ({
+    kind: 'set' as const,
+    a1: `${map.sheet}!${from.letter}${map.headerRow + 1 + index}`,
+    column: from.name,
+    before: data.rows[index]?.[from.name] ?? null,
+    after: null,
+  }));
 }
 
 /** Что изменится в получателе: человек видит «было → станет» по каждой ячейке. */
@@ -282,4 +301,53 @@ function columnPair(
     });
   }
   return { from: from.column, to: to.column };
+}
+
+/**
+ * Перенос в колонку со списком допустимых значений.
+ *
+ * Правило `values.enum-ask` требует спрашивать про значение вне списка — но там речь про
+ * значение, которое НАЗВАЛА модель. Здесь колонки называет человек, и отказ от переноса
+ * всей колонки был бы отказом от операции целиком. Поэтому не вопрос, а громкая оговорка
+ * с числом: названная непокрытость, найденная живым прогоном 2026-09-04.
+ */
+function enumWarning(to: ColumnProfile, data: SheetData, from: ColumnProfile): readonly string[] {
+  const allowed = to.enumValues;
+  if (allowed === null || allowed.length === 0) return [];
+  const offending = data.rows
+    .map((row) => row[from.name])
+    .filter((value) => value !== null && value !== undefined)
+    .map((value) => String(value))
+    .filter((value) => !allowed.includes(value));
+  if (offending.length === 0) return [];
+  const unique = [...new Set(offending)];
+  return [
+    `У колонки «${to.name}» есть список допустимых значений (${allowed.join(', ')}), и ` +
+      `${offending.length} переносимых значений в него не входят: ${unique.join(', ')}. ` +
+      'Проверка данных таблицы их пометит или отклонит — скажи это человеку до подтверждения.',
+  ];
+}
+
+/**
+ * Оговорки переноса: что теряется и что не влезает в список допустимых.
+ *
+ * Вынесено из операции по гейту сложности — и по делу: «что произойдёт» и «о чём
+ * предупредить» разные вопросы, а предупреждений тут два и оба нашлись живыми прогонами.
+ */
+function pasteNotes(input: {
+  cut: boolean;
+  paste: PasteKind;
+  from: ColumnProfile;
+  to: ColumnProfile;
+  data: SheetData;
+}): readonly string[] {
+  const { cut, paste, from, to, data } = input;
+  const lossy =
+    cut && paste !== 'all'
+      ? [
+          `Вырезание вычищает источник целиком, а переносит только «${paste}»: ` +
+            'остальное (вид, формулы) исчезнет и на получателе не появится. Откат вернёт.',
+        ]
+      : [];
+  return [...lossy, ...enumWarning(to, data, from)];
 }

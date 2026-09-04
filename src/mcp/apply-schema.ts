@@ -81,7 +81,14 @@ export const applyInput = {
     .enum(['all', 'values', 'format'])
     .optional()
     .describe('copyRange/cutRange: что переносить (Ctrl+Shift+V — values)'),
-  column: z.string().min(1).optional().describe('insertColumns/deleteColumns: колонка по имени'),
+  column: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Колонка по ИМЕНИ. Её едят insertColumns, deleteColumns, sortRange, copyRange, ' +
+        'cutRange и autoFill',
+    ),
   replace: z.string().optional().describe('findReplace: на что заменить'),
   matchCase: z.boolean().optional().describe('findReplace: учитывать регистр'),
   matchEntireCell: z.boolean().optional().describe('findReplace: совпадение по всей ячейке'),

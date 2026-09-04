@@ -330,6 +330,16 @@ export const gcApply: ToolDefinition = {
 const undoInput = {
   target: targetArg,
   force: z.boolean().default(false).describe('Откатить, даже если документ правили после'),
+  /**
+   * Живой прогон 2026-09-04: отказ «назови её id — gc-…» советовал то, чего нельзя было
+   * сделать — параметра для id в схеме не существовало. Совет без способа его исполнить
+   * хуже отсутствия совета.
+   */
+  record: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('id записи журнала (correlationId) — откатить именно её, а не последнюю'),
 };
 
 /**
@@ -372,6 +382,7 @@ export const gcUndo: ToolDefinition = {
     const outcome = await undoLast(client, resolved.id, deps.journalSource, {
       account: deps.account,
       force: input.force,
+      ...(input.record === undefined ? {} : { correlationId: input.record }),
       currentRevision: await deps.revision(resolved.id),
       readRevision: () => deps.revision(resolved.id),
       trash: async (fileId: string) => {

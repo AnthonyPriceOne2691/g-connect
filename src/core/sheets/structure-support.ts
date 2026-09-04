@@ -47,13 +47,17 @@ export function assertContiguous(rows: readonly number[]): void {
 }
 
 /** Бюджет снимка: не влез — отказ ДО записи, с обоими числами. */
-export function assertSnapshotBudget(cells: number): void {
+export function assertSnapshotBudget(cells: number, options: { estimate?: boolean } = {}): void {
   const max = limitOf('write.snapshot-max-cells', 2000);
   if (cells <= max) return;
+  // Оценка и точный счёт различаются словами: «по карте выходит ~N» честнее, чем «N»,
+  // когда сетку ещё не читали. Разница нашлась при починке отзывчивости после живого
+  // прогона: дешёвая проверка стоит ДО дорогого чтения книги.
+  const size = options.estimate === true ? `по карте листа выходит ~${cells}` : `${cells}`;
   denyByRule(
     'write.snapshot-max-cells',
-    `Снимок для отката — ${cells} ячеек, разрешено ${max}. Записи не было: правку, ` +
-      'которую нечем вернуть, ядро не делает. Сузь диапазон.',
+    `Снимок для отката: ${size} ячеек, разрешено ${max}. Записи не было: правку, ` +
+      'которую нечем вернуть, ядро не делает. Сузь диапазон или удали руками в интерфейсе.',
   );
 }
 

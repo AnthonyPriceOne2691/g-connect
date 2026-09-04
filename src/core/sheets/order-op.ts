@@ -67,7 +67,18 @@ export async function moveRows(
     confirmPhrase: `перемещаю ${subjectOf(where)}`,
     confirmToken: subjectOf(where),
   };
-  return finishWrite(client, contextOf(map), [], prepared(), options, 'moveRows', {
+  // План перемещения обязан сказать, ЧТО поедет: живой прогон 2026-09-04 показал пустой
+  // `changes` при требовании подтвердить название — то есть человеку предлагали
+  // подтвердить то, чего ему не показали. Значений перемещение не меняет, поэтому
+  // говорим порядком: какие строки и куда.
+  const moved = rows.map((row) => keyOf(data, map, row)).join(', ');
+  const anchorKey = keyOf(data, map, anchor);
+  const notes = [
+    `Поедет ${count === 1 ? 'строка' : `${count} строк`}: ${moved} — станет ` +
+      `${anchor < at ? 'выше' : 'ниже'} строки «${anchorKey}». Значения не меняются, ` +
+      'меняется порядок; откат вернёт строки на прежнее место.',
+  ];
+  return finishWrite(client, contextOf(map), [], prepared(notes), options, 'moveRows', {
     structural,
     apply: (c) =>
       c.batchUpdate(map.spreadsheetId, [
@@ -122,7 +133,21 @@ export async function sortRange(
     confirmPhrase: `сортирую лист ${map.sheet} по колонке ${column.name}`,
     confirmToken: column.name,
   };
-  return finishWrite(client, contextOf(map), [], prepared(), options, 'sortRange', {
+  // Что именно станет — план не обещает намеренно: сортирует Google, по своим правилам
+  // сравнения строк, и подставлять сюда собственный порядок значило бы обещать не то,
+  // что произойдёт. Зато план говорит, ЧТО поедет и чем это вернуть.
+  const current = data.rows
+    .slice(0, 5)
+    .map((row) => String(row[map.columns[0]?.name ?? column.name] ?? ''))
+    .join(', ');
+  const notes = [
+    `Порядок ${rows} строк изменится: сортировка по «${column.name}»` +
+      `${options.descending === true ? ' по убыванию' : ' по возрастанию'}. Сейчас первые ` +
+      `строки идут так: ${current}${rows > 5 ? ' …' : ''}. Итоговый порядок задаёт Google ` +
+      '(его правила сравнения), поэтому план его не обещает — но снимок в журнале ' +
+      'позволяет вернуть прежний порядок целиком.',
+  ];
+  return finishWrite(client, contextOf(map), [], prepared(notes), options, 'sortRange', {
     structural,
     snapshots: [sortSnapshot(map, data, rows)],
     apply: (c) =>
@@ -154,4 +179,12 @@ function sortSnapshot(map: SheetMap, data: SheetData, rows: number): RangeSnapsh
       }),
     ),
   };
+}
+
+/** Ключ строки словами: им человек узнаёт строку в плане, а не по номеру. */
+function keyOf(data: SheetData, map: SheetMap, rowNumber: number): string {
+  const index = rowNumber - map.headerRow - 1;
+  const first = map.columns[0]?.name;
+  const value = first === undefined ? undefined : data.rows[index]?.[first];
+  return value === undefined || value === null ? `строка ${rowNumber}` : String(value);
 }

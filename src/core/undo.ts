@@ -222,12 +222,14 @@ function assertRecent(record: WriteRecord, options: UndoOptions): void {
   const maxMinutes = limitOf('undo.recency-minutes', 60);
   const ageMinutes = (Date.now() - new Date(record.at).getTime()) / 60_000;
   if (ageMinutes <= maxMinutes) return;
-  throw gcError('revision_conflict', {
+  const touched = record.changes.map((c) => c.a1).join(', ');
+  throw gcError('undo_too_old', {
     detail:
       `Последняя неоткаченная запись сделана ${new Date(record.at).toLocaleString('ru-RU')} ` +
-      `(${Math.round(ageMinutes)} мин назад) и меняла ${record.changes.map((c) => c.a1).join(', ')}. ` +
-      'Откат без уточнения работает только на свежих записях: если нужна именно эта, ' +
-      `назови её id — ${record.correlationId}.`,
+      `(${Math.round(ageMinutes)} мин назад)${touched === '' ? '' : ` и меняла ${touched}`}` +
+      `${record.structure === undefined ? '' : ` (правка геометрии: ${record.structure.kind})`}. ` +
+      'Откат без уточнения работает только на свежих записях. Нужна именно эта — передай ' +
+      `её id в поле record: ${record.correlationId}.`,
     cause: 'undo_target_too_old',
   });
 }

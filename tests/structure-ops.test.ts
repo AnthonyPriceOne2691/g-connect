@@ -342,7 +342,10 @@ describe('G9, G9b — удаление листа: потеря названа �
       const { payload } = error as { payload: { cause?: string; detail: string } };
       expect(payload.cause).toBe('write.snapshot-max-cells');
       expect(payload.detail).toContain('2000');
-      expect(payload.detail).toContain('4202');
+      // Число — оценка по карте (строки × колонки), и текст это говорит: сетку на этом
+      // шаге ещё не читали, а отказ должен быть дешёвым (найдено живым прогоном).
+      expect(payload.detail).toContain('по карте листа');
+      expect(payload.detail).toContain('4200');
     }
   });
 
@@ -400,5 +403,93 @@ describe('находки живого прогона 2026-09-04', () => {
     const undone = await undoLast(client, 'SHEET', { recent: () => Promise.resolve(journalled) });
     expect(undone.restored[0]?.kind).toBe('format');
     expect(undone.restored[0]?.format).toMatchObject({ bold: false });
+  });
+});
+
+describe('находки враждебного прогона 2026-09-04', () => {
+  const target = { Проект: 'lash-try-on' };
+
+  it('чужой код плана на разрушающей правке даёт plan_mismatch, а не «одного „да“ мало»', async () => {
+    const client = new MutableSheetsClient(book());
+    const outcome = await deleteRows(client, buildSheetData(book()), target, {
+      dryRun: false,
+      confirm: 'ffffff',
+    });
+    // Раньше ответ был побуквенно тем же, что на строку «да»: человеку сообщали, что он
+    // сказал «да», хотя он передал код. На неразрушающем пути plan_mismatch работал.
+    expect(outcome.status).toBe('plan_mismatch');
+    expect(outcome.notes.join(' ')).toContain('ffffff');
+    expect(outcome.notes.join(' ')).toContain('lash-try-on');
+  });
+
+  it('подтверждение, не называющее предмет, отказывает с ЕГО текстом', async () => {
+    const client = new MutableSheetsClient(book());
+    const outcome = await deleteRows(client, buildSheetData(book()), target, {
+      dryRun: false,
+      confirm: 'ага давай',
+    });
+    expect(outcome.status).toBe('confirm_required');
+    expect(outcome.notes.join(' ')).toContain('«ага давай» предметом правки не называет');
+  });
+
+  it('вставка сверх бюджета изменений судится ПРАВИЛОМ, а не схемой транспорта', async () => {
+    const client = new MutableSheetsClient(book());
+    try {
+      await insertRows(client, buildSheetData(book()), { Проект: 'G connect' }, 500, {});
+      expect.unreachable('500 строк должны быть отклонены правилом');
+    } catch (error) {
+      const { payload } = error as { payload: { code: string; cause?: string; detail: string } };
+      expect(payload.code).toBe('policy_denied');
+      expect(payload.cause).toBe('write.max-changes');
+      expect(payload.detail).toContain('500');
+    }
+  });
+
+  it('занятое имя листа: список берётся из КНИГИ и предлагается свободное', async () => {
+    // Карта строится из усечённого снимка, поэтому её otherSheets пуст даже когда листов
+    // семь. Проверка обязана спрашивать книгу: живой прогон нашёл ровно это расхождение.
+    const client = new MutableSheetsClient(book());
+    try {
+      await addSheet(client, buildSheetData(book()), 'Инструкция', {});
+      expect.unreachable('занятое имя должно быть отклонено');
+    } catch (error) {
+      const { payload } = error as { payload: { cause?: string; detail: string } };
+      expect(payload.cause).toBe('sheet_title_taken');
+      expect(payload.detail).toContain('Инструкция');
+      expect(payload.detail).toContain('Назови другое имя');
+    }
+  });
+
+  it('карта усечённого чтения предупреждает, что список листов неполон', () => {
+    const partial = { ...book(), partial: true } as const;
+    const map = buildSheetData(partial).map;
+    expect(map.warnings.join(' ')).toContain('список других листов книги в этой карте неполон');
+  });
+
+  it('устаревшая запись отказывает своим кодом и называет поле для id', async () => {
+    const client = new MutableSheetsClient(book());
+    const old: WriteRecord = {
+      at: new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString(),
+      account: 'default',
+      targetId: 'SHEET',
+      alias: null,
+      sheet: 'Лист1',
+      op: 'upsertRow',
+      changes: [{ a1: 'Лист1!D3', column: 'Часы', before: 2, after: 3 }],
+      revisionBefore: null,
+      revisionAfter: null,
+      correlationId: 'gc-old',
+    };
+    await expect(
+      undoLast(client, 'SHEET', { recent: () => Promise.resolve([old]) }),
+    ).rejects.toMatchObject({ payload: { code: 'undo_too_old', cause: 'undo_target_too_old' } });
+    const failure = await undoLast(client, 'SHEET', {
+      recent: () => Promise.resolve([old]),
+    }).then(
+      () => null,
+      (error: unknown) => error as { payload: { detail: string } },
+    );
+    expect(failure?.payload.detail).toContain('record');
+    expect(failure?.payload.detail).toContain('gc-old');
   });
 });

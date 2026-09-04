@@ -261,16 +261,40 @@ function namedConfirmOutcome(
 ): ApplyOutcome | null {
   const token = base.structural?.confirmToken ?? '';
   const code = base.planId;
-  if (options.confirm !== undefined && namesTheSubject(options.confirm, token, code)) return null;
-  const phrase = base.structural?.confirmPhrase ?? token;
+  const given = options.confirm;
+  if (given !== undefined && namesTheSubject(given, token, code)) return null;
+
+  // Чужой код — это РАСХОЖДЕНИЕ, а не отсутствие подтверждения, и говорить о нём надо
+  // по-разному. Живой прогон 2026-09-04: разрушающий путь на код `ffffff` отвечал
+  // «одного „да“ недостаточно» человеку, который «да» не говорил, — а на неразрушающем
+  // пути `plan_mismatch` в это же время работал правильно.
+  const mismatch = given !== undefined && looksLikePlanCode(given);
   return {
-    status: 'confirm_required',
+    status: mismatch ? 'plan_mismatch' : 'confirm_required',
     ...base,
-    notes: [
-      ...base.notes,
-      `Записи не было. Подтверди правку, назвав её предмет: «${phrase}»` +
-        `${code === null ? '' : ` (или кодом плана ${code})`}. Одного «да» недостаточно.`,
-    ],
+    notes: [...base.notes, confirmNote(base, given, mismatch)],
     revisionAfter: null,
   };
 }
+
+/** Текст отказа: он разный для чужого кода, для «не назвал предмет» и для «не сказал ничего». */
+function confirmNote(
+  base: Omit<ApplyOutcome, 'status' | 'revisionAfter'>,
+  given: string | undefined,
+  mismatch: boolean,
+): string {
+  const phrase = base.structural?.confirmPhrase ?? base.structural?.confirmToken ?? '';
+  const code = base.planId ?? '—';
+  if (mismatch) {
+    return (
+      `Подтверждён код ${given ?? ''}, а у этого плана код ${code}. Записи не было. ` +
+      `Эта правка разрушающая: подтверди её, назвав предмет — «${phrase}» — или кодом плана ниже.`
+    );
+  }
+  const what =
+    given === undefined ? 'Подтверждения не было вовсе' : `«${given}» предметом правки не называет`;
+  return `Записи не было. Подтверди правку, назвав её предмет: «${phrase}» (или кодом плана ${code}). ${what}.`;
+}
+
+/** Похоже на код плана: шесть hex. Нужно, чтобы отличить чужой код от «да». */
+const looksLikePlanCode = (value: string): boolean => /^[0-9a-f]{6}$/i.test(value.trim());

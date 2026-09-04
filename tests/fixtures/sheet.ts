@@ -357,6 +357,10 @@ export class FakeSheetsClient implements SheetsClient {
     return this.data;
   }
 
+  async sheetTitles(): Promise<readonly string[]> {
+    return this.data.sheets.map((sheet) => sheet.title);
+  }
+
   async updateValues(
     _id: string,
     range: string,
@@ -398,6 +402,10 @@ export class MutableSheetsClient implements SheetsClient {
 
   async getSpreadsheet(): Promise<SpreadsheetSnapshot> {
     return this.data;
+  }
+
+  async sheetTitles(): Promise<readonly string[]> {
+    return this.data.sheets.map((sheet) => sheet.title);
   }
 
   async updateValues(

@@ -86,6 +86,14 @@ export interface SheetSnapshot {
 
 export interface SpreadsheetSnapshot {
   readonly id: string;
+  /**
+   * Снимок усечён: читали один лист, а не книгу.
+   *
+   * Живой прогон 2026-09-04 нашёл следствие: карта показывала `otherSheets: []` на книге
+   * из СЕМИ листов, потому что строилась из отфильтрованного снимка. Пустой список
+   * читается как «других листов нет» — и на нём же стояла проверка занятого имени листа.
+   */
+  readonly partial?: boolean;
   readonly title: string;
   readonly revisionId?: string;
   readonly sheets: readonly SheetSnapshot[];
@@ -317,6 +325,15 @@ export type SheetRequest =
 
 export interface SheetsClient {
   getSpreadsheet(id: string, options?: ReadOptions): Promise<SpreadsheetSnapshot>;
+  /**
+   * Только имена листов книги — без сетки.
+   *
+   * Отдельным методом, потому что проверка занятого имени листа не имеет права опираться
+   * на карту: карта строится из усечённого снимка, и её `otherSheets` пуст даже когда
+   * листов семь (живой прогон 2026-09-04). А полное чтение книги ради имён стоило бы
+   * десятков тысяч ячеек.
+   */
+  sheetTitles(id: string): Promise<readonly string[]>;
   /** Запись значений в A1-диапазон; `values` — как ввёл бы человек. */
   updateValues(id: string, range: string, values: readonly (readonly CellValue[])[]): Promise<void>;
   appendValues(id: string, range: string, values: readonly (readonly CellValue[])[]): Promise<void>;

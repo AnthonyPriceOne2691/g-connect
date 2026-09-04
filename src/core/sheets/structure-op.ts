@@ -12,6 +12,7 @@
  */
 
 import { gcError } from '../errors.js';
+import { assertChangeBudget } from '../policy.js';
 import type { RangeSnapshot, SnapshotCell } from '../journal.js';
 import { contextOf, finishWrite } from './commit.js';
 import { rowsUnderCondition } from './rows.js';
@@ -113,7 +114,7 @@ export async function addSheet(
 ): Promise<ApplyOutcome> {
   const map = data.map;
   assertTitle(title);
-  assertNoSuchSheet(map, title);
+  await assertTitleUnused(client, map, title);
   const structural: StructuralPlan = { kind: 'addSheet', sheet: title, title };
   return finishWrite(client, contextOf(map), [], prepared(), options, 'addSheet', {
     structural,
@@ -134,7 +135,7 @@ export async function renameSheet(
   if (title === map.sheet) {
     return finishWrite(client, contextOf(map), [], prepared(), options, 'renameSheet', {});
   }
-  assertNoSuchSheet(map, title);
+  await assertTitleUnused(client, map, title);
   const structural: StructuralPlan = {
     kind: 'renameSheet',
     sheet: map.sheet,
@@ -172,12 +173,21 @@ function insertDimension(
   ]);
 }
 
-/** Сколько вставляем: ноль — не правка, отрицательное — не операция. */
+/**
+ * Сколько вставляем: ноль — не правка, отрицательное — не операция, а слишком много судит
+ * ПРАВИЛО, а не схема транспорта.
+ *
+ * Живой прогон 2026-09-04: `count: 500` отказывал текстом схемы («Number must be less than
+ * or equal to 200») без имени правила, хотя и спека, и проба правила обещают
+ * `policy_denied` с числом. Схема осталась внешней границей, но судит здесь правило.
+ */
 function assertCount(count: number): void {
-  if (Number.isInteger(count) && count > 0) return;
-  throw gcError('bad_request', {
-    detail: `Сколько строк или колонок вставить — целое число больше нуля, а не ${count}.`,
-  });
+  if (!Number.isInteger(count) || count < 1) {
+    throw gcError('bad_request', {
+      detail: `Сколько строк или колонок вставить — целое число больше нуля, а не ${count}.`,
+    });
+  }
+  assertChangeBudget(count);
 }
 
 function assertTitle(title: string): void {
@@ -185,12 +195,27 @@ function assertTitle(title: string): void {
   throw gcError('bad_request', { detail: 'Имя листа не может быть пустым.' });
 }
 
-/** Имена листов в книге уникальны: коллизия — не догадка, а отказ со списком. */
-function assertNoSuchSheet(map: SheetMap, title: string): void {
-  const known = [map.sheet, ...map.otherSheets.map((s) => s.title)];
-  if (!known.includes(title)) return;
+/**
+ * Имена листов в книге уникальны: коллизия — не догадка, а отказ со списком И с
+ * предложением, что делать.
+ *
+ * Спрашивает КНИГУ, а не карту: карта строится из усечённого снимка, и её `otherSheets`
+ * пуст даже когда листов семь (живой прогон 2026-09-04). Цена — один дешёвый вызов без
+ * сетки.
+ */
+async function assertTitleUnused(
+  client: SheetsClient,
+  map: SheetMap,
+  title: string,
+): Promise<void> {
+  const titles = await client.sheetTitles(map.spreadsheetId);
+  if (!titles.includes(title)) return;
+  const free = `${title} 2`;
   throw gcError('bad_request', {
-    detail: `Лист «${title}» в книге уже есть. Известные листы: ${known.join(', ')}.`,
+    detail:
+      `Лист «${title}» в книге уже есть. Листы книги: ${titles.join(', ')}. ` +
+      `Назови другое имя — например «${titles.includes(free) ? `${title} (копия)` : free}».`,
+    cause: 'sheet_title_taken',
   });
 }
 
@@ -336,6 +361,10 @@ export async function deleteSheet(
   options: RowOptions = {},
 ): Promise<ApplyOutcome> {
   const map = data.map;
+  // Дешёвая оценка ДО полного чтения книги: у владельца лист — это 3800 ячеек, а книга
+  // ~28 000, и отказ по бюджету не должен стоить дорогого чтения. Живой прогон 2026-09-04
+  // получил на этом вызове 11–15 секунд, а один раз и вовсе таймаут.
+  assertSnapshotBudget(map.dataRowCount * Math.max(1, map.columns.length), { estimate: true });
   const book = await client.getSpreadsheet(map.spreadsheetId);
   if (book.sheets.length <= 1) {
     throw gcError('bad_request', {

@@ -249,6 +249,7 @@ export function toSpreadsheetSnapshot(
   data: sheets_v4.Schema$Spreadsheet,
   id: string,
   revisionId?: string,
+  partial = false,
 ): SpreadsheetSnapshot {
   const sheets = (data.sheets ?? []).map(toSheetSnapshot);
   if (sheets.length === 0) {
@@ -258,6 +259,7 @@ export function toSpreadsheetSnapshot(
     id,
     title: data.properties?.title ?? 'Таблица',
     ...(revisionId === undefined ? {} : { revisionId }),
+    ...(partial ? { partial: true } : {}),
     sheets,
   };
 }
@@ -314,7 +316,7 @@ export class GoogleSheetsClient implements SheetsClient {
         revisionId = undefined;
       }
 
-      return toSpreadsheetSnapshot(response.data, id, revisionId);
+      return toSpreadsheetSnapshot(response.data, id, revisionId, ranges !== undefined);
     } catch (error) {
       throw fromGoogleError(error, `Не удалось прочитать таблицу ${id}.`);
     }
@@ -348,6 +350,29 @@ export class GoogleSheetsClient implements SheetsClient {
    * `{ bold: true }` снял бы и выравнивание, и фон. Маска — не оптимизация, а разница между
    * «сделать жирным» и «сделать жирным, стереть остальное».
    */
+  /**
+   * Имена листов книги одним дешёвым вызовом: `fields` без сетки.
+   *
+   * Цена названа: это дополнительный запрос там, где раньше врала карта. Полное чтение
+   * книги ради имён стоило бы у владельца ~28 000 ячеек за проверку одного имени.
+   */
+  async sheetTitles(id: string): Promise<readonly string[]> {
+    try {
+      const response = await this.retry(() =>
+        this.sheets.spreadsheets.get({
+          spreadsheetId: id,
+          fields: 'sheets(properties(title))',
+        }),
+      );
+      return (response.data.sheets ?? []).flatMap((sheet) => {
+        const title = sheet.properties?.title;
+        return title === undefined || title === null ? [] : [title];
+      });
+    } catch (error) {
+      throw fromGoogleError(error, `Не удалось прочитать список листов ${id}.`);
+    }
+  }
+
   async batchUpdate(id: string, requests: readonly SheetRequest[]): Promise<void> {
     if (requests.length === 0) return;
     const body = requests.map((request) => toRequest(request));
