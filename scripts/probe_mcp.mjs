@@ -10,7 +10,9 @@
  *   node scripts/probe_mcp.mjs --live    # плюс превью на живой цели (нужен профиль)
  *
  * Живой режим НИЧЕГО не записывает: он берёт превью и проверяет, что код плана есть, а
- * запись без кода отклоняется.
+ * запись без кода отклоняется. Отказ судится операцией ВНЕ конверта цели: конвертные
+ * (auto.ops) владелец подписал идти без кода, для них «отказ без кода» — не свойство
+ * продукта. Если контур сломан и вставка прошла — проба сама откатывает её и краснеет.
  */
 
 import { spawn } from 'node:child_process';
@@ -122,11 +124,15 @@ try {
     const entry = (targets.targets ?? []).find((x) => x.alias === TARGET);
     const key = entry?.key?.[0] ?? map.columns?.[0]?.name;
     check('реестр объявляет ключ строки', typeof key === 'string', String(key));
+    // Значение превью уникально КАЖДОМУ прогону: проба со значением «как в таблице»
+    // получала no_change вместо плана (порядок веток L11) и зависела от того, что в
+    // ячейке живой таблицы сегодня. Внутри прогона значение одно — код плана стабилен.
+    const PROBE_NOTE = `проба кода плана ${new Date().toISOString()} — не записывается`;
     const preview = await callTool('gc_apply', {
       op: 'upsertRow',
       target: TARGET,
       key: { [key]: 'G connect' },
-      values: { Статус: 'Запущено' },
+      values: { 'Риски/комментарий': PROBE_NOTE },
     });
     check(
       'превью отдаёт код плана из шести символов',
@@ -143,7 +149,7 @@ try {
       op: 'upsertRow',
       target: TARGET,
       key: { [key]: 'G connect' },
-      values: { Статус: 'Запущено' },
+      values: { 'Риски/комментарий': PROBE_NOTE },
     });
     check(
       'два превью одной правки дают один код плана',
@@ -251,17 +257,30 @@ try {
       badRegex.cause ?? badRegex.code ?? '',
     );
 
+    // Отказ «без кода» судится операцией ВНЕ конверта. Прежний upsertRow здесь ошибался
+    // дважды: владелец подписал его в auto.ops — «без кода» для него законная запись, а
+    // не отказ (проба противоречила конверту и при несовпавшем значении ПИСАЛА бы в живую
+    // таблицу); а при совпавшем значении no_change приходил раньше любой проверки
+    // (порядок L11), и оракул зависел от состояния таблицы. У вставки строки «нечего
+    // менять» недостижимо, в конверт она не пускается правилами — статус детерминирован.
     const noConfirm = await callTool('gc_apply', {
-      op: 'upsertRow',
+      op: 'insertRows',
       target: TARGET,
-      key: { [key]: 'G connect' },
-      values: { Статус: 'Запущено' },
+      where: { [key]: 'G connect' },
+      count: 1,
       dryRun: false,
     });
+    const refused =
+      noConfirm.status === 'confirm_required' || noConfirm.raw?.includes('confirm_required');
+    if (!refused && noConfirm.status === 'ok') {
+      // Контур сломан и строка вставилась: вернуть таблицу и покраснеть, а не оставить след.
+      await callTool('gc_undo', { target: TARGET });
+    }
     check(
-      'запись без кода плана отклонена',
-      noConfirm.code === 'confirm_required' || noConfirm.raw?.includes('confirm_required'),
-      noConfirm.code ?? noConfirm.status ?? '',
+      'запись без кода плана отклонена (операция вне конверта)',
+      refused,
+      `status=${noConfirm.status ?? noConfirm.code ?? ''}` +
+        (noConfirm.status === 'ok' ? ' — строка вставилась, откачено gc_undo' : ''),
     );
   }
 } catch (error) {
