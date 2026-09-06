@@ -174,7 +174,10 @@ export async function writeCells(
 ): Promise<void> {
   for (const change of changes) {
     if (change.kind === 'format') continue;
-    await client.updateValues(map.spreadsheetId, change.a1, [[change.after]]);
+    // План обещал «станет пусто» — обещание исполняется: `null` в values-API Google
+    // значит «пропустить ячейку», и setCells с пустотой отвечал ok, ничего не записав
+    // (живой прогон 2026-09-06, LR-2). Пустая строка в USER_ENTERED очищает.
+    await client.updateValues(map.spreadsheetId, change.a1, [[change.after ?? '']]);
   }
   const formats = changes
     .filter((c) => c.kind === 'format' && c.afterFormat !== undefined)

@@ -26,7 +26,7 @@ import type {
 const cell = (value: CellValue, formula?: string): Cell =>
   formula === undefined ? { value } : { value, formula };
 
-const row = (...values: (CellValue | Cell)[]): Cell[] =>
+export const row = (...values: (CellValue | Cell)[]): Cell[] =>
   values.map((v) => (typeof v === 'object' && v !== null && 'value' in v ? v : cell(v)));
 
 export const STATUS_VALUES = ['в работе', 'готово', 'пауза'] as const;
@@ -434,6 +434,13 @@ export class MutableSheetsClient implements SheetsClient {
     const parsed = /^(.+)!([A-Z]+)(\d+)$/.exec(range);
     if (parsed === null) throw new Error(`фикстура не умеет диапазон ${range}`);
     const [, sheetTitle, letter, rowText] = parsed;
+    // Семантика Google values.update, а не «как удобно тесту»: `null` ПРОПУСКАЕТ ячейку
+    // (ничего не меняет), пустая строка ОЧИЩАЕТ (читается потом как пусто). Фейк писал
+    // null как очистку — и все оракулы отката были зелёными, пока живой откат сортировки
+    // смешивал две строки (LR-2, живой прогон 2026-09-06). Шов один — фейк обязан ему.
+    const incoming = values[0]?.[0] ?? null;
+    if (incoming === null) return;
+    const written: Cell = { value: incoming === '' ? null : incoming };
     const columnIndex =
       [...(letter ?? '')].reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
     const rowIndex = Number(rowText) - 1;
@@ -443,7 +450,7 @@ export class MutableSheetsClient implements SheetsClient {
       while (rows.length <= rowIndex) rows.push([]);
       const row = rows[rowIndex] as Cell[];
       while (row.length <= columnIndex) row.push({ value: null });
-      row[columnIndex] = { value: values[0]?.[0] ?? null };
+      row[columnIndex] = written;
       return { ...sheet, rows };
     });
     this.data = { ...this.data, sheets: next };

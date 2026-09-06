@@ -249,7 +249,11 @@ async function restoreOne(
       const rowNumber = parsed.row + rowOffset;
       const columnIndex = parsed.column + columnOffset;
       const a1 = `${parsed.sheet}!${columnLetter(columnIndex)}${rowNumber}`;
-      await client.updateValues(targetId, a1, [[cell.value]]);
+      // Пустота снимка — тоже значение. `null` в values-API Google означает «пропустить
+      // ячейку», а не «очистить»: откат сортировки заливал непустые ячейки, а пустые
+      // оставлял ЧУЖИМИ — строка после отката смешивала две (живой прогон 2026-09-06,
+      // LR-2). Пустая строка в USER_ENTERED ячейку очищает.
+      await client.updateValues(targetId, a1, [[cell.value ?? '']]);
       if (cell.format !== undefined) {
         formats.push({
           kind: 'format',

@@ -13,7 +13,13 @@ import { buildSheetData } from '../src/core/sheets/map.js';
 import { inverseMove, movedStart } from '../src/core/sheets/move-math.js';
 import { moveRows, sortRange } from '../src/core/sheets/order-op.js';
 import { undoLast } from '../src/core/undo.js';
-import { MutableSheetsClient, instructionSheet, reportSheet, snapshot } from './fixtures/sheet.js';
+import {
+  MutableSheetsClient,
+  instructionSheet,
+  reportSheet,
+  row,
+  snapshot,
+} from './fixtures/sheet.js';
 
 describe('арифметика перемещения', () => {
   it('пример из документации Google: блок [1,3) на 4 → 0,3,1,2,4', () => {
@@ -112,6 +118,44 @@ describe('G11, G12 — перемещение строк и сортировка
 
     const undone = await undoLast(client, 'SHEET', { recent: () => Promise.resolve(journalled) });
     expect(undone.structureUndone).toContain('снимка');
+  });
+
+  it('откат сортировки возвращает и ПУСТОТУ: чужое значение не остаётся в бывшей пустой ячейке', async () => {
+    // LR-2 (живой прогон 2026-09-06): `null` в values-API Google означает «пропустить
+    // ячейку», и откат заливал только непустые ячейки снимка — строка после отката
+    // смешивала свою половину с чужой. Фикстура нарочно с разной заполненностью и с
+    // порядком, который сортировка МЕНЯЕТ: прежний оракул жил на уже отсортированных
+    // строках одинаковой полноты и дефекта не видел.
+    const mixed = snapshot([
+      {
+        ...reportSheet(),
+        rows: [
+          row('Отчёт за сентябрь', null, null, null),
+          row('Дата', 'Проект', 'Статус', 'Часы'),
+          row('2026-09-01', 'zzz-хвост', 'в работе', 2),
+          row('2026-08-31', 'aaa-голова', null, 5),
+        ],
+      },
+      instructionSheet(),
+    ]);
+    const client = new MutableSheetsClient(mixed);
+    const journalled: WriteRecord[] = [];
+    await written(
+      (options) => sortRange(client, buildSheetData(mixed), 'Проект', options),
+      journalled,
+      'сортирую по Проект',
+    );
+    const sorted = (await client.getSpreadsheet()).sheets[0];
+    expect(sorted?.rows[2]?.[1]?.value).toBe('aaa-голова'); // порядок реально изменился
+    expect(sorted?.rows[3]?.[2]?.value).toBe('в работе');
+
+    await undoLast(client, 'SHEET', { recent: () => Promise.resolve(journalled) });
+    const after = (await client.getSpreadsheet()).sheets[0];
+    expect(after?.rows[2]?.[1]?.value).toBe('zzz-хвост');
+    expect(after?.rows[2]?.[2]?.value).toBe('в работе');
+    expect(after?.rows[3]?.[1]?.value).toBe('aaa-голова');
+    // Ради этой строки тест и существует: до правки здесь оставалось «в работе» от чужой.
+    expect(after?.rows[3]?.[2]?.value).toBeNull();
   });
 
   it('сортировать нечего при одной строке — отказ с числом', async () => {
