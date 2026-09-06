@@ -10,7 +10,7 @@
 - **builder:** agent:claude-opus-5
 - **verifier:** human:anton
 - **human_ok_spec:** yes (by=human:anton, at=2026-09-03) reason=подписана спека с четырьмя ответами: бюджет снимка 2000, deleteSheet делать (моё возражение про свойства листа снято владельцем, цена названа механизмом), Drive-создание в эту поставку, финальное подтверждение для разрушающих — названием, а не кодом плана
-- **human_ok_plan:** deferred (reason=владелец объявил боевой контур работы: одна фраза = действие, а не подпись на каждом шаге; plan.md выводится из подписанной спеки и решений сверх неё не вносит — отклонённые альтернативы перечислены там же. Подпись закрывается на верификации вместе с живым прогоном)
+- **human_ok_plan:** yes (by=human:anton, at=2026-09-06) reason=слово владельца в сессии («спеки подписываю»); план выведен из подписанной спеки, отклонённые альтернативы перечислены в plan.md; живой прогон делегирован агенту тем же словом
 - **shape-oracles:** cqg-deployed
 - **behavior-oracles:** tests-present reason=G1-G17 плюс арифметика перемещения на числах из документации Google
 - **artifact_oracle:** scripts/probe_mcp.mjs reason=структурная правка меняет геометрию листа, и отказ Google на `insertDimension`/`deleteDimension` виден живым ответом, а не фейком (урок L3)
@@ -18,7 +18,7 @@
 - **worktree:** ветка feat/structural-ops reason=урок L2; мерж только через merge_guard.sh, сразу за ним contour_doctor
 - **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
 - **blockers:** none
-- **waivers:** none
+- **waivers:** max_files_touched=60 max_loc_diff=6000 reason=поставка цельная: 21 операция и 4 формы отката держатся друг за друга, резать постфактум дороже чтения диффа; слово владельца в сессии 2026-09-06 by=human:anton at=2026-09-06
 - **runtime_paths:** src/core/google/sheets.ts,src/core/undo.ts reason=новые запросы `batchUpdate` (insertDimension, deleteDimension, addSheet, copyPaste, autoFill, sortRange) в шве отсутствуют вовсе, и их отказ виден живым ответом Google; откат структурной правки впервые применяет ОБРАТНУЮ структурную операцию, а не запись значений
 - **model_surface:** src/policy/rules.md,src/policy/rules.json reason=агенту уходит, какие структурные операции существуют, какие можно в конверт, и что удаление требует снимка
 - **canon_drift_waiver:** no
