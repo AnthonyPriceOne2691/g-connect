@@ -1,0 +1,29 @@
+# Active delivery status
+
+- **slug:** docs-coverage
+- **stack:** delivery@1.84, cqg@2.32, okf@absent
+- **class:** L
+- **kind:** feature
+- **repro_test:** n/a reason=kind=feature
+- **diagnosis:** n/a reason=kind=feature
+- **phase:** specify
+- **builder:** agent:claude-fable-5
+- **verifier:** human:anton
+- **human_ok_spec:** pending (reason=пять открытых вопросов в spec.md ждут решения владельца: бюджет снимка, конверт doc-целей, табы в объёме, insertInlineImage, порог подтверждения replaceAllText)
+- **human_ok_plan:** pending (reason=plan.md ещё не написан — после подписи спеки)
+- **shape-oracles:** cqg-deployed
+- **behavior-oracles:** planned reason=фаза specify: примеры T1–T22 в спеке, тесты появятся с первым слайсом
+- **artifact_oracle:** scripts/probe_mcp.mjs reason=существует и судит протокол собранного сервера уже сейчас; со слайсов уровня 3 расширяется doc-пробой — doc-операции в схеме против ядра (урок L21) и живое превью insertText без записи
+- **ci-oracles:** tooling
+- **worktree:** ветка feat/docs-coverage reason=урок L2; мерж только через merge_guard.sh, сразу за ним contour_doctor
+- **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
+- **blockers:** none
+- **waivers:** none
+- **runtime_paths:** planned reason=фаза specify, кода нет; ожидаемо src/core/google/docs.ts (новый шов documents.batchUpdate — отказ Google виден живым ответом, урок L3) и src/core/undo-docs.ts (текстовая форма отката впервые)
+- **model_surface:** src/policy/rules.md,src/policy/rules.json reason=агенту уйдёт, какие doc-операции существуют, какие кладутся в конверт, и что разрушающие требуют названия предмета
+- **canon_drift_waiver:** no
+- **baseline_growth_waiver:** no
+- **observability:** 1
+- **observe_signal:** правка живого документа откатывается полностью: текст возвращается со стилями, вставленное исчезает, массовая замена возвращает исходные вхождения, не трогая совпадения, бывшие до правки. Обратное тоже наблюдаем: отказ вместо порчи — doc_changed при ушедшей ревизии, отказ до записи при снимке больше бюджета
+- **observe_until:** 2026-12-01
+- **circuit_breakers:** defaults from AGENT_DELIVERY_HARNESS.md §3.4
