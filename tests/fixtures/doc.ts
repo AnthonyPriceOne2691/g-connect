@@ -12,8 +12,10 @@
  *   (названо в verify-report, а не спрятано).
  */
 
+import { gcError } from '../../src/core/errors.js';
 import type {
   DocParagraph,
+  DocRequest,
   DocSnapshot,
   DocTab,
   DocTable,
@@ -25,8 +27,8 @@ import type {
 /** Описание абзаца в билдере: строка или прогоны со стилем. */
 export interface ParagraphSpec {
   readonly runs: readonly DocTextRun[];
-  readonly style?: ParagraphNamedStyle;
-  readonly bulleted?: boolean;
+  readonly style?: ParagraphNamedStyle | undefined;
+  readonly bulleted?: boolean | undefined;
 }
 
 export const p = (text: string, style?: ParagraphNamedStyle): ParagraphSpec =>
@@ -172,11 +174,249 @@ export function forecastDoc(): DocSnapshot {
   });
 }
 
-/** Фейковый клиент: отдаёт снимок; запись появится слайсом 3 вместе с семантикой правок. */
+/* ------------------------------------------------------------------------------------ */
+/* Фейк записи: семантика ВЗЯТА ИЗ ДОКУМЕНТАЦИИ Docs API (урок L23 — не предполагать):   */
+/* - `writeControl.requiredRevisionId` не совпал → отказ, ни одной правки;               */
+/* - вставка сдвигает все последующие индексы ровно на length текста (UTF-16);           */
+/* - вставленный текст наследует стиль run'а СЛЕВА от точки вставки;                     */
+/* - `\n` внутри вставки создаёт новый абзац со стилем исходного;                        */
+/* - deleteContentRange не может частично пересекать таблицу — отказ;                    */
+/* - завершающий `\n` последнего абзаца сегмента удалить нельзя — отказ.                */
+/* ------------------------------------------------------------------------------------ */
+
+interface MutableParagraph {
+  runs: DocTextRun[];
+  style?: ParagraphNamedStyle | undefined;
+  bulleted?: boolean | undefined;
+}
+interface MutableTable {
+  table: string[][];
+}
+type MutableBlock = MutableParagraph | MutableTable;
+const isMutableTable = (b: MutableBlock): b is MutableTable => 'table' in b;
+
+interface MutableTab {
+  title: string;
+  blocks: MutableBlock[];
+}
+
+const toMutable = (spec: DocSpec): MutableTab[] =>
+  spec.tabs.map((tab) => ({
+    title: tab.title,
+    blocks: tab.content.map((item) =>
+      isTable(item)
+        ? { table: item.table.map((r) => [...r]) }
+        : { runs: item.runs.map((r) => ({ ...r })), style: item.style, bulleted: item.bulleted },
+    ),
+  }));
+
+/** Разрез списка прогонов по смещению в тексте абзаца. */
+function splitRuns(runs: readonly DocTextRun[], offset: number): [DocTextRun[], DocTextRun[]] {
+  const left: DocTextRun[] = [];
+  const right: DocTextRun[] = [];
+  let cursor = 0;
+  for (const run of runs) {
+    const end = cursor + run.text.length;
+    if (end <= offset) left.push({ ...run });
+    else if (cursor >= offset) right.push({ ...run });
+    else {
+      const cut = offset - cursor;
+      left.push({ ...run, text: run.text.slice(0, cut) });
+      right.push({ ...run, text: run.text.slice(cut) });
+    }
+    cursor = end;
+  }
+  return [left, right];
+}
+
+/** Прогоны → абзацы по `\n`; стиль абзаца у всех кусков — исходный (по документации). */
+function runsToParagraphs(runs: readonly DocTextRun[], base: MutableParagraph): MutableParagraph[] {
+  const out: MutableParagraph[] = [{ runs: [], style: base.style, bulleted: base.bulleted }];
+  for (const run of runs) {
+    const pieces = run.text.split('\n');
+    pieces.forEach((piece, i) => {
+      if (i > 0) out.push({ runs: [], style: base.style, bulleted: base.bulleted });
+      if (piece !== '') out[out.length - 1]!.runs.push({ ...run, text: piece });
+    });
+  }
+  return out;
+}
+
+/** Фейковый клиент: снимок пересобирается из мутабельных блоков после каждой правки. */
 export class FakeDocsClient implements DocsClient {
-  constructor(private snapshot: DocSnapshot) {}
+  private tabs: MutableTab[];
+  private revision: string;
+  private readonly base: DocSpec;
+  readonly applied: DocRequest[][] = [];
+
+  constructor(spec: DocSpec | DocSnapshot) {
+    const asSpec =
+      'tabs' in spec && spec.tabs.length > 0 && 'content' in (spec.tabs[0] ?? {})
+        ? (spec as DocSpec)
+        : snapshotToSpec(spec as DocSnapshot);
+    this.tabs = toMutable(asSpec);
+    this.base = asSpec;
+    // Ревизия исходного снимка сохраняется: gc_read обязан показывать её, а не выдумку.
+    this.revision = asSpec.revisionId ?? 'rev-1';
+  }
+
+  private bump(): void {
+    const numbered = /^rev-(\d+)$/.exec(this.revision);
+    this.revision = numbered === null ? `${this.revision}+1` : `rev-${Number(numbered[1]) + 1}`;
+  }
+
+  private spec(): DocSpec {
+    return {
+      ...this.base,
+      revisionId: this.revision,
+      tabs: this.tabs.map((tab) => ({
+        title: tab.title,
+        content: tab.blocks.map((b) =>
+          isMutableTable(b)
+            ? { table: b.table }
+            : { runs: b.runs, style: b.style, bulleted: b.bulleted },
+        ),
+      })),
+    };
+  }
 
   getDocument(): Promise<DocSnapshot> {
-    return Promise.resolve(this.snapshot);
+    return Promise.resolve(buildDoc(this.spec()));
   }
+
+  async batchUpdate(
+    _id: string,
+    requests: readonly DocRequest[],
+    requiredRevisionId: string,
+  ): Promise<{ revisionId: string }> {
+    if (requiredRevisionId !== this.revision) {
+      throw gcError('doc_changed', {
+        detail: 'Документ изменился между превью и записью — запись отклонена целиком.',
+      });
+    }
+    // Пакет применяется по порядку; каждый следующий запрос видит сдвинутые индексы.
+    for (const request of requests) {
+      if (request.kind === 'insertText') this.insertText(request);
+      else this.deleteRange(request);
+    }
+    this.applied.push([...requests]);
+    this.bump();
+    return { revisionId: this.revision };
+  }
+
+  /** Блоки таба с их границами в снимке ТЕКУЩЕГО состояния. */
+  private located(tabId: string): {
+    tab: MutableTab;
+    blocks: { block: MutableBlock; start: number; end: number }[];
+  } {
+    const snapshot = buildDoc(this.spec());
+    const index = snapshot.tabs.findIndex((t) => t.tabId === tabId);
+    const tab = this.tabs[index];
+    const built = snapshot.tabs[index];
+    if (tab === undefined || built === undefined) {
+      throw gcError('bad_request', { detail: `Таба ${tabId} нет.` });
+    }
+    let paragraphCursor = 0;
+    let tableCursor = 0;
+    const blocks = tab.blocks.map((block) => {
+      if (isMutableTable(block)) {
+        const t = built.tables[tableCursor];
+        tableCursor += 1;
+        // Абзацы ячеек в счётчик НЕ входят: он индексирует список body-абзацев.
+        return { block, start: t!.startIndex, end: t!.endIndex };
+      }
+      const p = built.paragraphs.filter((x) => x.inTable === undefined)[paragraphCursor];
+      paragraphCursor += 1;
+      return { block, start: p!.startIndex, end: p!.endIndex };
+    });
+    return { tab, blocks };
+  }
+
+  private insertText(request: Extract<DocRequest, { kind: 'insertText' }>): void {
+    const { tab, blocks } = this.located(request.tabId);
+    const hit = blocks.find(
+      (b) => !isMutableTable(b.block) && request.at >= b.start && request.at < b.end,
+    );
+    if (hit === undefined || isMutableTable(hit.block)) {
+      throw gcError('bad_request', {
+        detail: `Вставка по индексу ${request.at} не попадает в абзац (граница или таблица).`,
+      });
+    }
+    const paragraph = hit.block;
+    const offset = request.at - hit.start;
+    const [left, right] = splitRuns(paragraph.runs, offset);
+    // Стиль вставленного — стиль run'а слева от точки вставки (по документации).
+    const styleSource = left[left.length - 1] ?? paragraph.runs[0];
+    const inserted: DocTextRun =
+      styleSource?.style === undefined
+        ? { text: request.text }
+        : { text: request.text, style: styleSource.style };
+    const merged = [...left, inserted, ...right];
+    const replacement = runsToParagraphs(merged, paragraph);
+    tab.blocks.splice(tab.blocks.indexOf(paragraph), 1, ...replacement);
+  }
+
+  private deleteRange(request: Extract<DocRequest, { kind: 'deleteRange' }>): void {
+    const { tab, blocks } = this.located(request.tabId);
+    const { startIndex: s, endIndex: e } = request;
+    const touched = blocks.filter((b) => s < b.end && e > b.start);
+    if (touched.length === 0) {
+      throw gcError('bad_request', { detail: `Диапазон [${s}, ${e}) вне тела таба.` });
+    }
+    if (touched.some((b) => isMutableTable(b.block))) {
+      throw gcError('bad_request', {
+        detail: 'Диапазон пересекает таблицу — Google отклоняет такое удаление.',
+      });
+    }
+    const last = touched[touched.length - 1]!;
+    const lastBodyBlock = blocks[blocks.length - 1]!;
+    if (e >= last.end && last === lastBodyBlock) {
+      throw gcError('bad_request', {
+        detail: 'Завершающий перенос последнего абзаца сегмента удалить нельзя.',
+      });
+    }
+    const first = touched[0]!;
+    const firstParagraph = first.block as MutableParagraph;
+    const [keepLeft] = splitRuns(firstParagraph.runs, Math.max(0, s - first.start));
+    const tailSource = e >= last.end ? blocks[blocks.indexOf(last) + 1] : last;
+    const tailParagraph = tailSource!.block as MutableParagraph;
+    const [, keepRight] = splitRuns(tailParagraph.runs, Math.max(0, e - tailSource!.start));
+    const merged: MutableParagraph = {
+      runs: [...keepLeft, ...keepRight],
+      style: firstParagraph.style,
+      bulleted: firstParagraph.bulleted,
+    };
+    const from = tab.blocks.indexOf(first.block);
+    const to = tab.blocks.indexOf(tailSource!.block);
+    tab.blocks.splice(from, to - from + 1, merged);
+  }
+}
+
+/** Снимок → спека фейка: чтобы тесты могли стартовать с готового `DocSnapshot`. */
+function snapshotToSpec(snapshot: DocSnapshot): DocSpec {
+  return {
+    title: snapshot.title,
+    revisionId: snapshot.revisionId,
+    hasSuggestions: snapshot.hasSuggestions,
+    headerCount: snapshot.headerCount,
+    footerCount: snapshot.footerCount,
+    tabs: snapshot.tabs.map((tab) => {
+      const content: (ParagraphSpec | TableSpec)[] = [];
+      let tableCursor = 0;
+      let lastTableIndex = -1;
+      for (const p of tab.paragraphs) {
+        if (p.inTable !== undefined) {
+          if (p.inTable.table !== lastTableIndex) {
+            lastTableIndex = p.inTable.table;
+            const t = tab.tables[tableCursor];
+            tableCursor += 1;
+            content.push({ table: t!.cells.map((r) => [...r]) });
+          }
+          continue;
+        }
+        content.push({ runs: p.runs, style: p.namedStyle, bulleted: p.bulleted });
+      }
+      return { title: tab.title, content };
+    }),
+  };
 }

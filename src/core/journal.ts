@@ -6,6 +6,7 @@
  * системы, а гейт `di-indirection` был бы прав, что зависимость добывается, а не даётся.
  */
 
+import type { DocRangeSnapshot } from './docs/types.js';
 import type { CellFormat, SheetProperties } from './sheets/types.js';
 
 export interface JournalChange {
@@ -84,6 +85,15 @@ export interface SnapshotCell {
  * операция, чей снимок в бюджет не влез, обязана отказать ДО записи, а не записаться
  * необратимо.
  */
+export interface DocWriteDetail {
+  readonly tab: string;
+  /** Диапазон, который заняла правка (юниты ПОСЛЕ записи) — его откат и удаляет/сверяет. */
+  readonly startIndex: number;
+  readonly endIndex: number;
+  /** Снимок «до» для удалений и замен; у вставки его нет — откат удаляет вставленное. */
+  readonly snapshot?: DocRangeSnapshot;
+}
+
 export interface RangeSnapshot {
   readonly a1Range: string;
   readonly rows: readonly (readonly SnapshotCell[])[];
@@ -114,6 +124,12 @@ export interface WriteRecord {
    * второе поле рядом с первым значило бы держать одно понятие в двух местах.
    */
   readonly snapshots?: readonly RangeSnapshot[];
+  /**
+   * Текстовая форма записи (уровень 3): таб, затронутый диапазон ПОСЛЕ правки и снимок
+   * «до» — им откат восстанавливает текст со стилями. У табличных записей поля нет,
+   * прежние записи целы (та же совместимость, что у `structure`/`snapshots`, D-19).
+   */
+  readonly doc?: DocWriteDetail;
   /** Ревизия таблицы до и после записи — по ним undo решает, безопасен ли откат. */
   readonly revisionBefore: string | null;
   readonly revisionAfter: string | null;

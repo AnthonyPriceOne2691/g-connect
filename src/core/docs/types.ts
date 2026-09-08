@@ -103,7 +103,44 @@ export interface DocSnapshot {
   readonly footnoteCount: number;
 }
 
-/** Шов с Docs API. Пока только чтение; запись (`batchUpdate`) приходит слайсом 3. */
+/**
+ * Доменные запросы записи. Перечень растёт по слайсам; перевод в форму библиотеки —
+ * единственная обязанность `google/doc-requests.ts`.
+ */
+export type DocRequest =
+  | {
+      readonly kind: 'insertText';
+      readonly tabId: string;
+      /** UTF-16 позиция вставки в теле таба. */
+      readonly at: number;
+      readonly text: string;
+    }
+  | {
+      readonly kind: 'deleteRange';
+      readonly tabId: string;
+      readonly startIndex: number;
+      readonly endIndex: number;
+    };
+
+/** Снимок текста «до» — им откат восстанавливает удалённое, со стилями посегментно. */
+export interface DocRangeSnapshot {
+  readonly tab: string;
+  readonly startIndex: number;
+  readonly endIndex: number;
+  readonly runs: readonly DocTextRun[];
+}
+
+/** Шов с Docs API: чтение и запись под серверным предусловием. */
 export interface DocsClient {
   getDocument(id: string): Promise<DocSnapshot>;
+  /**
+   * Запись пакета правок. `requiredRevisionId` обязателен по построению: запись без
+   * предусловия в этом ядре не существует. Несовпадение ревизии — отказ `doc_changed`
+   * ОТ СЕРВЕРА, ни одной правки. Возвращает ревизию после записи.
+   */
+  batchUpdate(
+    id: string,
+    requests: readonly DocRequest[],
+    requiredRevisionId: string,
+  ): Promise<{ revisionId: string }>;
 }

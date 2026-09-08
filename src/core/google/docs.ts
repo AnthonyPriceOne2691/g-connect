@@ -14,10 +14,12 @@
 
 import { google, type docs_v1 } from 'googleapis';
 
-import { fromGoogleError } from '../errors.js';
+import { fromGoogleError, gcError } from '../errors.js';
+import { toDocRequest } from './doc-requests.js';
 import { authorizedClient, makeRetry, rgbToHex, type RetryReporter } from './support.js';
 import type {
   DocParagraph,
+  DocRequest,
   DocSnapshot,
   DocTab,
   DocTable,
@@ -296,4 +298,48 @@ export class GoogleDocsClient implements DocsClient {
       throw fromGoogleError(error, `Не удалось прочитать документ ${id}.`);
     }
   }
+
+  async batchUpdate(
+    id: string,
+    requests: readonly DocRequest[],
+    requiredRevisionId: string,
+  ): Promise<{ revisionId: string }> {
+    try {
+      const { data } = await this.retry(() =>
+        this.docs.documents.batchUpdate({
+          documentId: id,
+          requestBody: {
+            requests: requests.map(toDocRequest),
+            // Предусловие произносит сервер: ревизия ушла — отказ, ни одной правки.
+            writeControl: { requiredRevisionId },
+          },
+        }),
+      );
+      // ⚠ Допущение по документации, сверяется живым прогоном: ответ несёт writeControl
+      // с ревизией ПОСЛЕ записи. Пустая строка честнее выдумки, если поле не пришло.
+      return { revisionId: data.writeControl?.requiredRevisionId ?? '' };
+    } catch (error) {
+      throw docWriteError(error, id);
+    }
+  }
+}
+
+/**
+ * Отказ записи: несовпадение `requiredRevisionId` Google отдаёт кодом 400 с упоминанием
+ * ревизии в тексте. ⚠ Распознавание по тексту — допущение по документации (у отказа нет
+ * машинного кода причины), помечено для живого прогона: чек-лист обязан увидеть настоящий
+ * отказ и сверить формулировку.
+ */
+function docWriteError(error: unknown, id: string): unknown {
+  const message = String((error as { message?: unknown })?.message ?? error);
+  const status = Number(
+    (error as { status?: unknown; code?: unknown })?.status ?? (error as { code?: unknown })?.code,
+  );
+  if (status === 400 && /revision/i.test(message)) {
+    return gcError('doc_changed', {
+      detail: 'Документ изменился между превью и записью — Google отклонил запись целиком.',
+      cause: message,
+    });
+  }
+  return fromGoogleError(error, `Не удалось записать в документ ${id}.`);
 }

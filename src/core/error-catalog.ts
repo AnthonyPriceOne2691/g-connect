@@ -23,6 +23,7 @@ export type ErrorCode =
   | 'revision_conflict'
   | 'undo_too_old'
   | 'stale_value'
+  | 'doc_changed'
   | 'confirm_required'
   | 'plan_already_applied'
   | 'ambiguous_target'
@@ -169,6 +170,14 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, CatalogEntry>> = {
     retryable: false,
     action: 'reread_and_preview',
     actionLabel: 'Перечитать и показать заново',
+  },
+  doc_changed: {
+    // Отказ произносит СЕРВЕР Google (`writeControl.requiredRevisionId`), ядро только
+    // переводит его: документ ушёл вперёд между превью и записью — план надо перестроить.
+    title: 'Документ изменился после превью',
+    retryable: false,
+    action: 'reread_and_preview',
+    actionLabel: 'Перечитать документ и показать план заново',
   },
   ambiguous_target: {
     title: 'Непонятно, какой файл имеется в виду',
