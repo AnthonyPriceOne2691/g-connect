@@ -8,9 +8,9 @@
 import { google, type sheets_v4 } from 'googleapis';
 
 import { fromGoogleError, gcError } from '../errors.js';
+import { authorizedClient, makeRetry, rgbToHex } from './support.js';
 import { toRequest } from './requests.js';
 import { limitOf } from '../policy.js';
-import { withRetry } from '../retry.js';
 import type {
   Cell,
   CellFormat,
@@ -57,14 +57,8 @@ function cellValue(cell: sheets_v4.Schema$CellData): CellValue {
   );
 }
 
-/** `{red: 1, green: 0.5}` → `#ff8000`. Google отдаёт доли, человек вводит hex. */
 function toHex(color: sheets_v4.Schema$Color | undefined): string | undefined {
-  if (color === undefined || color === null) return undefined;
-  const part = (v: number | null | undefined): string =>
-    Math.round((v ?? 0) * 255)
-      .toString(16)
-      .padStart(2, '0');
-  return `#${part(color.red)}${part(color.green)}${part(color.blue)}`;
+  return color === undefined || color === null ? undefined : rgbToHex(color);
 }
 
 /** `LEFT|CENTER|RIGHT` из ответа → доменное выравнивание; всё остальное игнорируем. */
@@ -275,19 +269,14 @@ export class GoogleSheetsClient implements SheetsClient {
   private readonly sheets: sheets_v4.Sheets;
   private readonly drive;
   private readonly maxRows: number;
-  private readonly onRetry: GoogleSheetsClientOptions['onRetry'];
+  private readonly retry: ReturnType<typeof makeRetry>;
 
   constructor(options: GoogleSheetsClientOptions) {
-    const auth = new google.auth.OAuth2();
-    auth.setCredentials({ access_token: options.accessToken });
+    const auth = authorizedClient(options.accessToken);
     this.sheets = google.sheets({ version: 'v4', auth });
     this.drive = google.drive({ version: 'v3', auth });
     this.maxRows = options.maxRows ?? DEFAULT_MAX_ROWS;
-    this.onRetry = options.onRetry;
-  }
-
-  private retry<T>(fn: () => Promise<T>): Promise<T> {
-    return withRetry(fn, this.onRetry === undefined ? {} : { onRetry: this.onRetry });
+    this.retry = makeRetry(options.onRetry);
   }
 
   async getSpreadsheet(id: string, options: ReadOptions = {}): Promise<SpreadsheetSnapshot> {

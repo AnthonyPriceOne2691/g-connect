@@ -115,6 +115,7 @@ const harness = (over: Partial<ToolDeps> = {}): Harness => {
   const deps: ToolDeps = {
     account: 'default',
     sheets: () => Promise.resolve(client),
+    docs: () => Promise.reject(new Error('в этом сьюте doc-целей нет — см. mcp-doc-read.test.ts')),
     drive: () => Promise.resolve(drive),
     registry: () => Promise.resolve(registry),
     journal: async (record) => {

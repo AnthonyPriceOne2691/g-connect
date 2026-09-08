@@ -21,6 +21,7 @@ import { runCreate } from './run-create.js';
 import { limitOf, policyText, policyRules } from '../core/policy.js';
 import { listProfiles, profileStatus } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
+import { readDoc } from './read-doc.js';
 import type { ApplyOutcome } from '../core/sheets/rows.js';
 import { assertWritable, resolveTarget, type RegistryEntry } from '../core/targets.js';
 import { undoLast } from '../core/undo.js';
@@ -129,24 +130,50 @@ export const gcTargets: ToolDefinition = {
 
 const readInput = {
   target: targetArg,
-  mode: z.enum(['map', 'values']).default('map'),
-  sheet: z.string().min(1).optional().describe('Имя листа; без него берётся первый'),
-  headerRow: z.number().int().positive().optional().describe('Переопределить строку шапки'),
-  limit: z.number().int().positive().max(5000).optional().describe('Сколько строк вернуть'),
+  mode: z.enum(['map', 'values', 'text']).default('map'),
+  sheet: z.string().min(1).optional().describe('Таблица: имя листа; без него берётся первый'),
+  headerRow: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Таблица: переопределить строку шапки'),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(5000)
+    .optional()
+    .describe('Сколько строк или абзацев вернуть'),
+  tab: z.string().min(1).optional().describe('Документ: таб по заголовку; без него — единственный'),
+  fromParagraph: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Документ, mode=text: с какого № абзаца читать (номера — из mode=map)'),
 };
 
 export const gcRead: ToolDefinition = {
   name: 'gc_read',
   title: 'Прочитать документ или таблицу',
   description:
-    'Начинай отсюда. mode=map даёт дешёвую карту: листы, границы данных, имена колонок с ' +
-    'типами и допустимыми значениями, примеры строк и ПРЕДУПРЕЖДЕНИЯ (шапка выбрана ' +
-    'неуверенно, на листе два блока, объединённые ячейки). mode=values читает строки.',
+    'Начинай отсюда. mode=map даёт дешёвую карту и ПРЕДУПРЕЖДЕНИЯ: у таблицы — листы, ' +
+    'границы данных, имена колонок с типами и допустимыми значениями; у документа — табы, ' +
+    'оглавление с № абзацев и таблицы. mode=values читает строки таблицы, mode=text — ' +
+    'абзацы документа.',
   input: readInput,
   async handle(args, deps) {
     // Обработчик разбирает вход САМ: схема транспорта не единственная граница —
     // тесты и раннер вызывают инструменты напрямую, и там валидировать больше некому.
     const input = z.object(readInput).parse(args);
+    const resolved = await resolve(deps, input.target);
+    if (resolved.type === 'doc') return readDoc(deps, resolved.id, input);
+    if (input.mode === 'text') {
+      throw gcError('bad_request', {
+        detail: 'mode=text читает абзацы документа. У таблицы строки читает mode=values.',
+      });
+    }
     const { data } = await readSheet(deps, input.target, input.sheet, input.headerRow);
 
     if (input.mode === 'values') {

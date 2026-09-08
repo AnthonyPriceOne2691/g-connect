@@ -8,6 +8,7 @@
 
 import type { z } from 'zod';
 
+import type { DocsClient } from '../core/docs/types.js';
 import type { DriveClient } from '../core/google/drive.js';
 import type { GcErrorPayload } from '../core/errors.js';
 import type { JournalSink, JournalSource } from '../core/journal.js';
@@ -17,6 +18,7 @@ import type { Registry } from '../core/targets.js';
 export interface ToolDeps {
   readonly account: string;
   sheets(): Promise<SheetsClient>;
+  docs(): Promise<DocsClient>;
   drive(): Promise<DriveClient>;
   registry(): Promise<Registry>;
   readonly journal: JournalSink;

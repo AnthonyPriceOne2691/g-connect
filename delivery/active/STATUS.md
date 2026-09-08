@@ -6,7 +6,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=kind=feature
 - **diagnosis:** n/a reason=kind=feature
-- **phase:** tasks
+- **phase:** implement
 - **builder:** agent:claude-fable-5
 - **verifier:** human:anton
 - **human_ok_spec:** yes (by=human:anton, at=2026-09-08) reason=подписана с пятью ответами: бюджет снимка 20000 юнитов, конверт doc maxChars=1000, табы с первого слайса, insertInlineImage остаётся с ограничением «URL, доступный Google» (upload локальных скриншотов — отдельной поставкой следом; сценарий владельца — комбайн SEO-ТЗ), replaceAllText — подтверждение названием всегда
@@ -19,7 +19,7 @@
 - **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
 - **blockers:** none
 - **waivers:** none
-- **runtime_paths:** planned reason=фаза specify, кода нет; ожидаемо src/core/google/docs.ts (новый шов documents.batchUpdate — отказ Google виден живым ответом, урок L3) и src/core/undo-docs.ts (текстовая форма отката впервые)
+- **runtime_paths:** src/core/google/docs.ts reason=новый шов documents.* — отказ и форма ответа Google видны только живым ответом (урок L3); пока чтение, batchUpdate придёт слайсом 3
 - **model_surface:** src/policy/rules.md,src/policy/rules.json reason=агенту уйдёт, какие doc-операции существуют, какие кладутся в конверт, и что разрушающие требуют названия предмета
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no

@@ -15,6 +15,7 @@ import { fileJournal, fileJournalSource } from '../core/audit.js';
 import { defaultAccount } from '../core/env.js';
 import { googleExchanger } from '../core/google/exchanger.js';
 import { GoogleDriveClient } from '../core/google/drive.js';
+import { GoogleDocsClient } from '../core/google/docs.js';
 import { GoogleSheetsClient } from '../core/google/sheets.js';
 import { policyText } from '../core/policy.js';
 import { loadRegistry } from '../core/targets.js';
@@ -33,6 +34,7 @@ function deps(): ToolDeps {
   return {
     account: ACCOUNT,
     sheets: async () => new GoogleSheetsClient({ accessToken: await token() }),
+    docs: async () => new GoogleDocsClient({ accessToken: await token() }),
     drive: async () => new GoogleDriveClient(await token()),
     registry: () => loadRegistry(ACCOUNT),
     journal: fileJournal,
