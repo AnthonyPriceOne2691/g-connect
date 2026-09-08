@@ -9,6 +9,17 @@
  * предполагаем, а берём из документации и сверяем живым прогоном).
  */
 
+/** Операции над документом, которые видит контур разрешений (уровень 3). */
+export type DocOperationKind =
+  | 'appendText'
+  | 'insertText'
+  | 'deleteParagraph'
+  | 'deleteRange'
+  | 'deleteTable'
+  | 'deleteTableRow'
+  | 'deleteTableColumn'
+  | 'replaceAllText';
+
 /** Стиль текстового прогона — только то, что продукт умеет ставить и откатывать. */
 export interface DocTextStyle {
   readonly bold?: boolean;

@@ -12,10 +12,10 @@
  */
 
 import { newCorrelationId } from '../errors.js';
-import type { JournalSink, JournalSource, WriteRecord } from '../journal.js';
+import type { JournalSink, JournalSource } from '../journal.js';
 import { assertPlanNotApplied } from '../sheets/write-guards.js';
-import type { Question } from '../sheets/write-types.js';
-import { docPlanId, type DocPlanShape } from './plan.js';
+import type { EnvelopeDecision, OperationKind, Question } from '../sheets/write-types.js';
+import { docPlanId, type DocPlanChange, type DocPlanShape } from './plan.js';
 import { paragraphLabel, pickTab, resolveParagraph, resolveSection } from './selectors.js';
 import type { DocParagraph, DocSnapshot, DocTab, DocsClient } from './types.js';
 
@@ -47,6 +47,8 @@ export interface DocRunOptions {
   readonly journalSource?: JournalSource;
   readonly account?: string;
   readonly alias?: string | null;
+  /** Судья конверта (D-18): разрешает ли цель эту правку с первой фразы, мера — юниты. */
+  readonly authorize?: (op: OperationKind, charCount: number) => EnvelopeDecision;
 }
 
 export interface DocInsertRequest {
@@ -189,43 +191,89 @@ export async function runDocInsert(
   if (options.dryRun !== false) {
     return { status: 'preview', planId: code, changes, notes, questions: [] };
   }
+  return performInsert(
+    client,
+    snapshot,
+    tab.tabId,
+    { plan: plan.changes[0]!, code, changes, notes },
+    options,
+    request.op,
+  );
+}
+
+/**
+ * Кто разрешил запись: код плана или конверт (D-16/D-18). `null` — разрешена.
+ * Конверт судит юниты вставляемого текста (maxChars, владелец 2026-09-08).
+ */
+function permissionRefusal(
+  commit: InsertCommit,
+  options: DocRunOptions,
+  op: 'appendText' | 'insertText',
+  charCount: number,
+): DocApplyOutcome | null {
+  if (options.confirm === commit.code) return null;
+  const decision = options.authorize?.(op, charCount);
+  if (decision?.authorized === true) return null;
+  return {
+    status: 'confirm_required',
+    planId: commit.code,
+    changes: commit.changes,
+    notes: [
+      ...commit.notes,
+      ...(decision === undefined ? [] : [decision.reason]),
+      `Запись — по коду плана: подтверди «пиши ${commit.code}».`,
+    ],
+    questions: [],
+  };
+}
+
+interface InsertCommit {
+  readonly plan: DocPlanChange;
+  readonly code: string;
+  readonly changes: readonly DocChangePreview[];
+  readonly notes: readonly string[];
+}
+
+/** Фаза записи: разрешение (конверт или код), однократность, запись, журнал. */
+async function performInsert(
+  client: DocsClient,
+  snapshot: DocSnapshot,
+  tabId: string,
+  commit: InsertCommit,
+  options: DocRunOptions,
+  op: 'appendText' | 'insertText',
+): Promise<DocApplyOutcome> {
+  const { plan, code, changes, notes } = commit;
+  const inserted = `\n${plan.after ?? ''}`;
   // Однократность судится по ПЕРЕДАННОМУ коду и раньше сверки с новым планом: повтор
   // «пиши abc123» должен получить «уже записано», а не свежий код с приглашением
   // записать то же второй раз (тот же порядок, что у таблиц, B20/B21).
   await assertPlanNotApplied(options, options.confirm ?? null, snapshot.docId);
-  if (options.confirm !== code) {
-    return {
-      status: 'confirm_required',
-      planId: code,
-      changes,
-      notes: [...notes, `Запись — по коду плана: подтверди «пиши ${code}».`],
-      questions: [],
-    };
-  }
+  const refusal = permissionRefusal(commit, options, op, inserted.length);
+  if (refusal !== null) return refusal;
 
   const { revisionId: revisionAfter } = await client.batchUpdate(
     snapshot.docId,
-    [{ kind: 'insertText', tabId: tab.tabId, at, text: inserted }],
+    [{ kind: 'insertText', tabId, at: plan.startIndex, text: inserted }],
     snapshot.revisionId,
   );
 
   const correlationId = newCorrelationId();
   if (options.journal !== undefined) {
-    const record: WriteRecord = {
+    await options.journal({
       at: new Date().toISOString(),
       account: options.account ?? 'default',
       targetId: snapshot.docId,
       alias: options.alias ?? null,
-      sheet: tab.title,
-      op: request.op,
+      sheet: plan.tab,
+      op,
       changes: [],
-      doc: { tab: tab.title, startIndex: at, endIndex: at + inserted.length, inserted },
+      doc: { tab: plan.tab, startIndex: plan.startIndex, endIndex: plan.endIndex, inserted },
       revisionBefore: snapshot.revisionId,
       revisionAfter,
       correlationId,
       planId: code,
-    };
-    await options.journal(record);
+    });
   }
   return {
     status: 'ok',

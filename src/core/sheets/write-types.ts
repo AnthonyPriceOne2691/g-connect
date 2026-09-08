@@ -7,12 +7,21 @@
 import type { JournalSink, JournalSource, StructuralKind } from '../journal.js';
 import type { ResolveOptions } from '../resolver.js';
 import type { CellFormat, CellValue, SheetProperties } from './types.js';
+import type { DocOperationKind } from '../docs/types.js';
+
+export type { DocOperationKind };
 
 export type RowValues = Readonly<Record<string, unknown>>;
 
 /** Операции записи. Имя типа нужно и охранникам, и журналу. */
 export type OperationKind =
-  'appendRow' | 'upsertRow' | 'setCells' | 'formatCells' | 'findReplace' | StructuralKind;
+  | 'appendRow'
+  | 'upsertRow'
+  | 'setCells'
+  | 'formatCells'
+  | 'findReplace'
+  | StructuralKind
+  | DocOperationKind;
 
 /**
  * Структурная часть плана (D-19): превью правки геометрии описывает ПОЗИЦИИ, а не ячейки.

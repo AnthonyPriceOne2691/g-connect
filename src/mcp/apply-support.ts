@@ -43,7 +43,7 @@ export function applyOptions(
  * отказывает записи с названной причиной (`write.envelope-invalid`), а не выбирает
  * половину того, что человек имел в виду.
  */
-function envelopeJudge(resolved: ResolvedTarget): NonNullable<RowOptions['authorize']> {
+export function envelopeJudge(resolved: ResolvedTarget): NonNullable<RowOptions['authorize']> {
   const envelope = parseEnvelope(resolved.entry?.auto, resolved.alias);
   return (op, cellCount) => envelopeAuthorizes(envelope, op, cellCount);
 }

@@ -6,7 +6,7 @@
  * системы, а гейт `di-indirection` был бы прав, что зависимость добывается, а не даётся.
  */
 
-import type { DocRangeSnapshot } from './docs/types.js';
+import type { DocOperationKind, DocRangeSnapshot } from './docs/types.js';
 import type { CellFormat, SheetProperties } from './sheets/types.js';
 
 export interface JournalChange {
@@ -118,8 +118,7 @@ export interface WriteRecord {
     | 'formatCells'
     | 'findReplace'
     | StructuralKind
-    | 'appendText'
-    | 'insertText'
+    | DocOperationKind
     | 'undo';
   readonly changes: readonly JournalChange[];
   /** Геометрия: что сделали со строками, колонками, листами или файлами (D-19). */

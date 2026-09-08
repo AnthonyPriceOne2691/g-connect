@@ -43,6 +43,10 @@ export const ENVELOPE_OPS: readonly OperationKind[] = [
   'duplicateSheet',
   // Создание файла (`createFile`) тоже добавляющее и обратимое — в корзину.
   'createFile',
+  // Документы (уровень 3): вставка нового абзаца добавляет, ничего не трогая, и её
+  // откат удаляет ровно вставленный диапазон с охранником «не правлено».
+  'appendText',
+  'insertText',
 ];
 
 /**
@@ -74,10 +78,26 @@ export const NAMED_CONFIRM_OPS: readonly OperationKind[] = [
   'sortRange',
   // Вырезание уничтожает источник целиком, независимо от того, что переносит.
   'cutRange',
+  // Документы (уровень 3). Имена стоят здесь ДО реализации операций намеренно: это
+  // запретительный список, и конверт обязан отклонять их уже сейчас — с текстом D-20,
+  // а не «неизвестная операция». replaceAllText разрушающая решением владельца
+  // 2026-09-08: массовая правка, чей масштаб виден только числом в превью.
+  'deleteParagraph',
+  'deleteRange',
+  'deleteTable',
+  'deleteTableRow',
+  'deleteTableColumn',
+  'replaceAllText',
 ];
 
 /** Граница по числу ячеек, когда конверт её не назвал. */
 export const DEFAULT_MAX_CELLS = 50;
+
+/** Граница по UTF-16-юнитам для документов (подписано владельцем 2026-09-08). */
+export const DEFAULT_MAX_CHARS = 1000;
+
+/** Потолок maxChars: выше бюджета снимка граница ничего не значит. */
+const CHARS_CEILING = 20000;
 
 /** Потолок границы: выше общего бюджета изменений (`write.max-changes`) она бессмысленна. */
 const BUDGET_CEILING = 200;
@@ -87,6 +107,8 @@ export interface AutoEnvelope {
   readonly ops: readonly OperationKind[];
   /** Сколько ячеек за раз конверт разрешает тронуть без показа плана. */
   readonly maxCells: number;
+  /** Мера документов: сколько UTF-16-юнитов за раз (тексту ячейки мера не судья). */
+  readonly maxChars: number;
 }
 
 /**
@@ -100,8 +122,16 @@ export function parseEnvelope(raw: unknown, alias: string | null): AutoEnvelope 
   if (typeof raw !== 'object' || Array.isArray(raw)) {
     throw envelopeError(`Конверт ${where} должен быть объектом с полем ops.`);
   }
-  const { ops, maxCells } = raw as { ops?: unknown; maxCells?: unknown };
-  return { ops: parseOps(ops, where), maxCells: parseMaxCells(maxCells, where) };
+  const { ops, maxCells, maxChars } = raw as {
+    ops?: unknown;
+    maxCells?: unknown;
+    maxChars?: unknown;
+  };
+  return {
+    ops: parseOps(ops, where),
+    maxCells: parseMaxCells(maxCells, where),
+    maxChars: parseMaxChars(maxChars, where),
+  };
 }
 
 /**
@@ -149,6 +179,20 @@ function parseMaxCells(raw: unknown, where: string): number {
   return raw;
 }
 
+function parseMaxChars(raw: unknown, where: string): number {
+  if (raw === undefined) return DEFAULT_MAX_CHARS;
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1) {
+    throw envelopeError(`Конверт ${where}: maxChars — целое число больше нуля.`);
+  }
+  if (raw > CHARS_CEILING) {
+    throw envelopeError(
+      `Конверт ${where}: maxChars ${raw} больше бюджета снимка ` +
+        `(${CHARS_CEILING}, правило write.snapshot-max-chars) — такая граница ничего не значит.`,
+    );
+  }
+  return raw;
+}
+
 function envelopeError(detail: string): ReturnType<typeof gcError> {
   return gcError('bad_request', {
     detail: `${detail} Пока конверт не исправлен, запись по этой цели идёт через план и код.`,
@@ -163,6 +207,8 @@ function envelopeError(detail: string): ReturnType<typeof gcError> {
  * формульная колонка и нулевое изменение — не про разрешение, и внутри конверта они
  * работают как снаружи: ядро спрашивает, а не догадывается.
  */
+const DOC_OPS: ReadonlySet<OperationKind> = new Set(['appendText', 'insertText']);
+
 export function envelopeAuthorizes(
   envelope: AutoEnvelope | null,
   op: OperationKind,
@@ -187,12 +233,16 @@ export function envelopeAuthorizes(
         'правка показывается планом, и записать её можно кодом плана.',
     };
   }
-  if (cellCount > envelope.maxCells) {
+  // У документов мера — UTF-16-юниты (maxChars), у таблиц — ячейки (maxCells).
+  const limit = DOC_OPS.has(op) ? envelope.maxChars : envelope.maxCells;
+  const unit = DOC_OPS.has(op) ? 'юнитов текста' : 'ячеек';
+  const limitName = DOC_OPS.has(op) ? 'maxChars' : 'maxCells';
+  if (cellCount > limit) {
     return {
       authorized: false,
       reason:
-        `Правка трогает ${cellCount} ячеек, конверт цели разрешает ${envelope.maxCells} ` +
-        'за раз — показан план, записать можно кодом плана.',
+        `Правка трогает ${cellCount} ${unit}, конверт цели разрешает ${limit} ` +
+        `за раз (${limitName}) — показан план, записать можно кодом плана.`,
     };
   }
   return { authorized: true };

@@ -12,6 +12,7 @@ import { gcError } from '../core/errors.js';
 import { DOC_OPERATION_NAMES, type DocOperation, type Operation } from '../core/ops.js';
 import type { ResolvedTarget } from '../core/targets.js';
 import type { ToolDeps } from './deps.js';
+import { envelopeJudge } from './apply-support.js';
 
 export const isDocOperation = (operation: Operation): operation is DocOperation =>
   DOC_OPERATION_NAMES.includes(operation.op);
@@ -61,6 +62,7 @@ export async function runDocApply(
       alias: resolved.alias,
       ...(operation.confirm === undefined ? {} : { confirm: operation.confirm }),
       force: operation.force,
+      authorize: envelopeJudge(resolved),
     },
   );
   return { ...outcome, target: { id: resolved.id, alias: resolved.alias } };
