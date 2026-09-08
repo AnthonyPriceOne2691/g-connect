@@ -9,10 +9,10 @@
 - **phase:** specify
 - **builder:** agent:claude-fable-5
 - **verifier:** human:anton
-- **human_ok_spec:** pending (reason=пять открытых вопросов в spec.md ждут решения владельца: бюджет снимка, конверт doc-целей, табы в объёме, insertInlineImage, порог подтверждения replaceAllText)
+- **human_ok_spec:** yes (by=human:anton, at=2026-09-08) reason=подписана с пятью ответами: бюджет снимка 20000 юнитов, конверт doc maxChars=1000, табы с первого слайса, insertInlineImage остаётся с ограничением «URL, доступный Google» (upload локальных скриншотов — отдельной поставкой следом; сценарий владельца — комбайн SEO-ТЗ), replaceAllText — подтверждение названием всегда
 - **human_ok_plan:** pending (reason=plan.md ещё не написан — после подписи спеки)
 - **shape-oracles:** cqg-deployed
-- **behavior-oracles:** planned reason=фаза specify: примеры T1–T22 в спеке, тесты появятся с первым слайсом
+- **behavior-oracles:** planned reason=фаза specify: примеры P1–P22 в спеке, тесты появятся с первым слайсом
 - **artifact_oracle:** scripts/probe_mcp.mjs reason=существует и судит протокол собранного сервера уже сейчас; со слайсов уровня 3 расширяется doc-пробой — doc-операции в схеме против ядра (урок L21) и живое превью insertText без записи
 - **ci-oracles:** tooling
 - **worktree:** ветка feat/docs-coverage reason=урок L2; мерж только через merge_guard.sh, сразу за ним contour_doctor
