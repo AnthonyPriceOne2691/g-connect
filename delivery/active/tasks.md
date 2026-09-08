@@ -39,8 +39,10 @@
 ## Slice 4 — вставки и их откат
 
 - [x] T16: `appendText`, `insertText` (P1, P2) — сквозной контур done; `insertPageBreak` — следующим коммитом слайса
-- [ ] T17: `insertTable`, `insertTableRow`, `insertTableColumn` (P13) — перенесены в
-      слайс 6 к табличным удалениям: их откаты взаимны (вставка ↔ удаление)
+- [x] T17: `insertTable`, `insertTableRow`, `insertTableColumn` (P13) — сделаны в слайсе
+      6c вместе с удалениями (откаты взаимны); арифметика точек вставки в table-math с
+      оракулом согласия с фикстурой — живая сверка против Google заблокирована
+      needs_reauth и стоит в чек-листе прогона
 - [ ] T18: `insertInlineImage`: URL — в Google (P19), локальный путь/`file://` — отказ ДО
       Google с советом (P19b)
 - [x] T19: откат вставки удалением; охранник «вставленное не правлено» (P3, P4) —
@@ -59,7 +61,7 @@
 - [x] T24: `deleteParagraph`, `deleteRange`; бюджет `write.snapshot-max-chars=20000` ДО
       подтверждения (P18, правило с пробой в rules.json); откат — вставка снимка со
       стилями и видом абзацев (P8, P9); предусловие отката — ревизия записи
-- [ ] T25: `deleteTable`, `deleteTableRow`, `deleteTableColumn` со снимком ячеек (P14)
+- [x] T25: `deleteTable`, `deleteTableRow`, `deleteTableColumn` со снимком ячеек (P14): прогоны со стилями по ячейке, сетка у deleteTable; откат структурой + заполнение по вычисленным точкам с конца
 - [x] T26: `replaceText` по селектору (в конверте, мера — затрагиваемые юниты)
 - [x] T27: `replaceAllText`: снимок позиций и прогонов ДО правки, превью с числом
       вхождений по табам (P5), откат по снимку с конца — «Fluminense FC» до правки не

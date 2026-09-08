@@ -42,7 +42,13 @@ type Operation = Exclude<
       | 'deleteParagraph'
       | 'deleteRange'
       | 'replaceText'
-      | 'replaceAllText';
+      | 'replaceAllText'
+      | 'insertTable'
+      | 'insertTableRow'
+      | 'insertTableColumn'
+      | 'deleteTable'
+      | 'deleteTableRow'
+      | 'deleteTableColumn';
   }
 >;
 type Options = Parameters<typeof upsertRow>[4];

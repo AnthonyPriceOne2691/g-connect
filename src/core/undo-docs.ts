@@ -12,6 +12,7 @@ import { gcError, newCorrelationId } from './errors.js';
 import type { JournalSource, WriteRecord } from './journal.js';
 import { assertRecent, isUndoOutcome, pickUndoRecord } from './undo-shared.js';
 import type { UndoOptions, UndoOutcome } from './undo-types.js';
+import { tableUndoRequests } from './undo-docs-table.js';
 import type {
   DocRangeSnapshot,
   DocRequest,
@@ -193,41 +194,18 @@ async function restoreSnapshot(
       detail: `Таба «${doc.tab}» больше нет — восстанавливать некуда. Перечитай документ.`,
     });
   }
-  if (options.force !== true && record.revisionAfter !== snapshot.revisionId) {
-    throw gcError('revision_conflict', {
-      detail:
-        'После удаления документ правили: точка восстановления могла сдвинуться, и снимок ' +
-        `лёг бы не туда (ревизия записи ${record.revisionAfter ?? '—'}, сейчас ` +
-        `${snapshot.revisionId}). Осознанный откат — с force.`,
-      cause: 'doc_moved_after_delete',
-    });
-  }
-  const { revisionId: revisionAfter } = await client.batchUpdate(
-    targetId,
-    restoreRequests(tab.tabId, stored),
-    snapshot.revisionId,
-  );
-  if (options.journal !== undefined) {
-    await options.journal({
-      ...undoDocRecord(
-        record,
-        targetId,
-        snapshot.revisionId,
-        revisionAfter === '' ? null : revisionAfter,
-      ),
-      doc: { tab: doc.tab, startIndex: stored.startIndex, endIndex: stored.endIndex },
-    });
-  }
+  assertNotMoved(record, snapshot, options, 'doc_moved_after_delete', 'удаления');
   const paragraphs = (stored.paragraphs ?? []).length;
-  return {
-    status: 'ok',
-    restored: [],
-    undoneCorrelationId: record.correlationId,
-    at: record.at,
-    docUndone:
-      `Удалённое восстановлено в табе «${doc.tab}»: ${stored.endIndex - stored.startIndex} юнитов, ` +
+  return finishDocUndo(
+    client,
+    targetId,
+    record,
+    snapshot,
+    restoreRequests(tab.tabId, stored),
+    options,
+    `Удалённое восстановлено в табе «${doc.tab}»: ${stored.endIndex - stored.startIndex} юнитов, ` +
       `${paragraphs} абзац(ев), со стилями текста и видом абзацев (заголовки и списки — тоже).`,
-  };
+  );
 }
 
 /** Откат массовой замены: по снимку позиций, с конца, чтобы сдвиги не портили адреса. */
@@ -240,15 +218,7 @@ async function undoReplacements(
 ): Promise<UndoOutcome> {
   const doc = docOf(record);
   const replacements = doc.replacements ?? [];
-  if (options.force !== true && record.revisionAfter !== snapshot.revisionId) {
-    throw gcError('revision_conflict', {
-      detail:
-        'После замены документ правили: позиции вхождений могли сдвинуться, и откат вернул ' +
-        `бы текст не туда (ревизия записи ${record.revisionAfter ?? '—'}, сейчас ` +
-        `${snapshot.revisionId}). Осознанный откат — с force.`,
-      cause: 'doc_moved_after_replace',
-    });
-  }
+  assertNotMoved(record, snapshot, options, 'doc_moved_after_replace', 'замены');
   const requests: DocRequest[] = [];
   for (const item of [...replacements].reverse()) {
     const tab = snapshot.tabs.find((t) => t.title === item.tab);
@@ -272,6 +242,59 @@ async function undoReplacements(
       }),
     );
   }
+  return finishDocUndo(
+    client,
+    targetId,
+    record,
+    snapshot,
+    requests,
+    options,
+    `Замена откачена по снимку: ${replacements.length} вхождений вернулись к исходному ` +
+      'тексту со стилями; совпадения, бывшие в тексте до правки, не тронуты.',
+  );
+}
+
+/** Откат табличной правки: обратная структурная операция плюс возврат содержимого. */
+async function undoTable(
+  client: DocsClient,
+  targetId: string,
+  record: WriteRecord,
+  snapshot: DocSnapshot,
+  options: UndoOptions,
+): Promise<UndoOutcome> {
+  const doc = docOf(record);
+  assertNotMoved(record, snapshot, options, 'doc_moved_after_table', 'табличной правки');
+  const { requests, undone } = tableUndoRequests(snapshot, doc.tab, doc.table!);
+  return finishDocUndo(client, targetId, record, snapshot, requests, options, undone);
+}
+
+/** После правки документ трогали — точки отката могли сдвинуться (общий отказ). */
+export function assertNotMoved(
+  record: WriteRecord,
+  snapshot: DocSnapshot,
+  options: UndoOptions,
+  cause: string,
+  what: string,
+): void {
+  if (options.force === true || record.revisionAfter === snapshot.revisionId) return;
+  throw gcError('revision_conflict', {
+    detail:
+      `После ${what} документ правили: позиции могли сдвинуться (ревизия записи ` +
+      `${record.revisionAfter ?? '—'}, сейчас ${snapshot.revisionId}). Осознанный откат — с force.`,
+    cause,
+  });
+}
+
+/** Хвост любого doc-отката: запись под предусловием, след в журнале, ответ. */
+export async function finishDocUndo(
+  client: DocsClient,
+  targetId: string,
+  record: WriteRecord,
+  snapshot: DocSnapshot,
+  requests: readonly DocRequest[],
+  options: UndoOptions,
+  docUndone: string,
+): Promise<UndoOutcome> {
   const { revisionId: revisionAfter } = await client.batchUpdate(
     targetId,
     requests,
@@ -292,9 +315,7 @@ async function undoReplacements(
     restored: [],
     undoneCorrelationId: record.correlationId,
     at: record.at,
-    docUndone:
-      `Замена откачена по снимку: ${replacements.length} вхождений вернулись к исходному ` +
-      'тексту со стилями; совпадения, бывшие в тексте до правки, не тронуты.',
+    docUndone,
   };
 }
 
@@ -310,6 +331,9 @@ export async function undoDocLast(
   const doc = docOf(record);
 
   const snapshot = await client.getDocument(targetId);
+  if (doc.table !== undefined) {
+    return undoTable(client, targetId, record, snapshot, options);
+  }
   if (doc.replacements !== undefined) {
     return undoReplacements(client, targetId, record, snapshot, options);
   }

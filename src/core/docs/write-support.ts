@@ -6,11 +6,12 @@
  * расхождение всплыло бы только на откате (класс L14).
  */
 
-import { newCorrelationId } from '../errors.js';
+import { gcError, newCorrelationId } from '../errors.js';
+import { looksLikePlanCode, namesTheSubject } from '../sheets/write-guards.js';
 import type { DocWriteDetail, JournalSink, JournalSource } from '../journal.js';
 import type { EnvelopeDecision, OperationKind, Question } from '../sheets/write-types.js';
-import type { resolveParagraph } from './selectors.js';
-import type { DocRequest, DocSnapshot, DocsClient } from './types.js';
+import { paragraphLabel, resolveParagraph } from './selectors.js';
+import type { DocParagraph, DocRequest, DocSnapshot, DocTab, DocsClient } from './types.js';
 
 export interface DocChangePreview {
   readonly kind: string;
@@ -135,4 +136,89 @@ export async function commitDocWrite(
     revisionBefore: snapshot.revisionId,
     revisionAfter,
   };
+}
+
+export interface PlannedPreview {
+  readonly code: string;
+  readonly changes: readonly DocChangePreview[];
+  readonly notes: readonly string[];
+}
+
+/**
+ * Подтверждение названием (D-20) — один текст отказа на все разрушающие doc-операции:
+ * голое «да», чужой код и молчание различены (класс находки живого прогона 2026-09-04).
+ * `null` — предмет назван (или дан код этого плана), запись разрешена.
+ */
+export function namedConfirmRefusal(
+  given: string | undefined,
+  phrase: string,
+  planned: PlannedPreview,
+): DocApplyOutcome | null {
+  if (given !== undefined && namesTheSubject(given, phrase, planned.code)) return null;
+  const mismatch = given !== undefined && looksLikePlanCode(given);
+  return {
+    status: 'confirm_required',
+    planId: planned.code,
+    changes: planned.changes,
+    notes: [
+      ...planned.notes,
+      mismatch
+        ? `Подтверждён код ${given ?? ''}, а у этого плана код ${planned.code}. Записи не было. ` +
+          `Подтверди, назвав предмет: «${phrase}» — или кодом плана.`
+        : `Записи не было. Подтверди правку, назвав её предмет: «${phrase}» ` +
+          `(или кодом плана ${planned.code}). ${
+            given === undefined
+              ? 'Подтверждения не было вовсе'
+              : `«${given}» предметом правки не называет`
+          }.`,
+    ],
+    questions: [],
+  };
+}
+
+/**
+ * Кто разрешил НЕразрушающую запись: код плана или конверт (D-16/D-18), мера — юниты.
+ * `null` — разрешена.
+ */
+export function permissionRefusal(
+  options: DocRunOptions,
+  op: OperationKind,
+  charCount: number,
+  planned: PlannedPreview,
+): DocApplyOutcome | null {
+  if (options.confirm === planned.code) return null;
+  const decision = options.authorize?.(op, charCount);
+  if (decision?.authorized === true) return null;
+  return {
+    status: 'confirm_required',
+    planId: planned.code,
+    changes: planned.changes,
+    notes: [
+      ...planned.notes,
+      ...(decision === undefined ? [] : [decision.reason]),
+      `Запись — по коду плана: подтверди «пиши ${planned.code}».`,
+    ],
+    questions: [],
+  };
+}
+
+/**
+ * Body-абзац по селектору запроса: один ключ, найден, и НЕ в ячейке таблицы —
+ * общий шаг всех операций, адресующих абзац.
+ */
+export function resolveBodyParagraph(
+  tab: DocTab,
+  where: DocWhere | undefined,
+  inTableAdvice: string,
+): { paragraph: DocParagraph } | { outcome: DocApplyOutcome } {
+  const selector = narrowSelector(where ?? {});
+  if ('field' in selector) return { outcome: clarify([selector]) };
+  const hit = resolveParagraph(tab, selector);
+  if (hit.status === 'question') return { outcome: clarify([hit.question]) };
+  if (hit.value.inTable !== undefined) {
+    throw gcError('bad_request', {
+      detail: `Абзац ${paragraphLabel(hit.value)} живёт в ячейке таблицы — ${inTableAdvice}`,
+    });
+  }
+  return { paragraph: hit.value };
 }

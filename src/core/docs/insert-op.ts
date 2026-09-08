@@ -20,6 +20,7 @@ import {
   clarify,
   commitDocWrite,
   narrowSelector,
+  permissionRefusal,
   type DocApplyOutcome,
   type DocChangePreview,
   type DocRunOptions,
@@ -136,32 +137,6 @@ export async function runDocInsert(
   );
 }
 
-/**
- * Кто разрешил запись: код плана или конверт (D-16/D-18). `null` — разрешена.
- * Конверт судит юниты вставляемого текста (maxChars, владелец 2026-09-08).
- */
-function permissionRefusal(
-  commit: InsertCommit,
-  options: DocRunOptions,
-  op: 'appendText' | 'insertText',
-  charCount: number,
-): DocApplyOutcome | null {
-  if (options.confirm === commit.code) return null;
-  const decision = options.authorize?.(op, charCount);
-  if (decision?.authorized === true) return null;
-  return {
-    status: 'confirm_required',
-    planId: commit.code,
-    changes: commit.changes,
-    notes: [
-      ...commit.notes,
-      ...(decision === undefined ? [] : [decision.reason]),
-      `Запись — по коду плана: подтверди «пиши ${commit.code}».`,
-    ],
-    questions: [],
-  };
-}
-
 interface InsertCommit {
   readonly plan: DocPlanChange;
   readonly code: string;
@@ -184,7 +159,7 @@ async function performInsert(
   // «пиши abc123» должен получить «уже записано», а не свежий код с приглашением
   // записать то же второй раз (тот же порядок, что у таблиц, B20/B21).
   await assertPlanNotApplied(options, options.confirm ?? null, snapshot.docId);
-  const refusal = permissionRefusal(commit, options, op, inserted.length);
+  const refusal = permissionRefusal(options, op, inserted.length, commit);
   if (refusal !== null) return refusal;
 
   return commitDocWrite(

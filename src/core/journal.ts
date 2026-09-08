@@ -102,6 +102,24 @@ export interface DocWriteDetail {
    * правки; откат идёт с конца, чтобы сдвиги не портили адреса предыдущих.
    */
   readonly replacements?: readonly DocReplacement[];
+  /** Табличная правка: структура и снимок содержимого (уровень 3, слайс 6c). */
+  readonly table?: DocTableDetail;
+}
+
+/** Табличная правка документа: чем откатывать структуру и чем вернуть содержимое. */
+export interface DocTableDetail {
+  readonly kind:
+    'insertTable' | 'insertRow' | 'insertColumn' | 'deleteRow' | 'deleteColumn' | 'deleteTable';
+  /** startIndex таблицы ПОСЛЕ правки; у deleteTable — точка, где таблица стояла. */
+  readonly tableStart: number;
+  readonly rowIndex?: number;
+  readonly columnIndex?: number;
+  readonly rows?: number;
+  readonly columns?: number;
+  /** Снимок удалённой строки/колонки: по ячейке — прогоны со стилями. */
+  readonly cells?: readonly (readonly DocTextRun[])[];
+  /** Снимок всей удалённой таблицы: `grid[r][c]` — прогоны ячейки. */
+  readonly grid?: readonly (readonly (readonly DocTextRun[])[])[];
 }
 
 /** Одно вхождение массовой замены: текущий диапазон и снимок оригинала. */

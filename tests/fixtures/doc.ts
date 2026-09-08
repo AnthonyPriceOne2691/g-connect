@@ -80,18 +80,26 @@ function buildTab(spec: TabSpec, tabNumber: number): DocTab {
     cursor += 1; // вход в таблицу
     const tableNumber = tables.length + 1;
     const cells: string[][] = [];
+    const rowRanges: { startIndex: number; endIndex: number }[] = [];
+    const cellRanges: { startIndex: number; endIndex: number }[][] = [];
     item.table.forEach((rowSpec, r) => {
+      const rowStart = cursor;
       cursor += 1; // вход в строку
       const rowCells: string[] = [];
+      const rowCellRanges: { startIndex: number; endIndex: number }[] = [];
       rowSpec.forEach((cellText, c) => {
+        const cellStart = cursor;
         cursor += 1; // вход в ячейку
         pushParagraph(
           { runs: [{ text: cellText }] },
           { table: tableNumber, row: r + 1, column: c + 1 },
         );
+        rowCellRanges.push({ startIndex: cellStart, endIndex: cursor });
         rowCells.push(cellText);
       });
       cells.push(rowCells);
+      cellRanges.push(rowCellRanges);
+      rowRanges.push({ startIndex: rowStart, endIndex: cursor });
     });
     tables.push({
       index: tableNumber,
@@ -100,6 +108,8 @@ function buildTab(spec: TabSpec, tabNumber: number): DocTab {
       rows: item.table.length,
       columns: item.table[0]?.length ?? 0,
       cells,
+      rowRanges,
+      cellRanges,
     });
   }
 
@@ -300,7 +310,8 @@ export class FakeDocsClient implements DocsClient {
       else if (request.kind === 'deleteRange') this.deleteRange(request);
       else if (request.kind === 'updateTextStyle') this.updateTextStyle(request);
       else if (request.kind === 'updateParagraphStyle') this.updateParagraphStyle(request);
-      else this.setBullets(request);
+      else if (request.kind === 'setBullets') this.setBullets(request);
+      else this.applyTable(request);
     }
     this.applied.push([...requests]);
     this.bump();
@@ -341,6 +352,14 @@ export class FakeDocsClient implements DocsClient {
       (b) => !isMutableTable(b.block) && request.at >= b.start && request.at < b.end,
     );
     if (hit === undefined || isMutableTable(hit.block)) {
+      // Вставка внутрь ячейки таблицы — легальна для Google: адресуем по границам ячеек.
+      const inTable = blocks.find(
+        (b) => isMutableTable(b.block) && request.at > b.start && request.at < b.end,
+      );
+      if (inTable !== undefined && isMutableTable(inTable.block)) {
+        this.insertIntoCell(request, inTable.block, inTable.start);
+        return;
+      }
       throw gcError('bad_request', {
         detail: `Вставка по индексу ${request.at} не попадает в абзац (граница или таблица).`,
       });
@@ -357,6 +376,34 @@ export class FakeDocsClient implements DocsClient {
     const merged = [...left, inserted, ...right];
     const replacement = runsToParagraphs(merged, paragraph);
     tab.blocks.splice(tab.blocks.indexOf(paragraph), 1, ...replacement);
+  }
+
+  /** Вставка текста в ячейку: ячейка ищется по построенным границам текущего снимка. */
+  private insertIntoCell(
+    request: Extract<DocRequest, { kind: 'insertText' }>,
+    block: MutableTable,
+    blockStart: number,
+  ): void {
+    const snapshot = buildDoc(this.spec());
+    const built = snapshot.tabs.flatMap((t) => t.tables).find((t) => t.startIndex === blockStart);
+    if (built === undefined) {
+      throw gcError('bad_request', { detail: 'Таблица не найдена по границам.' });
+    }
+    for (let r = 0; r < built.cellRanges.length; r += 1) {
+      for (let c = 0; c < built.cellRanges[r]!.length; c += 1) {
+        const cell = built.cellRanges[r]![c]!;
+        // Текст ячейки живёт в [start+1, end): вход в ячейку — 1 юнит.
+        if (request.at >= cell.startIndex + 1 && request.at < cell.endIndex) {
+          const offset = request.at - (cell.startIndex + 1);
+          const current = block.table[r]![c]!;
+          block.table[r]![c] = current.slice(0, offset) + request.text + current.slice(offset);
+          return;
+        }
+      }
+    }
+    throw gcError('bad_request', {
+      detail: `Вставка по индексу ${request.at} попала между ячейками таблицы.`,
+    });
   }
 
   /** Абзацы, пересекающие диапазон, — общий шаг трёх стилевых запросов. */
@@ -409,12 +456,82 @@ export class FakeDocsClient implements DocsClient {
     }
   }
 
+  /** Табличные структурные запросы: мутируют блок-таблицу, найденную по startIndex. */
+  private applyTable(
+    request: Extract<
+      DocRequest,
+      {
+        kind:
+          | 'insertTable'
+          | 'insertTableRow'
+          | 'insertTableColumn'
+          | 'deleteTableRow'
+          | 'deleteTableColumn';
+      }
+    >,
+  ): void {
+    const { tab, blocks } = this.located(request.tabId);
+    if (request.kind === 'insertTable') {
+      const hit = blocks.find(
+        (b) => !isMutableTable(b.block) && request.at >= b.start && request.at < b.end,
+      );
+      if (hit === undefined) {
+        throw gcError('bad_request', { detail: `insertTable: позиция ${request.at} вне абзаца.` });
+      }
+      const empty: string[][] = Array.from({ length: request.rows }, () =>
+        Array.from({ length: request.columns }, () => ''),
+      );
+      tab.blocks.splice(tab.blocks.indexOf(hit.block) + 1, 0, { table: empty });
+      return;
+    }
+    const hit = blocks.find((b) => isMutableTable(b.block) && b.start === request.tableStart);
+    if (hit === undefined || !isMutableTable(hit.block)) {
+      throw gcError('bad_request', {
+        detail: `Таблицы со startIndex ${request.tableStart} нет — Google отклонил бы запрос.`,
+      });
+    }
+    const grid = hit.block.table;
+    if (request.kind === 'insertTableRow') {
+      const width = grid[0]?.length ?? 0;
+      grid.splice(
+        request.rowIndex + (request.below ? 1 : 0),
+        0,
+        Array.from({ length: width }, () => ''),
+      );
+    } else if (request.kind === 'insertTableColumn') {
+      for (const row of grid) row.splice(request.columnIndex + (request.right ? 1 : 0), 0, '');
+    } else if (request.kind === 'deleteTableRow') {
+      if (grid.length === 1) {
+        // По документации удаление единственной строки удаляет таблицу целиком.
+        tab.blocks.splice(tab.blocks.indexOf(hit.block), 1);
+        return;
+      }
+      grid.splice(request.rowIndex, 1);
+    } else {
+      if ((grid[0]?.length ?? 0) === 1) {
+        tab.blocks.splice(tab.blocks.indexOf(hit.block), 1);
+        return;
+      }
+      for (const row of grid) row.splice(request.columnIndex, 1);
+    }
+  }
+
   private deleteRange(request: Extract<DocRequest, { kind: 'deleteRange' }>): void {
     const { tab, blocks } = this.located(request.tabId);
     const { startIndex: s, endIndex: e } = request;
     const touched = blocks.filter((b) => s < b.end && e > b.start);
     if (touched.length === 0) {
       throw gcError('bad_request', { detail: `Диапазон [${s}, ${e}) вне тела таба.` });
+    }
+    // Полный охват ровно одной таблицы удаляет её целиком (так делает и Google).
+    if (
+      touched.length === 1 &&
+      isMutableTable(touched[0]!.block) &&
+      s <= touched[0]!.start &&
+      e >= touched[0]!.end
+    ) {
+      tab.blocks.splice(tab.blocks.indexOf(touched[0]!.block), 1);
+      return;
     }
     if (touched.some((b) => isMutableTable(b.block))) {
       throw gcError('bad_request', {

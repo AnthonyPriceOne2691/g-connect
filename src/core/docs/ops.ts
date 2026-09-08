@@ -76,3 +76,63 @@ export const replaceAllTextOp = z.object({
   replace: z.string(),
   ...docCommonFields,
 });
+
+/** Адресация таблицы: номер из карты или якорь по содержимому ячейки. */
+const tableFields = {
+  table: z.number().int().positive().optional(),
+  tableWithCell: z.string().min(1).optional(),
+};
+
+/** Вставить пустую таблицу после абзаца-якоря (без якоря — в конец таба). */
+export const insertTableOp = z.object({
+  op: z.literal('insertTable'),
+  rows: z.number().int().min(1).max(50),
+  columns: z.number().int().min(1).max(10),
+  where: docWhere.optional(),
+  ...docCommonFields,
+});
+
+/** Вставить строку рядом со строкой-якорем (по умолчанию — ниже). */
+export const insertTableRowOp = z.object({
+  op: z.literal('insertTableRow'),
+  rowWithCell: z.string().min(1).optional(),
+  rowIndex: z.number().int().positive().optional(),
+  below: z.boolean().default(true),
+  ...tableFields,
+  ...docCommonFields,
+});
+
+/** Вставить колонку рядом с колонкой-якорем (по умолчанию — правее). */
+export const insertTableColumnOp = z.object({
+  op: z.literal('insertTableColumn'),
+  columnTitle: z.string().min(1).optional(),
+  columnIndex: z.number().int().positive().optional(),
+  right: z.boolean().default(true),
+  ...tableFields,
+  ...docCommonFields,
+});
+
+/** Удалить строку. Разрушающая: подтверждение — названием предмета (D-20). */
+export const deleteTableRowOp = z.object({
+  op: z.literal('deleteTableRow'),
+  rowWithCell: z.string().min(1).optional(),
+  rowIndex: z.number().int().positive().optional(),
+  ...tableFields,
+  ...docCommonFields,
+});
+
+/** Удалить колонку. Разрушающая. */
+export const deleteTableColumnOp = z.object({
+  op: z.literal('deleteTableColumn'),
+  columnTitle: z.string().min(1).optional(),
+  columnIndex: z.number().int().positive().optional(),
+  ...tableFields,
+  ...docCommonFields,
+});
+
+/** Удалить таблицу целиком. Разрушающая. */
+export const deleteTableOp = z.object({
+  op: z.literal('deleteTable'),
+  ...tableFields,
+  ...docCommonFields,
+});

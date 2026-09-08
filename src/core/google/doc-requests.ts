@@ -53,6 +53,53 @@ const TRANSLATORS: Readonly<Record<DocRequest['kind'], Translator>> = {
       fields: 'namedStyleType',
     },
   }),
+  insertTable: (request: Extract<DocRequest, { kind: 'insertTable' }>) => ({
+    insertTable: {
+      location: { index: request.at, tabId: request.tabId },
+      rows: request.rows,
+      columns: request.columns,
+    },
+  }),
+  // Таблица и строка адресуются startIndex'ом таблицы — так велит Docs API
+  // (tableStartLocation); columnIndex у вставки строки не важен, ставим 0.
+  insertTableRow: (request: Extract<DocRequest, { kind: 'insertTableRow' }>) => ({
+    insertTableRow: {
+      tableCellLocation: {
+        tableStartLocation: { index: request.tableStart, tabId: request.tabId },
+        rowIndex: request.rowIndex,
+        columnIndex: 0,
+      },
+      insertBelow: request.below,
+    },
+  }),
+  insertTableColumn: (request: Extract<DocRequest, { kind: 'insertTableColumn' }>) => ({
+    insertTableColumn: {
+      tableCellLocation: {
+        tableStartLocation: { index: request.tableStart, tabId: request.tabId },
+        rowIndex: 0,
+        columnIndex: request.columnIndex,
+      },
+      insertRight: request.right,
+    },
+  }),
+  deleteTableRow: (request: Extract<DocRequest, { kind: 'deleteTableRow' }>) => ({
+    deleteTableRow: {
+      tableCellLocation: {
+        tableStartLocation: { index: request.tableStart, tabId: request.tabId },
+        rowIndex: request.rowIndex,
+        columnIndex: 0,
+      },
+    },
+  }),
+  deleteTableColumn: (request: Extract<DocRequest, { kind: 'deleteTableColumn' }>) => ({
+    deleteTableColumn: {
+      tableCellLocation: {
+        tableStartLocation: { index: request.tableStart, tabId: request.tabId },
+        rowIndex: 0,
+        columnIndex: request.columnIndex,
+      },
+    },
+  }),
   setBullets: (request: Extract<DocRequest, { kind: 'setBullets' }>) =>
     request.bulleted
       ? {

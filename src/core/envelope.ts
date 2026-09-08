@@ -49,6 +49,10 @@ export const ENVELOPE_OPS: readonly OperationKind[] = [
   'appendText',
   'insertText',
   'replaceText',
+  // Табличные вставки добавляют пустую структуру; откат удаляет её, пока она пуста.
+  'insertTable',
+  'insertTableRow',
+  'insertTableColumn',
 ];
 
 /**
@@ -209,7 +213,14 @@ function envelopeError(detail: string): ReturnType<typeof gcError> {
  * формульная колонка и нулевое изменение — не про разрешение, и внутри конверта они
  * работают как снаружи: ядро спрашивает, а не догадывается.
  */
-const DOC_OPS: ReadonlySet<OperationKind> = new Set(['appendText', 'insertText', 'replaceText']);
+const DOC_OPS: ReadonlySet<OperationKind> = new Set([
+  'appendText',
+  'insertText',
+  'replaceText',
+  'insertTable',
+  'insertTableRow',
+  'insertTableColumn',
+]);
 
 export function envelopeAuthorizes(
   envelope: AutoEnvelope | null,

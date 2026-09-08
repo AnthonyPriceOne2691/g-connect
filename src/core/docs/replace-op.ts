@@ -13,19 +13,16 @@
 
 import { gcError } from '../errors.js';
 import type { DocReplacement } from '../journal.js';
-import {
-  assertPlanNotApplied,
-  looksLikePlanCode,
-  namesTheSubject,
-} from '../sheets/write-guards.js';
+import { assertPlanNotApplied } from '../sheets/write-guards.js';
 import { docPlanId, type DocPlanChange, type DocPlanShape } from './plan.js';
-import { paragraphLabel, pickTab, resolveParagraph } from './selectors.js';
+import { paragraphLabel, pickTab } from './selectors.js';
 import { sliceParagraphRuns } from './delete-op.js';
 import type { DocParagraph, DocRequest, DocSnapshot, DocTab, DocsClient } from './types.js';
 import {
-  clarify,
   commitDocWrite,
-  narrowSelector,
+  namedConfirmRefusal,
+  permissionRefusal,
+  resolveBodyParagraph,
   type DocApplyOutcome,
   type DocChangePreview,
   type DocRunOptions,
@@ -195,9 +192,11 @@ function replaceRefusal(
   hitCount: number,
   built: BuiltReplacePlan,
 ): DocApplyOutcome | null {
-  return request.op === 'replaceAllText'
-    ? namedRefusal(options.confirm, request.find, built.code, built.changes, built.notes)
-    : envelopeRefusal(options, request, hitCount, built.code, built.changes, built.notes);
+  if (request.op === 'replaceAllText') {
+    return namedConfirmRefusal(options.confirm, `заменяю ${request.find}`, built);
+  }
+  const touched = hitCount * Math.max(request.find.length, request.replace.length);
+  return permissionRefusal(options, 'replaceText', touched, built);
 }
 
 function noHits(request: DocReplaceRequest, inTables: number): DocApplyOutcome {
@@ -268,66 +267,7 @@ function scopeOf(
     return { tabs, scope: undefined };
   }
   const tab = pickTab(snapshot, request.tab);
-  const selector = narrowSelector(request.where ?? {});
-  if ('field' in selector) return { outcome: clarify([selector]) };
-  const hit = resolveParagraph(tab, selector);
-  if (hit.status === 'question') return { outcome: clarify([hit.question]) };
-  if (hit.value.inTable !== undefined) {
-    throw gcError('bad_request', {
-      detail: `Абзац ${paragraphLabel(hit.value)} — в ячейке таблицы: эта операция ячейки не правит.`,
-    });
-  }
-  return { tabs: [tab], scope: hit.value };
-}
-
-/** replaceAllText подтверждается названием ВСЕГДА (решение владельца 2026-09-08). */
-function namedRefusal(
-  given: string | undefined,
-  find: string,
-  code: string,
-  changes: readonly DocChangePreview[],
-  notes: readonly string[],
-): DocApplyOutcome | null {
-  if (given !== undefined && namesTheSubject(given, find, code)) return null;
-  const mismatch = given !== undefined && looksLikePlanCode(given);
-  return {
-    status: 'confirm_required',
-    planId: code,
-    changes,
-    notes: [
-      ...notes,
-      mismatch
-        ? `Подтверждён код ${given ?? ''}, а у этого плана код ${code}. Записи не было. ` +
-          `Массовая замена подтверждается названием: «заменяю ${find}» — или кодом плана.`
-        : `Записи не было. Массовая замена подтверждается названием предмета: «заменяю ${find}» ` +
-          `(или кодом плана ${code}).`,
-    ],
-    questions: [],
-  };
-}
-
-/** `replaceText`: код плана или конверт; мера — затрагиваемые юниты. */
-function envelopeRefusal(
-  options: DocRunOptions,
-  request: DocReplaceRequest,
-  hitCount: number,
-  code: string,
-  changes: readonly DocChangePreview[],
-  notes: readonly string[],
-): DocApplyOutcome | null {
-  if (options.confirm === code) return null;
-  const touched = hitCount * Math.max(request.find.length, request.replace.length);
-  const decision = options.authorize?.('replaceText', touched);
-  if (decision?.authorized === true) return null;
-  return {
-    status: 'confirm_required',
-    planId: code,
-    changes,
-    notes: [
-      ...notes,
-      ...(decision === undefined ? [] : [decision.reason]),
-      `Запись — по коду плана: подтверди «пиши ${code}».`,
-    ],
-    questions: [],
-  };
+  const resolved = resolveBodyParagraph(tab, request.where, 'эта операция ячейки не правит.');
+  if ('outcome' in resolved) return resolved;
+  return { tabs: [tab], scope: resolved.paragraph };
 }

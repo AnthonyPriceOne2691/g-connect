@@ -239,3 +239,94 @@ export function pickTab(snapshot: DocSnapshot, wanted: string | undefined): DocT
     detail: `В документе ${snapshot.tabs.length} табов — назови tab. Есть: ${titles}.`,
   });
 }
+
+/** Строка таблицы: по содержимому ячейки или 1-based номеру. Возврат — 0-based. */
+export function resolveTableRow(
+  table: DocTable,
+  selector: { readonly rowWithCell?: string | undefined; readonly rowIndex?: number | undefined },
+): Resolved<number> {
+  if (selector.rowIndex !== undefined) {
+    if (selector.rowIndex >= 1 && selector.rowIndex <= table.rows) return ok(selector.rowIndex - 1);
+    return ask({
+      field: 'rowIndex',
+      reason: 'no_match',
+      detail: `Строки № ${selector.rowIndex} нет: в таблице их ${table.rows}.`,
+      candidates: [],
+      available: [],
+    });
+  }
+  const wanted = normalizeName(selector.rowWithCell ?? '');
+  if (wanted === '') {
+    return ask({
+      field: 'row',
+      reason: 'no_match',
+      detail: 'Скажи, какая строка: содержимым ячейки (rowWithCell) или номером (rowIndex).',
+      candidates: [],
+      available: [],
+    });
+  }
+  const label = (r: number): string => `№ ${r + 1}: ${table.cells[r]!.join(' | ')}`;
+  const hits = table.cells
+    .map((row, r) => ({ row, r }))
+    .filter(({ row }) => row.some((cell) => normalizeName(cell).includes(wanted)));
+  if (hits.length === 1) return ok(hits[0]!.r);
+  return ask({
+    field: 'rowWithCell',
+    reason: hits.length === 0 ? 'no_match' : 'ambiguous',
+    detail:
+      hits.length === 0
+        ? `Строки с «${selector.rowWithCell}» в таблице нет.`
+        : `«${selector.rowWithCell}» найдено в ${hits.length} строках — уточни.`,
+    candidates: (hits.length === 0 ? table.cells.map((_, r) => ({ r })) : hits)
+      .slice(0, 10)
+      .map(({ r }) => label(r)),
+    available: [],
+  });
+}
+
+/** Колонка таблицы: по заголовку из первой строки или 1-based номеру. Возврат — 0-based. */
+export function resolveTableColumn(
+  table: DocTable,
+  selector: {
+    readonly columnTitle?: string | undefined;
+    readonly columnIndex?: number | undefined;
+  },
+): Resolved<number> {
+  if (selector.columnIndex !== undefined) {
+    if (selector.columnIndex >= 1 && selector.columnIndex <= table.columns) {
+      return ok(selector.columnIndex - 1);
+    }
+    return ask({
+      field: 'columnIndex',
+      reason: 'no_match',
+      detail: `Колонки № ${selector.columnIndex} нет: в таблице их ${table.columns}.`,
+      candidates: [],
+      available: [],
+    });
+  }
+  const header = table.cells[0] ?? [];
+  const wanted = normalizeName(selector.columnTitle ?? '');
+  if (wanted === '') {
+    return ask({
+      field: 'column',
+      reason: 'no_match',
+      detail: 'Скажи, какая колонка: заголовком из первой строки (columnTitle) или номером.',
+      candidates: [],
+      available: header.map((h) => h),
+    });
+  }
+  const hits = header
+    .map((cell, c) => ({ cell, c }))
+    .filter(({ cell }) => normalizeName(cell) === wanted);
+  if (hits.length === 1) return ok(hits[0]!.c);
+  return ask({
+    field: 'columnTitle',
+    reason: hits.length === 0 ? 'no_match' : 'ambiguous',
+    detail:
+      hits.length === 0
+        ? `Колонки «${selector.columnTitle}» в шапке таблицы нет.`
+        : `Заголовок «${selector.columnTitle}» у ${hits.length} колонок — уточни номером.`,
+    candidates: header.map((h, c) => `№ ${c + 1}: ${h}`),
+    available: header.map((h) => h),
+  });
+}

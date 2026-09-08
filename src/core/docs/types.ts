@@ -19,7 +19,10 @@ export type DocOperationKind =
   | 'deleteTable'
   | 'deleteTableRow'
   | 'deleteTableColumn'
-  | 'replaceAllText';
+  | 'replaceAllText'
+  | 'insertTable'
+  | 'insertTableRow'
+  | 'insertTableColumn';
 
 /** Стиль текстового прогона — только то, что продукт умеет ставить и откатывать. */
 export interface DocTextStyle {
@@ -76,6 +79,11 @@ export interface DocParagraph {
   readonly hasInlineObject?: boolean;
 }
 
+export interface DocCellRange {
+  readonly startIndex: number;
+  readonly endIndex: number;
+}
+
 export interface DocTable {
   /** Порядковый № таблицы в табе, с 1. */
   readonly index: number;
@@ -85,6 +93,10 @@ export interface DocTable {
   readonly columns: number;
   /** Плоский текст ячеек: `cells[row][column]`, абзацы ячейки через `\n`. */
   readonly cells: readonly (readonly string[])[];
+  /** Границы строк таблицы — адресация вставки/удаления строк. */
+  readonly rowRanges: readonly DocCellRange[];
+  /** Границы ячеек `cellRanges[row][column]` — адресация текста внутри ячейки. */
+  readonly cellRanges: readonly (readonly DocCellRange[])[];
 }
 
 export interface DocTab {
@@ -153,6 +165,41 @@ export type DocRequest =
       readonly startIndex: number;
       readonly endIndex: number;
       readonly bulleted: boolean;
+    }
+  | {
+      readonly kind: 'insertTable';
+      readonly tabId: string;
+      /** Позиция вставки; таблица встаёт СЛЕДУЮЩИМ блоком после абзаца с этой точкой. */
+      readonly at: number;
+      readonly rows: number;
+      readonly columns: number;
+    }
+  | {
+      readonly kind: 'insertTableRow';
+      readonly tabId: string;
+      /** startIndex таблицы — так её адресует Docs API. */
+      readonly tableStart: number;
+      readonly rowIndex: number;
+      readonly below: boolean;
+    }
+  | {
+      readonly kind: 'insertTableColumn';
+      readonly tabId: string;
+      readonly tableStart: number;
+      readonly columnIndex: number;
+      readonly right: boolean;
+    }
+  | {
+      readonly kind: 'deleteTableRow';
+      readonly tabId: string;
+      readonly tableStart: number;
+      readonly rowIndex: number;
+    }
+  | {
+      readonly kind: 'deleteTableColumn';
+      readonly tabId: string;
+      readonly tableStart: number;
+      readonly columnIndex: number;
     };
 
 /** Абзац внутри снимка: где начинается (юниты от начала снимка) и чем был. */

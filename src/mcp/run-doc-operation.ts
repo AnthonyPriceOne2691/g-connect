@@ -8,6 +8,7 @@
 import { runDocDelete } from '../core/docs/delete-op.js';
 import { runDocInsert, type DocApplyOutcome } from '../core/docs/insert-op.js';
 import { runDocReplace } from '../core/docs/replace-op.js';
+import { runDocTable } from '../core/docs/table-op.js';
 import { undoDocLast } from '../core/undo-docs.js';
 import type { UndoOutcome } from '../core/undo-types.js';
 import { gcError } from '../core/errors.js';
@@ -59,7 +60,7 @@ export async function runDocApply(
   return { ...outcome, target: { id: resolved.id, alias: resolved.alias } };
 }
 
-/** Разводка по doc-операциям — соответствие, а не логика (как HANDLERS таблиц). */
+/** Разводка по doc-операциям — соответствие семейств, а не логика. */
 function dispatchDocOperation(
   client: Awaited<ReturnType<ToolDeps['docs']>>,
   snapshot: Awaited<ReturnType<Awaited<ReturnType<ToolDeps['docs']>>['getDocument']>>,
@@ -69,49 +70,48 @@ function dispatchDocOperation(
   switch (operation.op) {
     case 'appendText':
     case 'insertText':
-      return runDocInsert(
-        client,
-        snapshot,
-        {
-          op: operation.op,
-          text: operation.text,
-          tab: operation.tab,
-          ...(operation.op === 'appendText'
-            ? { afterHeading: operation.afterHeading }
-            : { where: operation.where }),
-        },
-        options,
-      );
+      return runDocInsert(client, snapshot, insertRequest(operation), options);
     case 'deleteParagraph':
     case 'deleteRange':
-      return runDocDelete(
-        client,
-        snapshot,
-        {
-          op: operation.op,
-          tab: operation.tab,
-          ...(operation.op === 'deleteParagraph'
-            ? { where: operation.where }
-            : { startIndex: operation.startIndex, endIndex: operation.endIndex }),
-        },
-        options,
-      );
+      return runDocDelete(client, snapshot, deleteRequest(operation), options);
     case 'replaceText':
     case 'replaceAllText':
-      return runDocReplace(
-        client,
-        snapshot,
-        {
-          op: operation.op,
-          tab: operation.tab,
-          find: operation.find,
-          replace: operation.replace,
-          ...(operation.op === 'replaceText' ? { where: operation.where } : {}),
-        },
-        options,
-      );
+      return runDocReplace(client, snapshot, replaceRequest(operation), options);
+    default:
+      return runDocTable(client, snapshot, operation, options);
   }
 }
+
+const insertRequest = (
+  operation: Extract<DocOperation, { op: 'appendText' | 'insertText' }>,
+): Parameters<typeof runDocInsert>[2] => ({
+  op: operation.op,
+  text: operation.text,
+  tab: operation.tab,
+  ...(operation.op === 'appendText'
+    ? { afterHeading: operation.afterHeading }
+    : { where: operation.where }),
+});
+
+const deleteRequest = (
+  operation: Extract<DocOperation, { op: 'deleteParagraph' | 'deleteRange' }>,
+): Parameters<typeof runDocDelete>[2] => ({
+  op: operation.op,
+  tab: operation.tab,
+  ...(operation.op === 'deleteParagraph'
+    ? { where: operation.where }
+    : { startIndex: operation.startIndex, endIndex: operation.endIndex }),
+});
+
+const replaceRequest = (
+  operation: Extract<DocOperation, { op: 'replaceText' | 'replaceAllText' }>,
+): Parameters<typeof runDocReplace>[2] => ({
+  op: operation.op,
+  tab: operation.tab,
+  find: operation.find,
+  replace: operation.replace,
+  ...(operation.op === 'replaceText' ? { where: operation.where } : {}),
+});
 
 /**
  * Откат по doc-цели. Без табличного `deps.revision`: ревизии документа отдаёт сам

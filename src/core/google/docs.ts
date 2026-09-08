@@ -177,9 +177,20 @@ class TabReader {
     if (table === undefined) return;
     const tableNumber = this.tables.length + 1;
     const cells: string[][] = [];
+    const rowRanges: { startIndex: number; endIndex: number }[] = [];
+    const cellRanges: { startIndex: number; endIndex: number }[][] = [];
     (table.tableRows ?? []).forEach((row, r) => {
       const rowCells: string[] = [];
+      const rowCellRanges: { startIndex: number; endIndex: number }[] = [];
+      rowRanges.push({
+        startIndex: some(row.startIndex) ?? 0,
+        endIndex: some(row.endIndex) ?? 0,
+      });
       (row.tableCells ?? []).forEach((cell, c) => {
+        rowCellRanges.push({
+          startIndex: some(cell.startIndex) ?? 0,
+          endIndex: some(cell.endIndex) ?? 0,
+        });
         const before = this.paragraphs.length;
         for (const inner of cell.content ?? []) {
           this.readParagraph(inner, { table: tableNumber, row: r + 1, column: c + 1 });
@@ -192,6 +203,7 @@ class TabReader {
         );
       });
       cells.push(rowCells);
+      cellRanges.push(rowCellRanges);
     });
     this.tables.push({
       index: tableNumber,
@@ -200,6 +212,8 @@ class TabReader {
       rows: some(table.rows) ?? cells.length,
       columns: some(table.columns) ?? cells[0]?.length ?? 0,
       cells,
+      rowRanges,
+      cellRanges,
     });
   }
 

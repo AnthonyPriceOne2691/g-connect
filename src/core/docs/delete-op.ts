@@ -9,13 +9,9 @@
 
 import { gcError } from '../errors.js';
 import { limitOf } from '../policy.js';
-import {
-  assertPlanNotApplied,
-  looksLikePlanCode,
-  namesTheSubject,
-} from '../sheets/write-guards.js';
+import { assertPlanNotApplied } from '../sheets/write-guards.js';
 import { docPlanId, type DocPlanShape } from './plan.js';
-import { paragraphLabel, pickTab, resolveParagraph } from './selectors.js';
+import { paragraphLabel, pickTab } from './selectors.js';
 import type {
   DocParagraph,
   DocRangeSnapshot,
@@ -26,9 +22,9 @@ import type {
   SnapshotParagraph,
 } from './types.js';
 import {
-  clarify,
   commitDocWrite,
-  narrowSelector,
+  namedConfirmRefusal,
+  resolveBodyParagraph,
   type DocApplyOutcome,
   type DocChangePreview,
   type DocRunOptions,
@@ -111,18 +107,13 @@ function explicitRange(request: DocDeleteRequest): RangeChoice {
 }
 
 function paragraphRange(tab: DocTab, request: DocDeleteRequest): RangeChoice {
-  const selector = narrowSelector(request.where ?? {});
-  if ('field' in selector) return { outcome: clarify([selector]) };
-  const hit = resolveParagraph(tab, selector);
-  if (hit.status === 'question') return { outcome: clarify([hit.question]) };
-  const paragraph = hit.value;
-  if (paragraph.inTable !== undefined) {
-    throw gcError('bad_request', {
-      detail:
-        `Абзац ${paragraphLabel(paragraph)} живёт в ячейке таблицы — удаление строк таблицы ` +
-        'придёт операцией deleteTableRow, ячейку правит замена текста.',
-    });
-  }
+  const resolved = resolveBodyParagraph(
+    tab,
+    request.where,
+    'удаление строк таблицы — deleteTableRow, ячейку правит замена текста.',
+  );
+  if ('outcome' in resolved) return resolved;
+  const paragraph = resolved.paragraph;
   const body = tab.paragraphs.filter((p) => p.inTable === undefined);
   const last = body[body.length - 1];
   // Последний абзац сегмента: его завершающий перенос удалить нельзя — уводим диапазон
@@ -171,39 +162,6 @@ function budgetedSnapshot(tab: DocTab, start: number, end: number): DocRangeSnap
 
 const paragraphOf = (tab: DocTab, at: number): DocParagraph | undefined =>
   tab.paragraphs.find((p) => at >= p.startIndex && at < p.endIndex);
-
-/**
- * Подтверждение названием (D-20): голое «да», чужой код и молчание различены текстом.
- * `null` — предмет назван (или дан код этого плана), запись разрешена.
- */
-function namedConfirmRefusal(
-  given: string | undefined,
-  confirmToken: string,
-  code: string,
-  changes: readonly DocChangePreview[],
-  notes: readonly string[],
-): DocApplyOutcome | null {
-  if (given !== undefined && namesTheSubject(given, confirmToken, code)) return null;
-  const mismatch = given !== undefined && looksLikePlanCode(given);
-  return {
-    status: 'confirm_required',
-    planId: code,
-    changes,
-    notes: [
-      ...notes,
-      mismatch
-        ? `Подтверждён код ${given ?? ''}, а у этого плана код ${code}. Записи не было. ` +
-          `Подтверди, назвав предмет: «удаляю ${confirmToken}» — или кодом плана.`
-        : `Записи не было. Подтверди правку, назвав её предмет: «удаляю ${confirmToken}» ` +
-          `(или кодом плана ${code}). ${
-            given === undefined
-              ? 'Подтверждения не было вовсе'
-              : `«${given}» предметом правки не называет`
-          }.`,
-    ],
-    questions: [],
-  };
-}
 
 export async function runDocDelete(
   client: DocsClient,
@@ -261,7 +219,11 @@ export async function runDocDelete(
     };
   }
   await assertPlanNotApplied(options, options.confirm ?? null, snapshot.docId);
-  const refusal = namedConfirmRefusal(options.confirm, confirmToken, code, changes, notes);
+  const refusal = namedConfirmRefusal(options.confirm, `удаляю ${confirmToken}`, {
+    code,
+    changes,
+    notes,
+  });
   if (refusal !== null) return refusal;
 
   return commitDocWrite(
