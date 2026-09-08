@@ -71,10 +71,10 @@
 
 ## Slice 7 — стили
 
-- [ ] T29: `updateTextStyle` по селектору; откат прежних полей (фикстуры разной полноты
-      стилей — L23)
-- [ ] T30: `setParagraphStyle`: обычный текст ↔ H1–H6 (P11)
-- [ ] T31: `createParagraphBullets`, `deleteParagraphBullets` (P12)
+- [x] T29: `updateTextStyle` по селектору; откат прежних полей безусловно (обратный
+      прогон: пропуск «обычных» значений — красный)
+- [x] T30: `setParagraphStyle`: обычный текст ↔ H1–H6 (P11)
+- [x] T31: `createParagraphBullets`, `deleteParagraphBullets` с count по абзацам (P12)
 
 ## Slice 8 — правила, дизайн, живая проба
 

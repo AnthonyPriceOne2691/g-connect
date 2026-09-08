@@ -68,6 +68,11 @@ describe('K10 — что вообще нельзя положить в конв�
       'insertTable',
       'insertTableRow',
       'insertTableColumn',
+      // Стили обратимы снимком прежних полей; текст не трогают вовсе.
+      'updateTextStyle',
+      'setParagraphStyle',
+      'createParagraphBullets',
+      'deleteParagraphBullets',
     ]);
     // В конверте только добавляющее и обратимое: ни одного удаления, ни перемещения,
     // ни сортировки, ни вырезания — они уничтожают или перемешивают.

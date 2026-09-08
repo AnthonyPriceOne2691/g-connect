@@ -56,14 +56,7 @@ function assertInsertedIntact(
   options: UndoOptions,
 ): DocTab {
   const doc = docOf(record);
-  const tab = snapshot.tabs.find((t) => t.title === doc.tab);
-  if (tab === undefined) {
-    throw gcError('revision_conflict', {
-      detail:
-        `Таба «${doc.tab}» в документе больше нет — откат не знает, где искать вставленное. ` +
-        'Перечитай документ и реши, что возвращать.',
-    });
-  }
+  const tab = tabOrConflict(snapshot, doc.tab);
   if (options.force === true) return tab;
   const current = textInRange(tab, doc.startIndex, doc.endIndex);
   if (current !== (doc.inserted ?? '')) {
@@ -186,14 +179,7 @@ async function restoreSnapshot(
   snapshot: DocSnapshot,
   options: UndoOptions,
 ): Promise<UndoOutcome> {
-  const doc = docOf(record);
-  const stored = doc.snapshot!;
-  const tab = snapshot.tabs.find((t) => t.title === doc.tab);
-  if (tab === undefined) {
-    throw gcError('revision_conflict', {
-      detail: `Таба «${doc.tab}» больше нет — восстанавливать некуда. Перечитай документ.`,
-    });
-  }
+  const { tab, stored } = storedAndTab(record, snapshot);
   assertNotMoved(record, snapshot, options, 'doc_moved_after_delete', 'удаления');
   const paragraphs = (stored.paragraphs ?? []).length;
   return finishDocUndo(
@@ -203,7 +189,7 @@ async function restoreSnapshot(
     snapshot,
     restoreRequests(tab.tabId, stored),
     options,
-    `Удалённое восстановлено в табе «${doc.tab}»: ${stored.endIndex - stored.startIndex} юнитов, ` +
+    `Удалённое восстановлено в табе «${stored.tab}»: ${stored.endIndex - stored.startIndex} юнитов, ` +
       `${paragraphs} абзац(ев), со стилями текста и видом абзацев (заголовки и списки — тоже).`,
   );
 }
@@ -319,6 +305,78 @@ export async function finishDocUndo(
   };
 }
 
+/**
+ * Откат правки стилей: текст не менялся — накатываем ПРЕЖНИЕ поля из снимка, без вставок
+ * и удалений. Стили и вид возвращаются БЕЗУСЛОВНО (в т.ч. NORMAL_TEXT и «без списка»):
+ * пропуск «обычных» значений оставил бы новый заголовок заголовком.
+ */
+async function undoStyles(
+  client: DocsClient,
+  targetId: string,
+  record: WriteRecord,
+  snapshot: DocSnapshot,
+  options: UndoOptions,
+): Promise<UndoOutcome> {
+  const { tab, stored } = storedAndTab(record, snapshot);
+  assertNotMoved(record, snapshot, options, 'doc_moved_after_style', 'правки стилей');
+  const requests: DocRequest[] = [...runStyleRequests(tab.tabId, stored)];
+  for (const paragraph of stored.paragraphs ?? []) {
+    const range = {
+      tabId: tab.tabId,
+      startIndex: stored.startIndex + paragraph.offset,
+      endIndex: stored.startIndex + paragraph.offset + 1,
+    };
+    requests.push({ kind: 'updateParagraphStyle', namedStyle: paragraph.namedStyle, ...range });
+    requests.push({ kind: 'setBullets', bulleted: paragraph.bulleted === true, ...range });
+  }
+  return finishDocUndo(
+    client,
+    targetId,
+    record,
+    snapshot,
+    requests,
+    options,
+    `Стили возвращены: ${(stored.paragraphs ?? []).length} абзац(ев), текст не тронут.`,
+  );
+}
+
+/** Снимок «до» и живой таб записи — общий пролог откатов по снимку. */
+function storedAndTab(
+  record: WriteRecord,
+  snapshot: DocSnapshot,
+): { tab: DocTab; stored: NonNullable<NonNullable<WriteRecord['doc']>['snapshot']> } {
+  const doc = docOf(record);
+  return { tab: tabOrConflict(snapshot, doc.tab), stored: doc.snapshot! };
+}
+
+/** Таб записи — или честный отказ: документ изменился, и откат не знает, куда возвращать. */
+function tabOrConflict(snapshot: DocSnapshot, tabTitle: string): DocTab {
+  const tab = snapshot.tabs.find((t) => t.title === tabTitle);
+  if (tab === undefined) {
+    throw gcError('revision_conflict', {
+      detail: `Таба «${tabTitle}» больше нет — откат не знает, куда возвращать. Перечитай документ.`,
+    });
+  }
+  return tab;
+}
+
+type DocUndoForm = (
+  client: DocsClient,
+  targetId: string,
+  record: WriteRecord,
+  snapshot: DocSnapshot,
+  options: UndoOptions,
+) => Promise<UndoOutcome>;
+
+/** Форма отката по журнальной записи; `null` — вставка (базовый путь ниже). */
+function docUndoForm(doc: NonNullable<WriteRecord['doc']>): DocUndoForm | null {
+  if (doc.styled === true) return undoStyles;
+  if (doc.table !== undefined) return undoTable;
+  if (doc.replacements !== undefined) return undoReplacements;
+  if (doc.snapshot !== undefined) return restoreSnapshot;
+  return null;
+}
+
 export async function undoDocLast(
   client: DocsClient,
   targetId: string,
@@ -331,15 +389,8 @@ export async function undoDocLast(
   const doc = docOf(record);
 
   const snapshot = await client.getDocument(targetId);
-  if (doc.table !== undefined) {
-    return undoTable(client, targetId, record, snapshot, options);
-  }
-  if (doc.replacements !== undefined) {
-    return undoReplacements(client, targetId, record, snapshot, options);
-  }
-  if (doc.snapshot !== undefined) {
-    return restoreSnapshot(client, targetId, record, snapshot, options);
-  }
+  const form = docUndoForm(doc);
+  if (form !== null) return form(client, targetId, record, snapshot, options);
   const tab = assertInsertedIntact(snapshot, record, options);
 
   // Ревизии документа выдаёт сам Docs API: «до» — из прочитанного снимка, «после» — из

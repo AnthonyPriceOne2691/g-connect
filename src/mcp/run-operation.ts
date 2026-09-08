@@ -48,7 +48,11 @@ type Operation = Exclude<
       | 'insertTableColumn'
       | 'deleteTable'
       | 'deleteTableRow'
-      | 'deleteTableColumn';
+      | 'deleteTableColumn'
+      | 'updateTextStyle'
+      | 'setParagraphStyle'
+      | 'createParagraphBullets'
+      | 'deleteParagraphBullets';
   }
 >;
 type Options = Parameters<typeof upsertRow>[4];

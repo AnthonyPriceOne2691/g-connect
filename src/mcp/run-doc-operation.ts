@@ -8,6 +8,8 @@
 import { runDocDelete } from '../core/docs/delete-op.js';
 import { runDocInsert, type DocApplyOutcome } from '../core/docs/insert-op.js';
 import { runDocReplace } from '../core/docs/replace-op.js';
+import { runDocStyle } from '../core/docs/style-op.js';
+import type { DocTextStyle } from '../core/docs/types.js';
 import { runDocTable } from '../core/docs/table-op.js';
 import { undoDocLast } from '../core/undo-docs.js';
 import type { UndoOutcome } from '../core/undo-types.js';
@@ -78,9 +80,25 @@ function dispatchDocOperation(
     case 'replaceAllText':
       return runDocReplace(client, snapshot, replaceRequest(operation), options);
     default:
-      return runDocTable(client, snapshot, operation, options);
+      return isStyleOperation(operation)
+        ? runDocStyle(client, snapshot, styleRequest(operation), options)
+        : runDocTable(client, snapshot, operation, options);
   }
 }
+
+type StyleOperation = Extract<
+  DocOperation,
+  {
+    op:
+      'updateTextStyle' | 'setParagraphStyle' | 'createParagraphBullets' | 'deleteParagraphBullets';
+  }
+>;
+
+const isStyleOperation = (operation: DocOperation): operation is StyleOperation =>
+  operation.op === 'updateTextStyle' ||
+  operation.op === 'setParagraphStyle' ||
+  operation.op === 'createParagraphBullets' ||
+  operation.op === 'deleteParagraphBullets';
 
 const insertRequest = (
   operation: Extract<DocOperation, { op: 'appendText' | 'insertText' }>,
@@ -130,3 +148,27 @@ export async function runDocUndo(
     journal: deps.journal,
   });
 }
+
+const styleRequest = (
+  operation: Extract<
+    DocOperation,
+    {
+      op:
+        | 'updateTextStyle'
+        | 'setParagraphStyle'
+        | 'createParagraphBullets'
+        | 'deleteParagraphBullets';
+    }
+  >,
+): Parameters<typeof runDocStyle>[2] => ({
+  op: operation.op,
+  tab: operation.tab,
+  where: operation.where,
+  count: operation.count,
+  // Чистка undefined-ключей: exactOptionalPropertyTypes различает «поля нет» и undefined.
+  ...(operation.op === 'updateTextStyle' ? { style: cleanStyle(operation.style) } : {}),
+  ...(operation.op === 'setParagraphStyle' ? { namedStyle: operation.namedStyle } : {}),
+});
+
+const cleanStyle = (style: Record<string, unknown>): DocTextStyle =>
+  Object.fromEntries(Object.entries(style).filter(([, value]) => value !== undefined));

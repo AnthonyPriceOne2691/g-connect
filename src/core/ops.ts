@@ -13,6 +13,8 @@ import { gcError } from './errors.js';
 import { commonFields } from './op-fields.js';
 import {
   appendTextOp,
+  createParagraphBulletsOp,
+  deleteParagraphBulletsOp,
   deleteParagraphOp,
   deleteRangeOp,
   deleteTableColumnOp,
@@ -24,6 +26,8 @@ import {
   insertTextOp,
   replaceAllTextOp,
   replaceTextOp,
+  setParagraphStyleOp,
+  updateTextStyleOp,
 } from './docs/ops.js';
 
 export * from './docs/ops.js';
@@ -275,6 +279,10 @@ export const operationSchema = z.discriminatedUnion('op', [
   deleteTableOp,
   deleteTableRowOp,
   deleteTableColumnOp,
+  updateTextStyleOp,
+  setParagraphStyleOp,
+  createParagraphBulletsOp,
+  deleteParagraphBulletsOp,
 ]);
 
 export type Operation = z.infer<typeof operationSchema>;
@@ -314,6 +322,10 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'deleteTable',
   'deleteTableRow',
   'deleteTableColumn',
+  'updateTextStyle',
+  'setParagraphStyle',
+  'createParagraphBullets',
+  'deleteParagraphBullets',
 ];
 
 /** Имена doc-операций — ЕДИНСТВЕННЫМ источником (урок L21): срез общего списка. */
@@ -330,6 +342,10 @@ const DOC_NAMES = [
   'deleteTable',
   'deleteTableRow',
   'deleteTableColumn',
+  'updateTextStyle',
+  'setParagraphStyle',
+  'createParagraphBullets',
+  'deleteParagraphBullets',
 ] as const;
 
 /** Операции над документом — разводятся по виду цели ДО чтения таблицы. */

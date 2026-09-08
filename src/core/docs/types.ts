@@ -22,7 +22,11 @@ export type DocOperationKind =
   | 'replaceAllText'
   | 'insertTable'
   | 'insertTableRow'
-  | 'insertTableColumn';
+  | 'insertTableColumn'
+  | 'updateTextStyle'
+  | 'setParagraphStyle'
+  | 'createParagraphBullets'
+  | 'deleteParagraphBullets';
 
 /** Стиль текстового прогона — только то, что продукт умеет ставить и откатывать. */
 export interface DocTextStyle {

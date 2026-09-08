@@ -136,3 +136,58 @@ export const deleteTableOp = z.object({
   ...tableFields,
   ...docCommonFields,
 });
+
+/** Вид текста на внешней границе — strict: неизвестное поле отклоняется с перечислением. */
+const docTextStyle = z
+  .object({
+    bold: z.boolean().optional(),
+    italic: z.boolean().optional(),
+    underline: z.boolean().optional(),
+    strikethrough: z.boolean().optional(),
+    link: z.string().url().optional(),
+    fontSize: z.number().int().min(6).max(96).optional(),
+    color: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{6}$/, 'цвет задаётся как #RRGGBB')
+      .optional(),
+  })
+  .strict();
+
+/** Общее у стилевых операций: якорный абзац и сколько абзацев подряд (P12). */
+const styleCommonFields = {
+  where: docWhere,
+  count: z.number().int().min(1).max(50).default(1),
+  ...docCommonFields,
+};
+
+/** Вид текста абзаца (частичная правка: {bold} не сбрасывает остальное). */
+export const updateTextStyleOp = z.object({
+  op: z.literal('updateTextStyle'),
+  style: docTextStyle,
+  ...styleCommonFields,
+});
+
+/** Вид абзаца: обычный текст или заголовок. */
+export const setParagraphStyleOp = z.object({
+  op: z.literal('setParagraphStyle'),
+  namedStyle: z.enum([
+    'NORMAL_TEXT',
+    'HEADING_1',
+    'HEADING_2',
+    'HEADING_3',
+    'HEADING_4',
+    'HEADING_5',
+    'HEADING_6',
+  ]),
+  ...styleCommonFields,
+});
+
+export const createParagraphBulletsOp = z.object({
+  op: z.literal('createParagraphBullets'),
+  ...styleCommonFields,
+});
+
+export const deleteParagraphBulletsOp = z.object({
+  op: z.literal('deleteParagraphBullets'),
+  ...styleCommonFields,
+});

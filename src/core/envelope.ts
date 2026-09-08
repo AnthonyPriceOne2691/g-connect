@@ -53,6 +53,11 @@ export const ENVELOPE_OPS: readonly OperationKind[] = [
   'insertTable',
   'insertTableRow',
   'insertTableColumn',
+  // Стили обратимы снимком прежних полей; текст они не трогают вовсе.
+  'updateTextStyle',
+  'setParagraphStyle',
+  'createParagraphBullets',
+  'deleteParagraphBullets',
 ];
 
 /**
@@ -220,6 +225,10 @@ const DOC_OPS: ReadonlySet<OperationKind> = new Set([
   'insertTable',
   'insertTableRow',
   'insertTableColumn',
+  'updateTextStyle',
+  'setParagraphStyle',
+  'createParagraphBullets',
+  'deleteParagraphBullets',
 ]);
 
 export function envelopeAuthorizes(
