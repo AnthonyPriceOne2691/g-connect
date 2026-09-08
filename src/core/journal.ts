@@ -92,6 +92,11 @@ export interface DocWriteDetail {
   readonly endIndex: number;
   /** Снимок «до» для удалений и замен; у вставки его нет — откат удаляет вставленное. */
   readonly snapshot?: DocRangeSnapshot;
+  /**
+   * Что фактически встало в документ (вставки). Охранник отката сверяет ЭТО с текущим
+   * текстом диапазона: правленное вставленное откатывать нельзя — унесёт чужое (P4).
+   */
+  readonly inserted?: string;
 }
 
 export interface RangeSnapshot {
@@ -113,6 +118,8 @@ export interface WriteRecord {
     | 'formatCells'
     | 'findReplace'
     | StructuralKind
+    | 'appendText'
+    | 'insertText'
     | 'undo';
   readonly changes: readonly JournalChange[];
   /** Геометрия: что сделали со строками, колонками, листами или файлами (D-19). */
@@ -171,7 +178,11 @@ export function lastUndoable(records: readonly WriteRecord[]): WriteRecord | nul
     const record = records[i]!;
     if (record.op === 'undo') continue;
     if (undone.has(record.correlationId)) continue;
-    if (record.changes.length === 0 && record.structure === undefined) continue;
+    // Запись без ячеек, геометрии И текста — превью-след, откатывать нечего. Проверка
+    // на `doc` не украшение: без неё вставка в документ считалась бы неоткатываемой —
+    // тот же класс дыры, что нашёл оракул G3 у структурных правок (уровень 2).
+    if (record.changes.length === 0 && record.structure === undefined && record.doc === undefined)
+      continue;
     return record;
   }
   return null;

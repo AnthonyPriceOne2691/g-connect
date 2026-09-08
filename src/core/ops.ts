@@ -240,6 +240,42 @@ const createFields = {
   ...commonFields,
 };
 
+/**
+ * Селектор абзаца документа (§4): агент говорит ЧТО, ядро вычисляет ГДЕ. Ровно один
+ * ключ; `.strict()` — чтобы «paragrafIndex» отклонялся с перечислением, а не молчал.
+ */
+const docWhere = z
+  .object({
+    paragraphIndex: z.number().int().positive().optional(),
+    textStartsWith: z.string().min(1).optional(),
+    textContains: z.string().min(1).optional(),
+    firstParagraph: z.literal(true).optional(),
+    lastParagraph: z.literal(true).optional(),
+  })
+  .strict();
+
+/** Общее у операций над документом: таб по заголовку (без него — единственный). */
+const docCommonFields = {
+  tab: z.string().min(1).optional(),
+  ...commonFields,
+};
+
+/** Дописать НОВЫЙ абзац: в конец таба, а с `afterHeading` — в конец его раздела. */
+export const appendTextOp = z.object({
+  op: z.literal('appendText'),
+  text: z.string().min(1),
+  afterHeading: z.string().min(1).optional(),
+  ...docCommonFields,
+});
+
+/** Вставить НОВЫЙ абзац сразу после абзаца-якоря. */
+export const insertTextOp = z.object({
+  op: z.literal('insertText'),
+  text: z.string().min(1),
+  where: docWhere,
+  ...docCommonFields,
+});
+
 export const createSheetOp = z.object({ op: z.literal('createSheet'), ...createFields });
 export const createDocOp = z.object({ op: z.literal('createDoc'), ...createFields });
 export const createFolderOp = z.object({ op: z.literal('createFolder'), ...createFields });
@@ -266,6 +302,8 @@ export const operationSchema = z.discriminatedUnion('op', [
   createSheetOp,
   createDocOp,
   createFolderOp,
+  appendTextOp,
+  insertTextOp,
 ]);
 
 export type Operation = z.infer<typeof operationSchema>;
@@ -293,7 +331,13 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'createSheet',
   'createDoc',
   'createFolder',
+  'appendText',
+  'insertText',
 ];
+
+/** Операции над документом — разводятся по виду цели ДО чтения таблицы. */
+export const DOC_OPERATION_NAMES: readonly OperationName[] = ['appendText', 'insertText'];
+export type DocOperation = Extract<Operation, { op: 'appendText' | 'insertText' }>;
 
 /**
  * Битое регулярное выражение — отказ на границе, а не падение в середине плана (V10).

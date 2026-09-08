@@ -18,6 +18,7 @@ import type { SearchQuery } from '../core/google/drive.js';
 import { operationJsonSchema, parseOperation } from '../core/ops.js';
 import { runOperation } from './run-operation.js';
 import { runCreate } from './run-create.js';
+import { assertTargetKind, isDocOperation, runDocApply, runDocUndo } from './run-doc-operation.js';
 import { limitOf, policyText, policyRules } from '../core/policy.js';
 import { listProfiles, profileStatus } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
@@ -324,6 +325,13 @@ export const gcApply: ToolDefinition = {
       return runCreate(operation, resolved, deps);
     }
 
+    // Вид цели решает путь ДО чтения (P22): doc-операции идут в Docs API, и табличная
+    // операция по документу отклоняется здесь, а не «файл не найден» из чужого API.
+    assertTargetKind(operation, resolved);
+    if (isDocOperation(operation)) {
+      return runDocApply(operation, resolved, deps);
+    }
+
     const client = await deps.sheets();
     const wanted = sheetDefaults(resolved.entry, operation.sheet, operation.headerRow);
     const snapshot = await client.getSpreadsheet(
@@ -405,6 +413,14 @@ export const gcUndo: ToolDefinition = {
     const input = z.object(undoInput).parse(args);
     const resolved = await resolve(deps, input.target);
     assertWritable(resolved);
+    if (resolved.type === 'doc') {
+      const outcome = await runDocUndo(deps, resolved, input);
+      return {
+        ...outcome,
+        target: { id: resolved.id, alias: resolved.alias },
+        hint: undoHint(outcome),
+      };
+    }
     const client = await deps.sheets();
     const outcome = await undoLast(client, resolved.id, deps.journalSource, {
       account: deps.account,

@@ -11,9 +11,10 @@
  * счётчик теряет блок после пропуска — урок L16.
  */
 
+import { gcError } from '../errors.js';
 import { normalizeName } from '../resolver.js';
 import type { Question } from '../sheets/write-types.js';
-import type { DocParagraph, DocTab, DocTable } from './types.js';
+import type { DocParagraph, DocSnapshot, DocTab, DocTable } from './types.js';
 
 export type ParagraphSelector =
   | { readonly paragraphIndex: number }
@@ -212,5 +213,29 @@ export function resolveTable(tab: DocTab, selector: TableSelector): Resolved<Doc
     detail: `«${selector.tableWithCell}» найдено в ${hits.length} таблицах — уточни номером.`,
     candidates: hits.map(label),
     available: [],
+  });
+}
+
+/**
+ * Таб по заголовку. Документ с одним табом отдаёт его без вопросов; с несколькими —
+ * требует имя: «возьму первый» прочитал бы человеку не тот текст (та же неоднозначность,
+ * что у селекторов §4 — вопрос, а не догадка).
+ */
+export function pickTab(snapshot: DocSnapshot, wanted: string | undefined): DocTab {
+  const titles = snapshot.tabs.map((t) => t.title).join(', ');
+  if (wanted !== undefined) {
+    const matches = snapshot.tabs.filter((t) => t.title === wanted);
+    if (matches.length === 1) return matches[0]!;
+    throw gcError(matches.length === 0 ? 'bad_request' : 'ambiguous_target', {
+      detail:
+        matches.length === 0
+          ? `Таба «${wanted}» в документе нет. Есть: ${titles}.`
+          : `Заголовок «${wanted}» носят несколько табов (${matches.length}); адресуй по mode=map.`,
+    });
+  }
+  const first = snapshot.tabs[0];
+  if (snapshot.tabs.length === 1 && first !== undefined) return first;
+  throw gcError('bad_request', {
+    detail: `В документе ${snapshot.tabs.length} табов — назови tab. Есть: ${titles}.`,
   });
 }
