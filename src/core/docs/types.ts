@@ -131,14 +131,44 @@ export type DocRequest =
       readonly tabId: string;
       readonly startIndex: number;
       readonly endIndex: number;
+    }
+  | {
+      readonly kind: 'updateTextStyle';
+      readonly tabId: string;
+      readonly startIndex: number;
+      readonly endIndex: number;
+      readonly style: DocTextStyle;
+    }
+  | {
+      readonly kind: 'updateParagraphStyle';
+      readonly tabId: string;
+      readonly startIndex: number;
+      readonly endIndex: number;
+      readonly namedStyle: ParagraphNamedStyle;
+    }
+  | {
+      readonly kind: 'setBullets';
+      readonly tabId: string;
+      readonly startIndex: number;
+      readonly endIndex: number;
+      readonly bulleted: boolean;
     };
 
-/** Снимок текста «до» — им откат восстанавливает удалённое, со стилями посегментно. */
+/** Абзац внутри снимка: где начинается (юниты от начала снимка) и чем был. */
+export interface SnapshotParagraph {
+  readonly offset: number;
+  readonly namedStyle: ParagraphNamedStyle;
+  readonly bulleted?: boolean;
+}
+
+/** Снимок текста «до» — им откат восстанавливает удалённое: текст, стили, вид абзацев. */
 export interface DocRangeSnapshot {
   readonly tab: string;
   readonly startIndex: number;
   readonly endIndex: number;
   readonly runs: readonly DocTextRun[];
+  /** Стили абзацев снимка — без них восстановленный заголовок стал бы обычным текстом. */
+  readonly paragraphs?: readonly SnapshotParagraph[];
 }
 
 /** Шов с Docs API: чтение и запись под серверным предусловием. */

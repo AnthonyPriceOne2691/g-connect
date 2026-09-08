@@ -12,7 +12,14 @@ import { gcError, newCorrelationId } from './errors.js';
 import type { JournalSource, WriteRecord } from './journal.js';
 import { assertRecent, isUndoOutcome, pickUndoRecord } from './undo-shared.js';
 import type { UndoOptions, UndoOutcome } from './undo-types.js';
-import type { DocSnapshot, DocTab, DocsClient } from './docs/types.js';
+import type {
+  DocRangeSnapshot,
+  DocRequest,
+  DocSnapshot,
+  DocTab,
+  DocTextRun,
+  DocsClient,
+} from './docs/types.js';
 
 /** Текст диапазона из абзацев снимка; `null` — диапазон рвётся о таблицу или границы. */
 export function textInRange(tab: DocTab, start: number, end: number): string | null {
@@ -94,6 +101,135 @@ function undoDocRecord(
   };
 }
 
+/**
+ * Запросы восстановления снимка: текст одной вставкой, затем стили прогонов и вид
+ * абзацев. Базовые флаги (bold/italic/underline/strikethrough) выставляются ЯВНО у
+ * каждого прогона — вставленный текст наследует стиль точки вставки, и без явного
+ * сброса кусок, бывший обычным, вернулся бы жирным, если жирный сосед слева.
+ * Явный false и «поле не задано» — разные состояния модели при одинаковом виде;
+ * это названная цена восстановления, а не молчаливое допущение.
+ */
+export function restoreRequests(tabId: string, snapshot: DocRangeSnapshot): DocRequest[] {
+  const text = snapshot.runs.map((r) => r.text).join('');
+  return [
+    { kind: 'insertText', tabId, at: snapshot.startIndex, text },
+    ...runStyleRequests(tabId, snapshot),
+    ...paragraphViewRequests(tabId, snapshot),
+  ];
+}
+
+/** Явные стили каждого прогона — включая сброс базовых флагов (см. док выше). */
+function runStyleRequests(tabId: string, snapshot: DocRangeSnapshot): DocRequest[] {
+  const requests: DocRequest[] = [];
+  let cursor = 0;
+  for (const run of snapshot.runs) {
+    if (run.text !== '\n' && run.text !== '') {
+      requests.push({
+        kind: 'updateTextStyle',
+        tabId,
+        startIndex: snapshot.startIndex + cursor,
+        endIndex: snapshot.startIndex + cursor + run.text.length,
+        style: explicitStyle(run.style),
+      });
+    }
+    cursor += run.text.length;
+  }
+  return requests;
+}
+
+/** Стиль с явными базовыми флагами: отсутствие поля стало бы наследованием точки вставки. */
+function explicitStyle(style: DocTextRun['style']): NonNullable<DocTextRun['style']> {
+  const FLAGS = ['bold', 'italic', 'underline', 'strikethrough'] as const;
+  const OPTIONAL = ['link', 'fontSize', 'color'] as const;
+  const out: {
+    bold?: boolean;
+    italic?: boolean;
+    underline?: boolean;
+    strikethrough?: boolean;
+    link?: string;
+    fontSize?: number;
+    color?: string;
+  } = {};
+  for (const flag of FLAGS) out[flag] = style?.[flag] ?? false;
+  for (const field of OPTIONAL) {
+    const value = style?.[field];
+    if (value !== undefined) out[field] = value as never;
+  }
+  return out;
+}
+
+/** Вид абзацев снимка: заголовки и списки. */
+function paragraphViewRequests(tabId: string, snapshot: DocRangeSnapshot): DocRequest[] {
+  const requests: DocRequest[] = [];
+  for (const paragraph of snapshot.paragraphs ?? []) {
+    const range = {
+      tabId,
+      startIndex: snapshot.startIndex + paragraph.offset,
+      endIndex: snapshot.startIndex + paragraph.offset + 1,
+    };
+    if (paragraph.namedStyle !== 'NORMAL_TEXT') {
+      requests.push({ kind: 'updateParagraphStyle', namedStyle: paragraph.namedStyle, ...range });
+    }
+    if (paragraph.bulleted === true) {
+      requests.push({ kind: 'setBullets', bulleted: true, ...range });
+    }
+  }
+  return requests;
+}
+
+/** Откат удаления: вставка снимка на место. Предусловие — ревизия не ушла после записи. */
+async function restoreSnapshot(
+  client: DocsClient,
+  targetId: string,
+  record: WriteRecord,
+  snapshot: DocSnapshot,
+  options: UndoOptions,
+): Promise<UndoOutcome> {
+  const doc = docOf(record);
+  const stored = doc.snapshot!;
+  const tab = snapshot.tabs.find((t) => t.title === doc.tab);
+  if (tab === undefined) {
+    throw gcError('revision_conflict', {
+      detail: `Таба «${doc.tab}» больше нет — восстанавливать некуда. Перечитай документ.`,
+    });
+  }
+  if (options.force !== true && record.revisionAfter !== snapshot.revisionId) {
+    throw gcError('revision_conflict', {
+      detail:
+        'После удаления документ правили: точка восстановления могла сдвинуться, и снимок ' +
+        `лёг бы не туда (ревизия записи ${record.revisionAfter ?? '—'}, сейчас ` +
+        `${snapshot.revisionId}). Осознанный откат — с force.`,
+      cause: 'doc_moved_after_delete',
+    });
+  }
+  const { revisionId: revisionAfter } = await client.batchUpdate(
+    targetId,
+    restoreRequests(tab.tabId, stored),
+    snapshot.revisionId,
+  );
+  if (options.journal !== undefined) {
+    await options.journal({
+      ...undoDocRecord(
+        record,
+        targetId,
+        snapshot.revisionId,
+        revisionAfter === '' ? null : revisionAfter,
+      ),
+      doc: { tab: doc.tab, startIndex: stored.startIndex, endIndex: stored.endIndex },
+    });
+  }
+  const paragraphs = (stored.paragraphs ?? []).length;
+  return {
+    status: 'ok',
+    restored: [],
+    undoneCorrelationId: record.correlationId,
+    at: record.at,
+    docUndone:
+      `Удалённое восстановлено в табе «${doc.tab}»: ${stored.endIndex - stored.startIndex} юнитов, ` +
+      `${paragraphs} абзац(ев), со стилями текста и видом абзацев (заголовки и списки — тоже).`,
+  };
+}
+
 export async function undoDocLast(
   client: DocsClient,
   targetId: string,
@@ -106,6 +242,9 @@ export async function undoDocLast(
   const doc = docOf(record);
 
   const snapshot = await client.getDocument(targetId);
+  if (doc.snapshot !== undefined) {
+    return restoreSnapshot(client, targetId, record, snapshot, options);
+  }
   const tab = assertInsertedIntact(snapshot, record, options);
 
   // Ревизии документа выдаёт сам Docs API: «до» — из прочитанного снимка, «после» — из

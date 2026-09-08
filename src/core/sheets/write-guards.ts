@@ -234,7 +234,7 @@ async function standingWrites(
  * пробелы. Совпадением считается ВХОЖДЕНИЕ имени — «да, удаляю „AutoLink Platform“»
  * проходит, «да» нет. Код плана принимается тоже: у вызовов без превью названия нет.
  */
-function namesTheSubject(confirm: string, token: string, code: string | null): boolean {
+export function namesTheSubject(confirm: string, token: string, code: string | null): boolean {
   const normalized = normalizeConfirm(confirm);
   if (code !== null && normalized === normalizeConfirm(code)) return true;
   return normalized.includes(normalizeConfirm(token));
@@ -297,4 +297,4 @@ function confirmNote(
 }
 
 /** Похоже на код плана: шесть hex. Нужно, чтобы отличить чужой код от «да». */
-const looksLikePlanCode = (value: string): boolean => /^[0-9a-f]{6}$/i.test(value.trim());
+export const looksLikePlanCode = (value: string): boolean => /^[0-9a-f]{6}$/i.test(value.trim());

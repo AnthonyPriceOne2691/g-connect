@@ -32,7 +32,16 @@ import type { SheetData, SheetsClient } from '../core/sheets/types.js';
  */
 type Operation = Exclude<
   ReturnType<typeof parseOperation>,
-  { op: 'createSheet' | 'createDoc' | 'createFolder' | 'appendText' | 'insertText' }
+  {
+    op:
+      | 'createSheet'
+      | 'createDoc'
+      | 'createFolder'
+      | 'appendText'
+      | 'insertText'
+      | 'deleteParagraph'
+      | 'deleteRange';
+  }
 >;
 type Options = Parameters<typeof upsertRow>[4];
 

@@ -297,7 +297,10 @@ export class FakeDocsClient implements DocsClient {
     // Пакет применяется по порядку; каждый следующий запрос видит сдвинутые индексы.
     for (const request of requests) {
       if (request.kind === 'insertText') this.insertText(request);
-      else this.deleteRange(request);
+      else if (request.kind === 'deleteRange') this.deleteRange(request);
+      else if (request.kind === 'updateTextStyle') this.updateTextStyle(request);
+      else if (request.kind === 'updateParagraphStyle') this.updateParagraphStyle(request);
+      else this.setBullets(request);
     }
     this.applied.push([...requests]);
     this.bump();
@@ -354,6 +357,56 @@ export class FakeDocsClient implements DocsClient {
     const merged = [...left, inserted, ...right];
     const replacement = runsToParagraphs(merged, paragraph);
     tab.blocks.splice(tab.blocks.indexOf(paragraph), 1, ...replacement);
+  }
+
+  /** Абзацы, пересекающие диапазон, — общий шаг трёх стилевых запросов. */
+  private paragraphsIn(
+    tabId: string,
+    startIndex: number,
+    endIndex: number,
+  ): { paragraph: MutableParagraph; start: number; end: number }[] {
+    const { blocks } = this.located(tabId);
+    const touched = blocks.filter((b) => startIndex < b.end && endIndex > b.start);
+    if (touched.some((b) => isMutableTable(b.block))) {
+      throw gcError('bad_request', { detail: 'Диапазон стиля пересекает таблицу.' });
+    }
+    return touched.map((b) => ({
+      paragraph: b.block as MutableParagraph,
+      start: b.start,
+      end: b.end,
+    }));
+  }
+
+  private updateTextStyle(request: Extract<DocRequest, { kind: 'updateTextStyle' }>): void {
+    for (const { paragraph, start, end } of this.paragraphsIn(
+      request.tabId,
+      request.startIndex,
+      request.endIndex,
+    )) {
+      const from = Math.max(request.startIndex, start) - start;
+      const to = Math.min(request.endIndex, end) - start;
+      const [left, mid0] = splitRuns(paragraph.runs, from);
+      const [mid, right] = splitRuns(mid0, to - from);
+      const styled = mid.map((run) => ({
+        ...run,
+        style: { ...run.style, ...request.style },
+      }));
+      paragraph.runs = [...left, ...styled, ...right];
+    }
+  }
+
+  private updateParagraphStyle(
+    request: Extract<DocRequest, { kind: 'updateParagraphStyle' }>,
+  ): void {
+    for (const hit of this.paragraphsIn(request.tabId, request.startIndex, request.endIndex)) {
+      hit.paragraph.style = request.namedStyle;
+    }
+  }
+
+  private setBullets(request: Extract<DocRequest, { kind: 'setBullets' }>): void {
+    for (const hit of this.paragraphsIn(request.tabId, request.startIndex, request.endIndex)) {
+      hit.paragraph.bulleted = request.bulleted ? true : undefined;
+    }
   }
 
   private deleteRange(request: Extract<DocRequest, { kind: 'deleteRange' }>): void {

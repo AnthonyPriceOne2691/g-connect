@@ -23,6 +23,8 @@ import { asData, limitOf, policyRules, policyText, ruleById } from '../src/core/
 import { parseEnvelope } from '../src/core/envelope.js';
 import { profileStatus, writeToken } from '../src/core/profiles.js';
 import { buildSheetData } from '../src/core/sheets/map.js';
+import { runDocDelete } from '../src/core/docs/delete-op.js';
+import { FakeDocsClient, buildDoc, p as docParagraph } from './fixtures/doc.js';
 import type { WriteRecord } from '../src/core/journal.js';
 import { appendRow, upsertRow } from '../src/core/sheets/rows.js';
 import { findReplace } from '../src/core/sheets/find-replace-op.js';
@@ -409,6 +411,29 @@ const probes: Record<string, () => Promise<void>> = {
     expect(limitOf('write.snapshot-max-cells', 0)).toBe(2000);
   },
 
+  'write.snapshot-max-chars': async () => {
+    // Документ: правка, которую нечем вернуть, не делается. Отказ ДО подтверждения.
+    const bigDoc = buildDoc({
+      tabs: [{ title: 'Т', content: [docParagraph('а'.repeat(25000)), docParagraph('хвост')] }],
+    });
+    const docsClient = new FakeDocsClient(bigDoc);
+    try {
+      await runDocDelete(
+        docsClient,
+        await docsClient.getDocument(),
+        { op: 'deleteParagraph', where: { paragraphIndex: 1 } },
+        { dryRun: false },
+      );
+      expect.unreachable('снимок больше бюджета должен отказать');
+    } catch (error) {
+      const { payload } = error as { payload: { code: string; cause?: string; detail: string } };
+      expect(payload.code).toBe('policy_denied');
+      expect(payload.cause).toBe('write.snapshot-max-chars');
+      expect(payload.detail).toContain('20000');
+    }
+    expect(limitOf('write.snapshot-max-chars', 0)).toBe(20000);
+  },
+
   'write.plan-cells-only': async () => {
     // Ревизия документа в подпись не входит: `version` Drive растёт и без правок
     // пользователя, и код одного плана съезжал между двумя превью (живой прогон).
@@ -710,7 +735,7 @@ describe('правила как механизм (D-12)', () => {
       // оракул ниже, но здесь важно, что именно эти четыре правила не остались текстом.
       expect(rule.enforced_in).toMatch(/src\//);
     }
-    expect(policyRules()).toHaveLength(34);
+    expect(policyRules()).toHaveLength(35);
   });
 
   it('у КАЖДОГО правила есть проба — и наоборот', () => {

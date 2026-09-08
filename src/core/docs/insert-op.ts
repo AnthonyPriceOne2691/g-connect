@@ -11,94 +11,29 @@
  * требует `writeControl` — межвызовный дрейф ловит подпись, гонку внутри вызова — сервер.
  */
 
-import { newCorrelationId } from '../errors.js';
-import type { JournalSink, JournalSource } from '../journal.js';
 import { assertPlanNotApplied } from '../sheets/write-guards.js';
-import type { EnvelopeDecision, OperationKind, Question } from '../sheets/write-types.js';
+import type { Question } from '../sheets/write-types.js';
 import { docPlanId, type DocPlanChange, type DocPlanShape } from './plan.js';
 import { paragraphLabel, pickTab, resolveParagraph, resolveSection } from './selectors.js';
 import type { DocParagraph, DocSnapshot, DocTab, DocsClient } from './types.js';
+import {
+  clarify,
+  commitDocWrite,
+  narrowSelector,
+  type DocApplyOutcome,
+  type DocChangePreview,
+  type DocRunOptions,
+  type DocWhere,
+} from './write-support.js';
 
-export interface DocChangePreview {
-  readonly kind: string;
-  readonly tab: string;
-  /** Якорь, которым правку читает человек. */
-  readonly anchor: string;
-  readonly before: string | null;
-  readonly after: string | null;
-}
-
-export interface DocApplyOutcome {
-  readonly status: 'preview' | 'ok' | 'confirm_required' | 'needs_clarification' | 'no_change';
-  readonly planId: string | null;
-  readonly changes: readonly DocChangePreview[];
-  readonly notes: readonly string[];
-  readonly questions: readonly Question[];
-  readonly correlationId?: string;
-  readonly revisionBefore?: string | null;
-  readonly revisionAfter?: string | null;
-}
-
-export interface DocRunOptions {
-  readonly dryRun?: boolean;
-  readonly confirm?: string;
-  readonly force?: boolean;
-  readonly journal?: JournalSink;
-  readonly journalSource?: JournalSource;
-  readonly account?: string;
-  readonly alias?: string | null;
-  /** Судья конверта (D-18): разрешает ли цель эту правку с первой фразы, мера — юниты. */
-  readonly authorize?: (op: OperationKind, charCount: number) => EnvelopeDecision;
-}
+export type { DocApplyOutcome, DocChangePreview, DocRunOptions } from './write-support.js';
 
 export interface DocInsertRequest {
   readonly op: 'appendText' | 'insertText';
   readonly text: string;
   readonly tab?: string | undefined;
   readonly afterHeading?: string | undefined;
-  readonly where?:
-    | {
-        readonly paragraphIndex?: number | undefined;
-        readonly textStartsWith?: string | undefined;
-        readonly textContains?: string | undefined;
-        readonly firstParagraph?: true | undefined;
-        readonly lastParagraph?: true | undefined;
-      }
-    | undefined;
-}
-
-const clarify = (questions: readonly Question[]): DocApplyOutcome => ({
-  status: 'needs_clarification',
-  planId: null,
-  changes: [],
-  notes: [],
-  questions,
-});
-
-/** Селектор схемы → селектор ядра: ровно один ключ, иначе вопрос, а не догадка. */
-function narrowSelector(
-  where: NonNullable<DocInsertRequest['where']>,
-): Parameters<typeof resolveParagraph>[1] | Question {
-  const keys = Object.entries(where).filter(([, v]) => v !== undefined);
-  if (keys.length === 1) {
-    return Object.fromEntries(keys) as Parameters<typeof resolveParagraph>[1];
-  }
-  return {
-    field: 'where',
-    reason: 'ambiguous',
-    detail:
-      keys.length === 0
-        ? 'Селектор пуст: скажи, после какого абзаца вставлять.'
-        : `В селекторе ${keys.length} условия сразу (${keys.map(([k]) => k).join(', ')}) — оставь одно.`,
-    candidates: [],
-    available: [
-      'paragraphIndex',
-      'textStartsWith',
-      'textContains',
-      'firstParagraph',
-      'lastParagraph',
-    ],
-  };
+  readonly where?: DocWhere | undefined;
 }
 
 /** Куда вставлять и как назвать это человеку. */
@@ -252,37 +187,18 @@ async function performInsert(
   const refusal = permissionRefusal(commit, options, op, inserted.length);
   if (refusal !== null) return refusal;
 
-  const { revisionId: revisionAfter } = await client.batchUpdate(
-    snapshot.docId,
-    [{ kind: 'insertText', tabId, at: plan.startIndex, text: inserted }],
-    snapshot.revisionId,
-  );
-
-  const correlationId = newCorrelationId();
-  if (options.journal !== undefined) {
-    await options.journal({
-      at: new Date().toISOString(),
-      account: options.account ?? 'default',
-      targetId: snapshot.docId,
-      alias: options.alias ?? null,
-      sheet: plan.tab,
+  return commitDocWrite(
+    client,
+    snapshot,
+    {
       op,
-      changes: [],
+      tabTitle: plan.tab,
+      code,
+      changes,
+      notes,
+      requests: [{ kind: 'insertText', tabId, at: plan.startIndex, text: inserted }],
       doc: { tab: plan.tab, startIndex: plan.startIndex, endIndex: plan.endIndex, inserted },
-      revisionBefore: snapshot.revisionId,
-      revisionAfter,
-      correlationId,
-      planId: code,
-    });
-  }
-  return {
-    status: 'ok',
-    planId: code,
-    changes,
-    notes,
-    questions: [],
-    correlationId,
-    revisionBefore: snapshot.revisionId,
-    revisionAfter,
-  };
+    },
+    options,
+  );
 }

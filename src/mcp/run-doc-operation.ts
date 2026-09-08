@@ -5,6 +5,7 @@
  * отказ с советом здесь, а не «файл не найден» из глубины не того API (P22).
  */
 
+import { runDocDelete } from '../core/docs/delete-op.js';
 import { runDocInsert, type DocApplyOutcome } from '../core/docs/insert-op.js';
 import { undoDocLast } from '../core/undo-docs.js';
 import type { UndoOutcome } from '../core/undo-types.js';
@@ -43,28 +44,43 @@ export async function runDocApply(
 ): Promise<DocApplyOutcome & { target: { id: string; alias: string | null } }> {
   const client = await deps.docs();
   const snapshot = await client.getDocument(resolved.id);
-  const outcome = await runDocInsert(
-    client,
-    snapshot,
-    {
-      op: operation.op,
-      text: operation.text,
-      tab: operation.tab,
-      ...(operation.op === 'appendText'
-        ? { afterHeading: operation.afterHeading }
-        : { where: operation.where }),
-    },
-    {
-      dryRun: operation.dryRun,
-      journal: deps.journal,
-      journalSource: deps.journalSource,
-      account: deps.account,
-      alias: resolved.alias,
-      ...(operation.confirm === undefined ? {} : { confirm: operation.confirm }),
-      force: operation.force,
-      authorize: envelopeJudge(resolved),
-    },
-  );
+  const options = {
+    dryRun: operation.dryRun,
+    journal: deps.journal,
+    journalSource: deps.journalSource,
+    account: deps.account,
+    alias: resolved.alias,
+    ...(operation.confirm === undefined ? {} : { confirm: operation.confirm }),
+    force: operation.force,
+    authorize: envelopeJudge(resolved),
+  };
+  const outcome =
+    operation.op === 'appendText' || operation.op === 'insertText'
+      ? await runDocInsert(
+          client,
+          snapshot,
+          {
+            op: operation.op,
+            text: operation.text,
+            tab: operation.tab,
+            ...(operation.op === 'appendText'
+              ? { afterHeading: operation.afterHeading }
+              : { where: operation.where }),
+          },
+          options,
+        )
+      : await runDocDelete(
+          client,
+          snapshot,
+          {
+            op: operation.op,
+            tab: operation.tab,
+            ...(operation.op === 'deleteParagraph'
+              ? { where: operation.where }
+              : { startIndex: operation.startIndex, endIndex: operation.endIndex }),
+          },
+          options,
+        );
   return { ...outcome, target: { id: resolved.id, alias: resolved.alias } };
 }
 

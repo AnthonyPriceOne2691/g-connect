@@ -276,6 +276,21 @@ export const insertTextOp = z.object({
   ...docCommonFields,
 });
 
+/** Удалить абзац по селектору. Разрушающая: подтверждение — названием предмета (D-20). */
+export const deleteParagraphOp = z.object({
+  op: z.literal('deleteParagraph'),
+  where: docWhere,
+  ...docCommonFields,
+});
+
+/** Удалить явный диапазон — escape hatch §4; индексы едут, основной путь — селекторы. */
+export const deleteRangeOp = z.object({
+  op: z.literal('deleteRange'),
+  startIndex: z.number().int().positive(),
+  endIndex: z.number().int().positive(),
+  ...docCommonFields,
+});
+
 export const createSheetOp = z.object({ op: z.literal('createSheet'), ...createFields });
 export const createDocOp = z.object({ op: z.literal('createDoc'), ...createFields });
 export const createFolderOp = z.object({ op: z.literal('createFolder'), ...createFields });
@@ -304,6 +319,8 @@ export const operationSchema = z.discriminatedUnion('op', [
   createFolderOp,
   appendTextOp,
   insertTextOp,
+  deleteParagraphOp,
+  deleteRangeOp,
 ]);
 
 export type Operation = z.infer<typeof operationSchema>;
@@ -333,11 +350,21 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'createFolder',
   'appendText',
   'insertText',
+  'deleteParagraph',
+  'deleteRange',
 ];
 
 /** Операции над документом — разводятся по виду цели ДО чтения таблицы. */
-export const DOC_OPERATION_NAMES: readonly OperationName[] = ['appendText', 'insertText'];
-export type DocOperation = Extract<Operation, { op: 'appendText' | 'insertText' }>;
+export const DOC_OPERATION_NAMES: readonly OperationName[] = [
+  'appendText',
+  'insertText',
+  'deleteParagraph',
+  'deleteRange',
+];
+export type DocOperation = Extract<
+  Operation,
+  { op: 'appendText' | 'insertText' | 'deleteParagraph' | 'deleteRange' }
+>;
 
 /**
  * Битое регулярное выражение — отказ на границе, а не падение в середине плана (V10).
