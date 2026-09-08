@@ -11,11 +11,12 @@
  * требует `writeControl` — межвызовный дрейф ловит подпись, гонку внутри вызова — сервер.
  */
 
+import { gcError } from '../errors.js';
 import { assertPlanNotApplied } from '../sheets/write-guards.js';
 import type { Question } from '../sheets/write-types.js';
 import { docPlanId, type DocPlanChange, type DocPlanShape } from './plan.js';
 import { paragraphLabel, pickTab, resolveParagraph, resolveSection } from './selectors.js';
-import type { DocParagraph, DocSnapshot, DocTab, DocsClient } from './types.js';
+import type { DocParagraph, DocRequest, DocSnapshot, DocTab, DocsClient } from './types.js';
 import {
   clarify,
   commitDocWrite,
@@ -30,8 +31,11 @@ import {
 export type { DocApplyOutcome, DocChangePreview, DocRunOptions } from './write-support.js';
 
 export interface DocInsertRequest {
-  readonly op: 'appendText' | 'insertText';
-  readonly text: string;
+  readonly op: 'appendText' | 'insertText' | 'insertPageBreak' | 'insertInlineImage';
+  /** Текст вставки; у объектов (разрыв, картинка) его нет. */
+  readonly text?: string | undefined;
+  /** `insertInlineImage`: URL, доступный Google (см. `assertImageSource`). */
+  readonly uri?: string | undefined;
   readonly tab?: string | undefined;
   readonly afterHeading?: string | undefined;
   readonly where?: DocWhere | undefined;
@@ -99,7 +103,11 @@ export async function runDocInsert(
   if ('question' in anchor) return clarify([anchor.question]);
 
   const at = anchor.paragraph.endIndex - 1;
-  const inserted = `\n${request.text}`;
+  const object = OBJECT_OPS.has(request.op);
+  if (request.op === 'insertInlineImage') assertImageSource(request.uri);
+  // Объект (разрыв страницы, картинка) занимает РОВНО 1 юнит и текста не несёт.
+  const inserted = object ? '\u0001' : `\n${request.text ?? ''}`;
+  const shown = shownContent(request, object);
   const plan: DocPlanShape = {
     targetId: snapshot.docId,
     op: request.op,
@@ -111,17 +119,19 @@ export async function runDocInsert(
         startIndex: at,
         endIndex: at + inserted.length,
         anchor: anchor.label,
-        after: request.text,
+        after: shown,
       },
     ],
   };
   const code = docPlanId(plan);
   const changes: DocChangePreview[] = [
-    { kind: request.op, tab: tab.title, anchor: anchor.label, before: null, after: request.text },
+    { kind: request.op, tab: tab.title, anchor: anchor.label, before: null, after: shown },
   ];
-  const paragraphsAdded = request.text.split('\n').length;
   const notes = [
-    `Новых абзацев: ${paragraphsAdded}, ${anchor.label}. Стиль — как у якорного абзаца.`,
+    object
+      ? `Вставится ${shown}, ${anchor.label}. Откат удалит вставленное, пока его не правили.`
+      : `Новых абзацев: ${(request.text ?? '').split('\n').length}, ${anchor.label}. ` +
+        'Стиль — как у якорного абзаца.',
   ];
 
   if (options.dryRun !== false) {
@@ -131,17 +141,63 @@ export async function runDocInsert(
     client,
     snapshot,
     tab.tabId,
-    { plan: plan.changes[0]!, code, changes, notes },
+    { plan: plan.changes[0]!, code, changes, notes, inserted, uri: request.uri },
     options,
     request.op,
   );
 }
 
+/** Вставки объектов: у них нет текста, и мера — один юнит. */
+const OBJECT_OPS: ReadonlySet<string> = new Set(['insertPageBreak', 'insertInlineImage']);
+
+/**
+ * Источник картинки: только URL, доступный Google — он скачивает файл сам в момент
+ * вставки. Локальный путь и `file://` отклоняются ДО обращения к Google, с советом
+ * (P19b): загрузка локальных файлов — отдельная поставка (решение владельца 2026-09-08).
+ */
+function assertImageSource(uri: string | undefined): void {
+  if (uri === undefined || uri.trim() === '') {
+    throw gcError('bad_request', { detail: 'insertInlineImage требует uri картинки.' });
+  }
+  const value = uri.trim();
+  if (/^https:\/\//i.test(value)) return;
+  throw gcError('bad_request', {
+    detail:
+      `Источник картинки «${value}» Google прочитать не сможет: нужен https-URL, ` +
+      'доступный ему самому (публичная ссылка). Локальные файлы и file:// не ' +
+      'поддерживаются — загрузка локальных картинок придёт отдельной поставкой.',
+    cause: 'image.local-source',
+  });
+}
+
 interface InsertCommit {
   readonly plan: DocPlanChange;
+  readonly inserted: string;
+  readonly uri?: string | undefined;
   readonly code: string;
   readonly changes: readonly DocChangePreview[];
   readonly notes: readonly string[];
+}
+
+/** Что человек читает в плане: текст вставки или название объекта. */
+function shownContent(request: DocInsertRequest, object: boolean): string {
+  if (!object) return request.text ?? '';
+  return request.op === 'insertPageBreak' ? 'разрыв страницы' : `картинка ${request.uri ?? ''}`;
+}
+
+/** Запрос вставки: объект своим видом, текст — текстом. */
+function objectOrTextRequest(
+  op: DocInsertRequest['op'],
+  tabId: string,
+  at: number,
+  inserted: string,
+  uri: string | undefined,
+): DocRequest {
+  if (op === 'insertPageBreak') return { kind: 'insertPageBreak', tabId, at };
+  if (op === 'insertInlineImage') {
+    return { kind: 'insertInlineImage', tabId, at, uri: (uri ?? '').trim() };
+  }
+  return { kind: 'insertText', tabId, at, text: inserted };
 }
 
 /** Фаза записи: разрешение (конверт или код), однократность, запись, журнал. */
@@ -151,10 +207,9 @@ async function performInsert(
   tabId: string,
   commit: InsertCommit,
   options: DocRunOptions,
-  op: 'appendText' | 'insertText',
+  op: DocInsertRequest['op'],
 ): Promise<DocApplyOutcome> {
-  const { plan, code, changes, notes } = commit;
-  const inserted = `\n${plan.after ?? ''}`;
+  const { plan, code, changes, notes, inserted } = commit;
   // Однократность судится по ПЕРЕДАННОМУ коду и раньше сверки с новым планом: повтор
   // «пиши abc123» должен получить «уже записано», а не свежий код с приглашением
   // записать то же второй раз (тот же порядок, что у таблиц, B20/B21).
@@ -171,7 +226,7 @@ async function performInsert(
       code,
       changes,
       notes,
-      requests: [{ kind: 'insertText', tabId, at: plan.startIndex, text: inserted }],
+      requests: [objectOrTextRequest(op, tabId, plan.startIndex, inserted, commit.uri)],
       doc: { tab: plan.tab, startIndex: plan.startIndex, endIndex: plan.endIndex, inserted },
     },
     options,

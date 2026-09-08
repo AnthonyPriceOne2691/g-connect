@@ -311,6 +311,8 @@ export class FakeDocsClient implements DocsClient {
       else if (request.kind === 'updateTextStyle') this.updateTextStyle(request);
       else if (request.kind === 'updateParagraphStyle') this.updateParagraphStyle(request);
       else if (request.kind === 'setBullets') this.setBullets(request);
+      else if (request.kind === 'insertPageBreak' || request.kind === 'insertInlineImage')
+        this.insertObject(request);
       else this.applyTable(request);
     }
     this.applied.push([...requests]);
@@ -454,6 +456,31 @@ export class FakeDocsClient implements DocsClient {
     for (const hit of this.paragraphsIn(request.tabId, request.startIndex, request.endIndex)) {
       hit.paragraph.bulleted = request.bulleted ? true : undefined;
     }
+  }
+
+  /**
+   * Разрыв страницы и inline-картинка: в модели это ОБЪЕКТ внутри абзаца, занимающий
+   * 1 юнит и не несущий текста. Фейк кладёт его как прогон-плейсхолдер — так же, как
+   * шов видит `inlineObjectElement` (текста нет, `hasInlineObject` поднят).
+   */
+  private insertObject(
+    request: Extract<DocRequest, { kind: 'insertPageBreak' | 'insertInlineImage' }>,
+  ): void {
+    const { tab, blocks } = this.located(request.tabId);
+    const hit = blocks.find(
+      (b) => !isMutableTable(b.block) && request.at >= b.start && request.at < b.end,
+    );
+    if (hit === undefined || isMutableTable(hit.block)) {
+      throw gcError('bad_request', {
+        detail: `Объект по индексу ${request.at} не попадает в абзац.`,
+      });
+    }
+    const paragraph = hit.block;
+    const offset = request.at - hit.start;
+    const [left, right] = splitRuns(paragraph.runs, offset);
+    // Один юнит без текста: в домене — прогон нулевой длины с пометкой объекта.
+    paragraph.runs = [...left, { text: '\u0001' }, ...right];
+    void tab;
   }
 
   /** Табличные структурные запросы: мутируют блок-таблицу, найденную по startIndex. */

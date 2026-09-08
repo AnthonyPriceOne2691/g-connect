@@ -191,3 +191,21 @@ export const deleteParagraphBulletsOp = z.object({
   op: z.literal('deleteParagraphBullets'),
   ...styleCommonFields,
 });
+
+/** Разрыв страницы после абзаца-якоря. */
+export const insertPageBreakOp = z.object({
+  op: z.literal('insertPageBreak'),
+  where: docWhere.optional(),
+  ...docCommonFields,
+});
+
+/**
+ * Inline-картинка по URL, доступному Google: он скачивает файл сам в момент вставки.
+ * Локальные файлы не поддерживаются — отказ ДО обращения к Google (P19b).
+ */
+export const insertInlineImageOp = z.object({
+  op: z.literal('insertInlineImage'),
+  uri: z.string().min(1),
+  where: docWhere.optional(),
+  ...docCommonFields,
+});

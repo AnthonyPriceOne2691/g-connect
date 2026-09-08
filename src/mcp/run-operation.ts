@@ -52,7 +52,9 @@ type Operation = Exclude<
       | 'updateTextStyle'
       | 'setParagraphStyle'
       | 'createParagraphBullets'
-      | 'deleteParagraphBullets';
+      | 'deleteParagraphBullets'
+      | 'insertPageBreak'
+      | 'insertInlineImage';
   }
 >;
 type Options = Parameters<typeof upsertRow>[4];

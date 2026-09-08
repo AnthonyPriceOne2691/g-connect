@@ -26,7 +26,9 @@ export type DocOperationKind =
   | 'updateTextStyle'
   | 'setParagraphStyle'
   | 'createParagraphBullets'
-  | 'deleteParagraphBullets';
+  | 'deleteParagraphBullets'
+  | 'insertPageBreak'
+  | 'insertInlineImage';
 
 /** Стиль текстового прогона — только то, что продукт умеет ставить и откатывать. */
 export interface DocTextStyle {
@@ -204,6 +206,18 @@ export type DocRequest =
       readonly tabId: string;
       readonly tableStart: number;
       readonly columnIndex: number;
+    }
+  | {
+      readonly kind: 'insertPageBreak';
+      readonly tabId: string;
+      readonly at: number;
+    }
+  | {
+      readonly kind: 'insertInlineImage';
+      readonly tabId: string;
+      readonly at: number;
+      /** URL, доступный Google: картинку скачивает он сам в момент вставки. */
+      readonly uri: string;
     };
 
 /** Абзац внутри снимка: где начинается (юниты от начала снимка) и чем был. */

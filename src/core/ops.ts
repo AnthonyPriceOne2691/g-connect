@@ -20,6 +20,8 @@ import {
   deleteTableColumnOp,
   deleteTableOp,
   deleteTableRowOp,
+  insertInlineImageOp,
+  insertPageBreakOp,
   insertTableColumnOp,
   insertTableOp,
   insertTableRowOp,
@@ -283,6 +285,8 @@ export const operationSchema = z.discriminatedUnion('op', [
   setParagraphStyleOp,
   createParagraphBulletsOp,
   deleteParagraphBulletsOp,
+  insertPageBreakOp,
+  insertInlineImageOp,
 ]);
 
 export type Operation = z.infer<typeof operationSchema>;
@@ -326,6 +330,8 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'setParagraphStyle',
   'createParagraphBullets',
   'deleteParagraphBullets',
+  'insertPageBreak',
+  'insertInlineImage',
 ];
 
 /** Имена doc-операций — ЕДИНСТВЕННЫМ источником (урок L21): срез общего списка. */
@@ -346,6 +352,8 @@ const DOC_NAMES = [
   'setParagraphStyle',
   'createParagraphBullets',
   'deleteParagraphBullets',
+  'insertPageBreak',
+  'insertInlineImage',
 ] as const;
 
 /** Операции над документом — разводятся по виду цели ДО чтения таблицы. */

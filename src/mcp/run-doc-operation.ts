@@ -72,6 +72,8 @@ function dispatchDocOperation(
   switch (operation.op) {
     case 'appendText':
     case 'insertText':
+    case 'insertPageBreak':
+    case 'insertInlineImage':
       return runDocInsert(client, snapshot, insertRequest(operation), options);
     case 'deleteParagraph':
     case 'deleteRange':
@@ -101,14 +103,20 @@ const isStyleOperation = (operation: DocOperation): operation is StyleOperation 
   operation.op === 'deleteParagraphBullets';
 
 const insertRequest = (
-  operation: Extract<DocOperation, { op: 'appendText' | 'insertText' }>,
+  operation: Extract<
+    DocOperation,
+    { op: 'appendText' | 'insertText' | 'insertPageBreak' | 'insertInlineImage' }
+  >,
 ): Parameters<typeof runDocInsert>[2] => ({
   op: operation.op,
-  text: operation.text,
   tab: operation.tab,
   ...(operation.op === 'appendText'
-    ? { afterHeading: operation.afterHeading }
-    : { where: operation.where }),
+    ? { text: operation.text, afterHeading: operation.afterHeading }
+    : operation.op === 'insertText'
+      ? { text: operation.text, where: operation.where }
+      : operation.op === 'insertInlineImage'
+        ? { uri: operation.uri, where: operation.where }
+        : { where: operation.where }),
 });
 
 const deleteRequest = (

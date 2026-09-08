@@ -58,6 +58,9 @@ export const ENVELOPE_OPS: readonly OperationKind[] = [
   'setParagraphStyle',
   'createParagraphBullets',
   'deleteParagraphBullets',
+  // Разрыв страницы и картинка по URL: один юнит, откат удаляет вставленное.
+  'insertPageBreak',
+  'insertInlineImage',
 ];
 
 /**
@@ -229,6 +232,8 @@ const DOC_OPS: ReadonlySet<OperationKind> = new Set([
   'setParagraphStyle',
   'createParagraphBullets',
   'deleteParagraphBullets',
+  'insertPageBreak',
+  'insertInlineImage',
 ]);
 
 export function envelopeAuthorizes(

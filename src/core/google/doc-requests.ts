@@ -100,6 +100,12 @@ const TRANSLATORS: Readonly<Record<DocRequest['kind'], Translator>> = {
       },
     },
   }),
+  insertPageBreak: (request: Extract<DocRequest, { kind: 'insertPageBreak' }>) => ({
+    insertPageBreak: { location: { index: request.at, tabId: request.tabId } },
+  }),
+  insertInlineImage: (request: Extract<DocRequest, { kind: 'insertInlineImage' }>) => ({
+    insertInlineImage: { location: { index: request.at, tabId: request.tabId }, uri: request.uri },
+  }),
   setBullets: (request: Extract<DocRequest, { kind: 'setBullets' }>) =>
     request.bulleted
       ? {
