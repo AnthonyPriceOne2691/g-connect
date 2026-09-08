@@ -66,7 +66,7 @@ describe('P16-ядро — предусловие ревизией: отказ �
 });
 
 describe('семантика правок фейка — по документации', () => {
-  it('вставка сдвигает индексы последующих абзацев ровно на длину текста (UTF-16, эмодзи = 2)', async () => {
+  it('P17 — вставка сдвигает индексы на длину текста в UTF-16 (эмодзи = 2), не внутрь пары', async () => {
     const client = new FakeDocsClient(singleTab());
     const before = await client.getDocument();
     const third = before.tabs[0]!.paragraphs[2]!;

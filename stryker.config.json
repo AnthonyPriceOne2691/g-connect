@@ -14,7 +14,8 @@
     "!src/core/env.ts",
     "!src/core/sheets/types.ts",
     "!src/core/sheets/write-types.ts",
-    "!src/core/error-catalog.ts"
+    "!src/core/error-catalog.ts",
+    "!src/core/docs/types.ts"
   ],
   "thresholds": {
     "high": 80,
