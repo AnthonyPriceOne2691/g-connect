@@ -104,10 +104,34 @@ try {
       `${missing.length === 0 ? '' : `, нет в схеме: ${missing.join(', ')}`}` +
       `${extra.length === 0 ? '' : `, лишние: ${extra.join(', ')}`}`,
   );
+  // Уровень 3: doc-операции обязаны быть в СХЕМЕ транспорта, а не только в ядре — тот же
+  // класс, что блокер 2026-09-04 (девять операций из двадцати одной). Список берётся из
+  // ядра, поэтому расхождение здесь означает, что схему собрали не из него.
+  const { DOC_OPERATION_NAMES } = await import('../dist/core/ops.js');
+  const missingDocs = DOC_OPERATION_NAMES.filter((name) => !declared.includes(name));
+  check(
+    'протокол отдаёт doc-операции уровня 3',
+    missingDocs.length === 0,
+    `doc-операций ${DOC_OPERATION_NAMES.length}` +
+      `${missingDocs.length === 0 ? '' : `, нет в схеме: ${missingDocs.join(', ')}`}`,
+  );
+  // Схема gc_read обязана знать mode=text: без него агент не прочитает абзацы документа.
+  const readSchema = (tools.result?.tools ?? []).find((t) => t.name === 'gc_read')?.inputSchema;
+  const modes = readSchema?.properties?.mode?.enum ?? [];
+  check('gc_read объявляет режимы карты, строк и абзацев', modes.includes('text'), modes.join(', '));
+
   // D-18: конверт цели виден там же, где права. Иначе о разрешении узнают по факту записи.
   check(
     'instructions объясняют конверт',
     (init.result?.instructions ?? '').includes('конверт'),
+  );
+  // Правила, уходящие модели, обязаны говорить про документы: иначе агент узнает об
+  // адресации по факту отказа (тот же класс, что L6 — обещание без механизма).
+  const { policyText } = await import('../dist/core/policy.js');
+  const rulesText = policyText();
+  check(
+    'policy://rules объясняет адресацию документов',
+    rulesText.includes('mode=map') && rulesText.includes('textStartsWith'),
   );
 
   const resources = await send('resources/list', {});
@@ -184,6 +208,74 @@ try {
       insert.status === 'preview',
       String(insert.status),
     );
+
+    // ── Документы (уровень 3). Цель берётся из реестра по виду: подписывать её конвертом
+    // и править живьём — дело человека, проба только СУДИТ превью и отказы.
+    const docEntry = (targets.targets ?? []).find((x) => x.type === 'doc');
+    if (docEntry === undefined) {
+      check('doc-цель в реестре есть', true, 'нет doc-цели — doc-проба пропущена (не дефект)');
+    } else {
+      const docMap = await callTool('gc_read', { target: docEntry.alias, mode: 'map' });
+      check(
+        'gc_read map читает документ: табы и оглавление',
+        Array.isArray(docMap.tabs) && docMap.tabs.length > 0,
+        `табов ${docMap.tabs?.length}, заголовков ${docMap.tabs?.[0]?.headings?.length}`,
+      );
+      const firstTab = docMap.tabs?.[0];
+      const textPage = await callTool('gc_read', {
+        target: docEntry.alias,
+        mode: 'text',
+        tab: firstTab?.title,
+        limit: 3,
+      });
+      check(
+        'gc_read text отдаёт абзацы с номерами',
+        Array.isArray(textPage.paragraphs) && typeof textPage.paragraphs?.[0]?.n === 'number',
+        `абзацев ${textPage.paragraphs?.length}, ревизия ${textPage.revisionId}`,
+      );
+      // Превью вставки: НИЧЕГО не пишем. Значение уникально прогону (урок L24), но здесь
+      // даже уникальность не нужна — вставка не зависит от содержимого.
+      const docPreview = await callTool('gc_apply', {
+        op: 'appendText',
+        target: docEntry.alias,
+        tab: firstTab?.title,
+        text: `проба уровня 3 ${new Date().toISOString()} — не записывается`,
+      });
+      check(
+        'превью вставки в документ отдаёт код плана и якорь',
+        /^[0-9a-f]{6}$/.test(docPreview.planId ?? '') &&
+          typeof docPreview.changes?.[0]?.anchor === 'string',
+        `status=${docPreview.status}, anchor=${docPreview.changes?.[0]?.anchor}`,
+      );
+      check('превью документа ничего не записало', docPreview.status === 'preview');
+      // Разрушающая doc-правка просит НАЗВАНИЕ предмета (D-20), а не код.
+      const docDelete = await callTool('gc_apply', {
+        op: 'deleteParagraph',
+        target: docEntry.alias,
+        tab: firstTab?.title,
+        where: { paragraphIndex: 1 },
+        dryRun: true,
+      });
+      check(
+        'удаление абзаца просит назвать предмет правки',
+        (docDelete.notes ?? []).join(' ').includes('удаляю'),
+        (docDelete.notes ?? []).slice(-1)[0] ?? String(docDelete.status),
+      );
+      // Локальная картинка отклоняется ДО обращения к Google (P19b).
+      const localImage = await callTool('gc_apply', {
+        op: 'insertInlineImage',
+        target: docEntry.alias,
+        tab: firstTab?.title,
+        uri: '/tmp/probe.png',
+        dryRun: false,
+      });
+      check(
+        'локальный источник картинки отклонён до сети',
+        (localImage.error?.cause ?? localImage.raw ?? '').toString().includes('image.local-source') ||
+          (localImage.detail ?? '').includes('https'),
+        JSON.stringify(localImage).slice(0, 160),
+      );
+    }
 
     // Разрушающая правка обязана просить НАЗВАНИЕ, а не код и не «да» (D-20).
     const remove = await callTool('gc_apply', {

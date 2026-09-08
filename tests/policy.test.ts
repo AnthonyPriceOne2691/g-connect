@@ -24,8 +24,10 @@ import { parseEnvelope } from '../src/core/envelope.js';
 import { profileStatus, writeToken } from '../src/core/profiles.js';
 import { buildSheetData } from '../src/core/sheets/map.js';
 import { runDocDelete } from '../src/core/docs/delete-op.js';
-import { FakeDocsClient, buildDoc, p as docParagraph } from './fixtures/doc.js';
+import { runDocInsert } from '../src/core/docs/insert-op.js';
+import { undoDocLast } from '../src/core/undo-docs.js';
 import type { WriteRecord } from '../src/core/journal.js';
+import { FakeDocsClient, buildDoc, forecastDoc, p as docParagraph } from './fixtures/doc.js';
 import { appendRow, upsertRow } from '../src/core/sheets/rows.js';
 import { findReplace } from '../src/core/sheets/find-replace-op.js';
 import { formatCells } from '../src/core/sheets/format-op.js';
@@ -411,6 +413,91 @@ const probes: Record<string, () => Promise<void>> = {
     expect(limitOf('write.snapshot-max-cells', 0)).toBe(2000);
   },
 
+  'docs.selector-not-guess': async () => {
+    // Неоднозначность — вопрос с номерами абзацев, и ни одной правки.
+    const client = new FakeDocsClient(forecastDoc());
+    const outcome = await runDocInsert(
+      client,
+      await client.getDocument(),
+      { op: 'insertText', tab: 'Прогноз', text: 'х', where: { textContains: 'прогноз' } },
+      { dryRun: false },
+    );
+    expect(outcome.status).toBe('needs_clarification');
+    expect(outcome.questions[0]?.candidates.length).toBeGreaterThan(1);
+    expect(client.applied).toHaveLength(0);
+  },
+
+  'docs.write-needs-revision': async () => {
+    // Ревизия ушла — сервер отклоняет пакет целиком, документ не меняется.
+    const client = new FakeDocsClient(forecastDoc());
+    const before = await client.getDocument();
+    await expect(
+      client.batchUpdate('d', [{ kind: 'insertText', tabId: 't1', at: 1, text: 'х' }], 'rev-ушла'),
+    ).rejects.toMatchObject({ payload: { code: 'doc_changed' } });
+    const after = await client.getDocument();
+    expect(after.tabs[0]?.paragraphs[0]?.text).toBe(before.tabs[0]?.paragraphs[0]?.text);
+    expect(client.applied).toHaveLength(0);
+  },
+
+  'docs.undo-restores-styles': async () => {
+    // Удалили абзац с жирным фрагментом и заголовок — откат вернул и стили, и вид.
+    const doc = buildDoc({
+      tabs: [
+        {
+          title: 'Т',
+          content: [
+            docParagraph('Шапка', 'HEADING_2'),
+            { runs: [{ text: 'жирно', style: { bold: true } }, { text: ' обычно' }] },
+            docParagraph('хвост'),
+          ],
+        },
+      ],
+    });
+    const client = new FakeDocsClient(doc);
+    const snapshot = await client.getDocument();
+    const first = snapshot.tabs[0]!.paragraphs[0]!;
+    const second = snapshot.tabs[0]!.paragraphs[1]!;
+    const journalled: WriteRecord[] = [];
+    await runDocDelete(
+      client,
+      snapshot,
+      { op: 'deleteRange', startIndex: first.startIndex, endIndex: second.endIndex },
+      {
+        dryRun: false,
+        confirm: `удаляю диапазон ${first.startIndex}–${second.endIndex}`,
+        journal: async (r) => {
+          journalled.push(r);
+        },
+      },
+    );
+    const undone = await undoDocLast(client, 'doc-fixture', {
+      recent: () => Promise.resolve(journalled),
+    });
+    expect(undone.status).toBe('ok');
+    const restored = (await client.getDocument()).tabs[0]!.paragraphs;
+    expect(restored[0]?.namedStyle).toBe('HEADING_2');
+    expect(restored[1]?.runs.some((r) => r.style?.bold === true)).toBe(true);
+  },
+
+  'docs.image-source-remote': async () => {
+    // Локальный источник — отказ ДО обращения к Google.
+    const client = new FakeDocsClient(forecastDoc());
+    try {
+      await runDocInsert(
+        client,
+        await client.getDocument(),
+        { op: 'insertInlineImage', tab: 'Черновики', uri: '/Users/anthony/shot.png' },
+        { dryRun: false },
+      );
+      expect.unreachable('локальный источник должен быть отклонён');
+    } catch (error) {
+      const { payload } = error as { payload: { cause?: string; detail: string } };
+      expect(payload.cause).toBe('image.local-source');
+      expect(payload.detail).toContain('https');
+    }
+    expect(client.applied).toHaveLength(0);
+  },
+
   'write.snapshot-max-chars': async () => {
     // Документ: правка, которую нечем вернуть, не делается. Отказ ДО подтверждения.
     const bigDoc = buildDoc({
@@ -735,7 +822,7 @@ describe('правила как механизм (D-12)', () => {
       // оракул ниже, но здесь важно, что именно эти четыре правила не остались текстом.
       expect(rule.enforced_in).toMatch(/src\//);
     }
-    expect(policyRules()).toHaveLength(35);
+    expect(policyRules()).toHaveLength(39);
   });
 
   it('у КАЖДОГО правила есть проба — и наоборот', () => {

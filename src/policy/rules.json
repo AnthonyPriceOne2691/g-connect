@@ -262,6 +262,36 @@
       "value": true,
       "enforced_in": "src/core/envelope.ts (NAMED_CONFIRM_OPS) + src/core/sheets/write-guards.ts (namedConfirmOutcome)",
       "probe": "удаление с подтверждением «да» не пишет; с названием предмета — пишет"
+    },
+    {
+      "id": "docs.selector-not-guess",
+      "title": "Неоднозначный селектор абзаца — вопрос с кандидатами, а не правка первого совпавшего",
+      "kind": "deny",
+      "enforced_in": "src/core/docs/selectors.ts (resolveParagraph, resolveSection, resolveTable)",
+      "probe": "textContains, совпавший с несколькими абзацами, даёт needs_clarification с номерами абзацев, и ни одной правки"
+    },
+    {
+      "id": "docs.write-needs-revision",
+      "title": "Правка документа идёт только под ревизией, которую сверяет сервер Google",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/google/docs.ts (batchUpdate → writeControl.requiredRevisionId) + src/core/docs/plan.ts (ревизия в коде плана)",
+      "probe": "запись на ушедшей ревизии отклоняется целиком с doc_changed, документ не меняется"
+    },
+    {
+      "id": "docs.undo-restores-styles",
+      "title": "Откат правки документа возвращает текст СО СТИЛЯМИ и видом абзацев, а не голую строку",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/undo-docs.ts (restoreRequests, undoStyles) + src/core/undo-docs-table.ts (fillCells)",
+      "probe": "после удаления и отката жирный фрагмент снова жирный, заголовок — заголовком, список — списком"
+    },
+    {
+      "id": "docs.image-source-remote",
+      "title": "Картинка вставляется только по https-URL, доступному Google; локальные файлы отклоняются до сети",
+      "kind": "deny",
+      "enforced_in": "src/core/docs/insert-op.ts (assertImageSource)",
+      "probe": "локальный путь и file:// дают отказ image.local-source с советом, ни одного обращения к Google"
     }
   ]
 }
