@@ -10,6 +10,24 @@
 import { z } from 'zod';
 
 import { gcError } from './errors.js';
+import { commonFields } from './op-fields.js';
+import {
+  appendTextOp,
+  deleteParagraphOp,
+  deleteRangeOp,
+  insertTextOp,
+  replaceAllTextOp,
+  replaceTextOp,
+} from './docs/ops.js';
+
+export {
+  appendTextOp,
+  deleteParagraphOp,
+  deleteRangeOp,
+  insertTextOp,
+  replaceAllTextOp,
+  replaceTextOp,
+} from './docs/ops.js';
 import type { CellFormat } from './sheets/types.js';
 
 /** Значение ячейки, как его может прислать клиент. */
@@ -17,26 +35,6 @@ const cellValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 
 /** Имена колонок — ключи; значения примитивны. Объект в ячейку не пишется (§8.3). */
 const rowValues = z.record(z.string().min(1), cellValue);
-
-const commonFields = {
-  /** alias реестра, ссылка или ID. */
-  target: z.string().min(1),
-  sheet: z.string().min(1).optional(),
-  /** 1-based строка заголовков, если эвристику надо переопределить. */
-  headerRow: z.number().int().positive().max(1000).optional(),
-  /** По умолчанию НЕ пишем (§11.1). */
-  dryRun: z.boolean().default(true),
-  /** Осознанное подтверждение записи в формульную или защищённую колонку. */
-  force: z.boolean().default(false),
-  /**
-   * Код плана из превью — подпись человека под КОНКРЕТНОЙ правкой (D-16). Запись без него
-   * не проходит: «пиши» без кода означает «пиши что-нибудь», а между превью и записью план
-   * мог измениться.
-   */
-  confirm: z.string().min(1).optional(),
-  /** Ревизия, на которой строилась карта: защита от гонки с живой правкой. */
-  expectRevision: z.string().min(1).optional(),
-};
 
 export const appendRowOp = z.object({
   op: z.literal('appendRow'),
@@ -240,57 +238,6 @@ const createFields = {
   ...commonFields,
 };
 
-/**
- * Селектор абзаца документа (§4): агент говорит ЧТО, ядро вычисляет ГДЕ. Ровно один
- * ключ; `.strict()` — чтобы «paragrafIndex» отклонялся с перечислением, а не молчал.
- */
-const docWhere = z
-  .object({
-    paragraphIndex: z.number().int().positive().optional(),
-    textStartsWith: z.string().min(1).optional(),
-    textContains: z.string().min(1).optional(),
-    firstParagraph: z.literal(true).optional(),
-    lastParagraph: z.literal(true).optional(),
-  })
-  .strict();
-
-/** Общее у операций над документом: таб по заголовку (без него — единственный). */
-const docCommonFields = {
-  tab: z.string().min(1).optional(),
-  ...commonFields,
-};
-
-/** Дописать НОВЫЙ абзац: в конец таба, а с `afterHeading` — в конец его раздела. */
-export const appendTextOp = z.object({
-  op: z.literal('appendText'),
-  text: z.string().min(1),
-  afterHeading: z.string().min(1).optional(),
-  ...docCommonFields,
-});
-
-/** Вставить НОВЫЙ абзац сразу после абзаца-якоря. */
-export const insertTextOp = z.object({
-  op: z.literal('insertText'),
-  text: z.string().min(1),
-  where: docWhere,
-  ...docCommonFields,
-});
-
-/** Удалить абзац по селектору. Разрушающая: подтверждение — названием предмета (D-20). */
-export const deleteParagraphOp = z.object({
-  op: z.literal('deleteParagraph'),
-  where: docWhere,
-  ...docCommonFields,
-});
-
-/** Удалить явный диапазон — escape hatch §4; индексы едут, основной путь — селекторы. */
-export const deleteRangeOp = z.object({
-  op: z.literal('deleteRange'),
-  startIndex: z.number().int().positive(),
-  endIndex: z.number().int().positive(),
-  ...docCommonFields,
-});
-
 export const createSheetOp = z.object({ op: z.literal('createSheet'), ...createFields });
 export const createDocOp = z.object({ op: z.literal('createDoc'), ...createFields });
 export const createFolderOp = z.object({ op: z.literal('createFolder'), ...createFields });
@@ -321,6 +268,8 @@ export const operationSchema = z.discriminatedUnion('op', [
   insertTextOp,
   deleteParagraphOp,
   deleteRangeOp,
+  replaceTextOp,
+  replaceAllTextOp,
 ]);
 
 export type Operation = z.infer<typeof operationSchema>;
@@ -352,6 +301,8 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'insertText',
   'deleteParagraph',
   'deleteRange',
+  'replaceText',
+  'replaceAllText',
 ];
 
 /** Операции над документом — разводятся по виду цели ДО чтения таблицы. */
@@ -360,10 +311,20 @@ export const DOC_OPERATION_NAMES: readonly OperationName[] = [
   'insertText',
   'deleteParagraph',
   'deleteRange',
+  'replaceText',
+  'replaceAllText',
 ];
 export type DocOperation = Extract<
   Operation,
-  { op: 'appendText' | 'insertText' | 'deleteParagraph' | 'deleteRange' }
+  {
+    op:
+      | 'appendText'
+      | 'insertText'
+      | 'deleteParagraph'
+      | 'deleteRange'
+      | 'replaceText'
+      | 'replaceAllText';
+  }
 >;
 
 /**

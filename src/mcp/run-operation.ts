@@ -40,7 +40,9 @@ type Operation = Exclude<
       | 'appendText'
       | 'insertText'
       | 'deleteParagraph'
-      | 'deleteRange';
+      | 'deleteRange'
+      | 'replaceText'
+      | 'replaceAllText';
   }
 >;
 type Options = Parameters<typeof upsertRow>[4];

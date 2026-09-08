@@ -46,7 +46,11 @@ export interface DocDeleteRequest {
 }
 
 /** Прогоны абзаца, попавшие в [from, to), плюс завершающий `\n`, если он захвачен. */
-function sliceParagraphRuns(paragraph: DocParagraph, from: number, to: number): DocTextRun[] {
+export function sliceParagraphRuns(
+  paragraph: DocParagraph,
+  from: number,
+  to: number,
+): DocTextRun[] {
   const out: DocTextRun[] = [];
   let cursor = paragraph.startIndex;
   for (const run of paragraph.runs) {

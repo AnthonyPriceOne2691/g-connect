@@ -13,6 +13,7 @@
 export type DocOperationKind =
   | 'appendText'
   | 'insertText'
+  | 'replaceText'
   | 'deleteParagraph'
   | 'deleteRange'
   | 'deleteTable'

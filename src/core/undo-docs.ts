@@ -230,6 +230,74 @@ async function restoreSnapshot(
   };
 }
 
+/** Откат массовой замены: по снимку позиций, с конца, чтобы сдвиги не портили адреса. */
+async function undoReplacements(
+  client: DocsClient,
+  targetId: string,
+  record: WriteRecord,
+  snapshot: DocSnapshot,
+  options: UndoOptions,
+): Promise<UndoOutcome> {
+  const doc = docOf(record);
+  const replacements = doc.replacements ?? [];
+  if (options.force !== true && record.revisionAfter !== snapshot.revisionId) {
+    throw gcError('revision_conflict', {
+      detail:
+        'После замены документ правили: позиции вхождений могли сдвинуться, и откат вернул ' +
+        `бы текст не туда (ревизия записи ${record.revisionAfter ?? '—'}, сейчас ` +
+        `${snapshot.revisionId}). Осознанный откат — с force.`,
+      cause: 'doc_moved_after_replace',
+    });
+  }
+  const requests: DocRequest[] = [];
+  for (const item of [...replacements].reverse()) {
+    const tab = snapshot.tabs.find((t) => t.title === item.tab);
+    if (tab === undefined) {
+      throw gcError('revision_conflict', {
+        detail: `Таба «${item.tab}» больше нет — откат замены не знает, куда возвращать.`,
+      });
+    }
+    requests.push({
+      kind: 'deleteRange',
+      tabId: tab.tabId,
+      startIndex: item.startIndex,
+      endIndex: item.endIndex,
+    });
+    requests.push(
+      ...restoreRequests(tab.tabId, {
+        tab: item.tab,
+        startIndex: item.startIndex,
+        endIndex: item.startIndex,
+        runs: item.runs,
+      }),
+    );
+  }
+  const { revisionId: revisionAfter } = await client.batchUpdate(
+    targetId,
+    requests,
+    snapshot.revisionId,
+  );
+  if (options.journal !== undefined) {
+    await options.journal(
+      undoDocRecord(
+        record,
+        targetId,
+        snapshot.revisionId,
+        revisionAfter === '' ? null : revisionAfter,
+      ),
+    );
+  }
+  return {
+    status: 'ok',
+    restored: [],
+    undoneCorrelationId: record.correlationId,
+    at: record.at,
+    docUndone:
+      `Замена откачена по снимку: ${replacements.length} вхождений вернулись к исходному ` +
+      'тексту со стилями; совпадения, бывшие в тексте до правки, не тронуты.',
+  };
+}
+
 export async function undoDocLast(
   client: DocsClient,
   targetId: string,
@@ -242,6 +310,9 @@ export async function undoDocLast(
   const doc = docOf(record);
 
   const snapshot = await client.getDocument(targetId);
+  if (doc.replacements !== undefined) {
+    return undoReplacements(client, targetId, record, snapshot, options);
+  }
   if (doc.snapshot !== undefined) {
     return restoreSnapshot(client, targetId, record, snapshot, options);
   }

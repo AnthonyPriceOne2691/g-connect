@@ -7,6 +7,7 @@
 
 import { runDocDelete } from '../core/docs/delete-op.js';
 import { runDocInsert, type DocApplyOutcome } from '../core/docs/insert-op.js';
+import { runDocReplace } from '../core/docs/replace-op.js';
 import { undoDocLast } from '../core/undo-docs.js';
 import type { UndoOutcome } from '../core/undo-types.js';
 import { gcError } from '../core/errors.js';
@@ -54,34 +55,62 @@ export async function runDocApply(
     force: operation.force,
     authorize: envelopeJudge(resolved),
   };
-  const outcome =
-    operation.op === 'appendText' || operation.op === 'insertText'
-      ? await runDocInsert(
-          client,
-          snapshot,
-          {
-            op: operation.op,
-            text: operation.text,
-            tab: operation.tab,
-            ...(operation.op === 'appendText'
-              ? { afterHeading: operation.afterHeading }
-              : { where: operation.where }),
-          },
-          options,
-        )
-      : await runDocDelete(
-          client,
-          snapshot,
-          {
-            op: operation.op,
-            tab: operation.tab,
-            ...(operation.op === 'deleteParagraph'
-              ? { where: operation.where }
-              : { startIndex: operation.startIndex, endIndex: operation.endIndex }),
-          },
-          options,
-        );
+  const outcome = await dispatchDocOperation(client, snapshot, operation, options);
   return { ...outcome, target: { id: resolved.id, alias: resolved.alias } };
+}
+
+/** Разводка по doc-операциям — соответствие, а не логика (как HANDLERS таблиц). */
+function dispatchDocOperation(
+  client: Awaited<ReturnType<ToolDeps['docs']>>,
+  snapshot: Awaited<ReturnType<Awaited<ReturnType<ToolDeps['docs']>>['getDocument']>>,
+  operation: DocOperation,
+  options: Parameters<typeof runDocInsert>[3],
+): Promise<DocApplyOutcome> {
+  switch (operation.op) {
+    case 'appendText':
+    case 'insertText':
+      return runDocInsert(
+        client,
+        snapshot,
+        {
+          op: operation.op,
+          text: operation.text,
+          tab: operation.tab,
+          ...(operation.op === 'appendText'
+            ? { afterHeading: operation.afterHeading }
+            : { where: operation.where }),
+        },
+        options,
+      );
+    case 'deleteParagraph':
+    case 'deleteRange':
+      return runDocDelete(
+        client,
+        snapshot,
+        {
+          op: operation.op,
+          tab: operation.tab,
+          ...(operation.op === 'deleteParagraph'
+            ? { where: operation.where }
+            : { startIndex: operation.startIndex, endIndex: operation.endIndex }),
+        },
+        options,
+      );
+    case 'replaceText':
+    case 'replaceAllText':
+      return runDocReplace(
+        client,
+        snapshot,
+        {
+          op: operation.op,
+          tab: operation.tab,
+          find: operation.find,
+          replace: operation.replace,
+          ...(operation.op === 'replaceText' ? { where: operation.where } : {}),
+        },
+        options,
+      );
+  }
 }
 
 /**

@@ -6,7 +6,7 @@
  * системы, а гейт `di-indirection` был бы прав, что зависимость добывается, а не даётся.
  */
 
-import type { DocOperationKind, DocRangeSnapshot } from './docs/types.js';
+import type { DocOperationKind, DocRangeSnapshot, DocTextRun } from './docs/types.js';
 import type { CellFormat, SheetProperties } from './sheets/types.js';
 
 export interface JournalChange {
@@ -97,6 +97,19 @@ export interface DocWriteDetail {
    * текстом диапазона: правленное вставленное откатывать нельзя — унесёт чужое (P4).
    */
   readonly inserted?: string;
+  /**
+   * Массовая замена: каждое вхождение — что занимает сейчас и что было. Позиции — ПОСЛЕ
+   * правки; откат идёт с конца, чтобы сдвиги не портили адреса предыдущих.
+   */
+  readonly replacements?: readonly DocReplacement[];
+}
+
+/** Одно вхождение массовой замены: текущий диапазон и снимок оригинала. */
+export interface DocReplacement {
+  readonly tab: string;
+  readonly startIndex: number;
+  readonly endIndex: number;
+  readonly runs: readonly DocTextRun[];
 }
 
 export interface RangeSnapshot {

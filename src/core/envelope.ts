@@ -44,9 +44,11 @@ export const ENVELOPE_OPS: readonly OperationKind[] = [
   // Создание файла (`createFile`) тоже добавляющее и обратимое — в корзину.
   'createFile',
   // Документы (уровень 3): вставка нового абзаца добавляет, ничего не трогая, и её
-  // откат удаляет ровно вставленный диапазон с охранником «не правлено».
+  // откат удаляет ровно вставленный диапазон с охранником «не правлено»; точечная
+  // замена в пределах ОДНОГО абзаца обратима снимком и масштаб её виден в превью.
   'appendText',
   'insertText',
+  'replaceText',
 ];
 
 /**
@@ -207,7 +209,7 @@ function envelopeError(detail: string): ReturnType<typeof gcError> {
  * формульная колонка и нулевое изменение — не про разрешение, и внутри конверта они
  * работают как снаружи: ядро спрашивает, а не догадывается.
  */
-const DOC_OPS: ReadonlySet<OperationKind> = new Set(['appendText', 'insertText']);
+const DOC_OPS: ReadonlySet<OperationKind> = new Set(['appendText', 'insertText', 'replaceText']);
 
 export function envelopeAuthorizes(
   envelope: AutoEnvelope | null,
