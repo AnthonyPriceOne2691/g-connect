@@ -346,7 +346,17 @@ export function buildSheetData(
     otherSheets: snapshot.sheets
       .filter((s) => s.title !== sheet.title)
       .map((s) => ({ title: s.title, rowCount: s.rows.length })),
-    warnings,
+    // Снимок усечён по листу — значит список других листов НЕ полон, и молчать об этом
+    // нельзя: пустой список читается как «других листов нет». Живой прогон 2026-09-04
+    // получил `otherSheets: []` на книге из семи листов.
+    warnings:
+      snapshot.partial === true
+        ? [
+            ...warnings,
+            'Читан один лист, поэтому список других листов книги в этой карте неполон: ' +
+              'чтобы увидеть все листы, прочитай карту без указания листа.',
+          ]
+        : warnings,
   };
 
   return { map, rows: allRows, formats: allFormats, headerFormats };

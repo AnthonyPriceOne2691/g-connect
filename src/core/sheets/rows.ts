@@ -7,30 +7,16 @@
  */
 
 import { gcError } from '../errors.js';
-import { planId as planCode, type PlanCell, type PlanShape, type PlanTouch } from '../plan.js';
-import { newCorrelationId } from '../errors.js';
-import { parseA1 } from './a1.js';
-import { assertChangeBudget } from '../policy.js';
 import { needsClarification, resolveColumn } from '../resolver.js';
 import { normalizeValue } from '../values.js';
 import {
   columnLetter,
-  type CellFormat,
-  type CellValue,
-  type FormatRequest,
   type ColumnProfile,
   type SheetData,
   type SheetMap,
   type SheetsClient,
 } from './types.js';
 import {
-  assertBeforeValues,
-  assertPlanNotApplied,
-  confirmationOutcome,
-  duplicateAppendOutcome,
-} from './write-guards.js';
-import {
-  noChangeNote,
   type OperationKind,
   type ApplyOutcome,
   type PlannedChange,
@@ -50,14 +36,32 @@ export type {
 } from './write-types.js';
 export { NO_CHANGE_NOTE } from './write-types.js';
 
-export interface Prepared {
-  readonly resolved: { column: ColumnProfile; value: CellValue }[];
-  readonly assumptions: string[];
-  readonly notes: string[];
-  readonly questions: Question[];
-  /** Формульные и защищённые колонки в плане — уезжают в код плана (D-16). */
-  readonly touches: PlanTouch[];
-}
+import { contextOf, finishWrite, writeCells, type Prepared } from './commit.js';
+import { assertBeforeValues } from './write-guards.js';
+
+export type { Prepared } from './commit.js';
+export { formatRequest, finishWrite } from './commit.js';
+
+/**
+ * Запись ячеек: тот же контур, что у геометрии, только без структурной части.
+ *
+ * Обёртка, а не копия: последовательность охранников живёт в `commit.ts` одна на все формы
+ * правки. Имя `finish` сохранено, потому что им пользуются все ячеечные операции.
+ */
+export const finish = (
+  client: SheetsClient,
+  map: SheetMap,
+  changes: readonly PlannedChange[],
+  prepared: Prepared,
+  options: RowOptions,
+  op: OperationKind,
+): Promise<ApplyOutcome> =>
+  finishWrite(client, contextOf(map), changes, prepared, options, op, {
+    // Ячеечная правка приносит своё применение и своё предусловие тем же способом, что
+    // структурная: контур записи один, а формы правки различаются ровно этими двумя.
+    apply: (c) => writeCells(c, map, changes),
+    precondition: (c) => assertBeforeValues(c, map, changes),
+  });
 
 export const names = (map: SheetMap): readonly string[] => map.columns.map((c) => c.name);
 
@@ -174,160 +178,10 @@ export const clarify = (questions: readonly Question[], map: SheetMap): ApplyOut
  * пишет значения. Разделение здесь, а не у вызывающего: `finish` не должен знать, чем
  * отличаются операции — он знает только план.
  */
-async function writeCells(
-  client: SheetsClient,
-  map: SheetMap,
-  changes: readonly PlannedChange[],
-): Promise<void> {
-  for (const change of changes) {
-    if (change.kind === 'format') continue;
-    await client.updateValues(map.spreadsheetId, change.a1, [[change.after]]);
-  }
-  const formats = changes
-    .filter((c) => c.kind === 'format' && c.afterFormat !== undefined)
-    .map((c) => formatRequest(map, c.a1, c.afterFormat as CellFormat));
-  if (formats.length > 0) await client.batchUpdate(map.spreadsheetId, formats);
-}
-
-/** Адрес A1 из плана → доменный запрос вида. Один переводчик на весь пишущий путь. */
-export function formatRequest(map: SheetMap, a1: string, format: CellFormat): FormatRequest {
-  const parsed = parseA1(a1);
-  if (parsed === null) {
-    throw gcError('internal', { detail: `План содержит нечитаемый адрес ${a1}.` });
-  }
-  return {
-    kind: 'format',
-    sheetId: map.sheetId,
-    row: parsed.row,
-    column: parsed.column,
-    format,
-  };
-}
-
 /**
  * Общий финал всех трёх операций: превью или запись. Был скопирован трижды —
  * гейт дублей (jscpd) это и нашёл, а вместе с копией уезжала бы и логика dryRun.
  */
-type Base = Omit<ApplyOutcome, 'status' | 'revisionAfter'>;
-
-/**
- * Изменение плана → запись для кода плана и для журнала. Один переводчик на оба: гейт
- * копипаста нашёл здесь две копии, и он прав — если код плана и журнал начнут описывать
- * правку по-разному, расхождение будет видно только на откате.
- *
- * Вид входит в обе записи намеренно: без него код плана у правок вида считался по адресу и
- * не различал СОДЕРЖАНИЕ — «сделать жирным» и «снять жирность» получали один код. Нашла
- * живая проверка в соседней сессии 2026-09-03: `canonicalPlan` эти поля сериализовал, а
- * `planOf` их не кладл.
- */
-function cellRecord(change: PlannedChange): PlanCell {
-  return {
-    a1: change.a1,
-    column: change.column,
-    before: change.before,
-    after: change.after,
-    ...(change.beforeFormat === undefined ? {} : { beforeFormat: change.beforeFormat }),
-    ...(change.afterFormat === undefined ? {} : { afterFormat: change.afterFormat }),
-  };
-}
-
-/** План как данные: из него считается код (D-16) и с ним сверяется журнал (B19). */
-function planOf(
-  map: SheetMap,
-  changes: readonly PlannedChange[],
-  prepared: Prepared,
-  op: OperationKind,
-): PlanShape {
-  return {
-    targetId: map.spreadsheetId,
-    sheet: map.sheet,
-    op,
-    cells: changes.map(cellRecord),
-    touches: prepared.touches,
-  };
-}
-
-/**
- * Собственно запись: охранники, ячейки, ревизия, журнал.
- *
- * Отделено от `finish`, который остался диспетчером «вопрос / нулевое изменение / превью /
- * запись»: гейт сложности отклонил их совместное житьё, и по делу — это разные вопросы.
- */
-async function commit(
-  client: SheetsClient,
-  map: SheetMap,
-  changes: readonly PlannedChange[],
-  base: Base,
-  options: RowOptions,
-  op: OperationKind,
-): Promise<ApplyOutcome> {
-  const decision = options.authorize?.(op, changes.length) ?? {
-    authorized: false,
-    reason: 'Разрешения на запись без кода плана у этого вызова нет.',
-  };
-  const unconfirmed = confirmationOutcome(base, options, decision);
-  if (unconfirmed !== null) return unconfirmed;
-
-  // Дубль дописанной строки ловится ДО записи и только там, где человек план не читал.
-  const duplicate = await duplicateAppendOutcome(base, options, op, changes, map.spreadsheetId);
-  if (duplicate !== null) return duplicate;
-  await assertPlanNotApplied(options, base.planId, map.spreadsheetId);
-  await assertBeforeValues(client, map, changes);
-  await writeCells(client, map, changes);
-  const revisionAfter = (await options.readRevision?.()) ?? null;
-  const correlationId = newCorrelationId();
-
-  // Журнал пишется ПОСЛЕ успешной записи и до возврата: если журналирование упало,
-  // вызывающий обязан узнать об этом — «записали, но не знаем что» хуже отказа.
-  await options.journal?.({
-    at: new Date().toISOString(),
-    account: options.account ?? 'default',
-    targetId: map.spreadsheetId,
-    alias: options.alias ?? null,
-    sheet: map.sheet,
-    op,
-    changes: changes.map(cellRecord),
-    revisionBefore: map.revisionId,
-    revisionAfter,
-    correlationId,
-    ...(base.planId === null ? {} : { planId: base.planId }),
-  });
-
-  return { status: 'ok', ...base, revisionAfter, correlationId };
-}
-
-export async function finish(
-  client: SheetsClient,
-  map: SheetMap,
-  changes: readonly PlannedChange[],
-  prepared: Prepared,
-  options: RowOptions,
-  op: OperationKind,
-): Promise<ApplyOutcome> {
-  assertChangeBudget(changes.length);
-  const base: Base = {
-    changes,
-    assumptions: prepared.assumptions,
-    notes: prepared.notes,
-    questions: [] as readonly Question[],
-    baseRevision: map.revisionId,
-    planId: changes.length === 0 ? null : planCode(planOf(map, changes, prepared, op)),
-  };
-
-  // Нулевое изменение — отдельный статус, а не «ok» и не пустое превью: раньше
-  // `dryRun:false` на «значение уже такое» возвращал `ok` БЕЗ строки журнала, и человек
-  // читал «готово» при пустом факте (живой прогон B13, 2026-09-02).
-  if (changes.length === 0) {
-    return {
-      status: 'no_change',
-      ...base,
-      notes: [...prepared.notes, noChangeNote(op)],
-      revisionAfter: null,
-    };
-  }
-  if (options.dryRun !== false) return { status: 'preview', ...base, revisionAfter: null };
-  return commit(client, map, changes, base, options, op);
-}
 
 /** Индексы строк данных, подходящих под ключ. Сравнение — через нормализацию значений. */
 export function findRows(

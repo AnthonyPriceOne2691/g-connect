@@ -11,58 +11,19 @@
  */
 
 import { gcError, newCorrelationId } from './errors.js';
+import { undoStructure } from './undo-structure.js';
+import type { NothingToUndoReason, UndoOptions, UndoOutcome } from './undo-types.js';
+
+export type { NothingToUndoReason, UndoOptions, UndoOutcome } from './undo-types.js';
 import { limitOf } from './policy.js';
 import {
   lastUndoable,
   type JournalChange,
-  type JournalSink,
   type JournalSource,
   type WriteRecord,
 } from './journal.js';
 import { formatAt, parseA1, sameCell, sameFormat, valueAt } from './sheets/a1.js';
 import type { CellFormat, SheetsClient, SpreadsheetSnapshot } from './sheets/types.js';
-
-export interface UndoOptions {
-  readonly account?: string;
-  /** Откатить КОНКРЕТНУЮ запись по её id — способ дотянуться до старой осознанно. */
-  readonly correlationId?: string;
-  /** Сколько последних записей откатить. Больше одной — редкий случай, но он законен. */
-  readonly last?: number;
-  /** Ревизия сейчас — только для записи в журнал; решение об откате принимается по ячейкам. */
-  readonly currentRevision?: string | null;
-  /**
-   * Ревизия ПОСЛЕ обратной записи — тем же способом, каким её читает путь записи.
-   * Раньше здесь стоял литерал `null`, хотя тип `WriteRecord` и `rules.md` обещают
-   * человеку обе ревизии: строка отката была заведомо неполной.
-   */
-  readonly readRevision?: () => Promise<string | null>;
-  /** Откатить, даже если наши ячейки изменили. Только по явному решению человека. */
-  readonly force?: boolean;
-  readonly journal?: JournalSink;
-}
-
-/**
- * Почему откатывать нечего. Три разных состояния раньше выглядели снаружи одинаково,
- * и модель дописывала причину сама: в живом прогоне B13 она сказала «журнал пуст»,
- * когда в журнале лежали четыре строки, просто все записи были уже откачены.
- */
-export type NothingToUndoReason = 'journal_empty' | 'all_undone' | 'id_not_found';
-
-export interface UndoOutcome {
-  readonly status: 'ok' | 'nothing_to_undo';
-  /** Что вернули: те же ячейки, но значения из снимка «до». */
-  readonly restored: readonly {
-    a1: string;
-    column: string;
-    value: string | number | boolean | null;
-  }[];
-  readonly undoneCorrelationId: string | null;
-  readonly at: string | null;
-  /** Заполнено только при `nothing_to_undo`. */
-  readonly reason?: NothingToUndoReason;
-  /** Причина человеческим текстом — её показывают, а не ветвят. */
-  readonly detail?: string;
-}
 
 function reasonFor(history: readonly WriteRecord[], options: UndoOptions): NothingToUndoReason {
   if (options.correlationId !== undefined) return 'id_not_found';
@@ -142,17 +103,24 @@ async function restoreChanges(
   targetId: string,
   sheetId: number,
   record: WriteRecord,
-): Promise<{ a1: string; column: string; value: string | number | boolean | null }[]> {
-  const restored: { a1: string; column: string; value: string | number | boolean | null }[] = [];
+): Promise<UndoOutcome['restored'][number][]> {
+  const restored: UndoOutcome['restored'][number][] = [];
   for (const change of [...record.changes].reverse()) {
     if (change.afterFormat === undefined) {
       await client.updateValues(targetId, change.a1, [[change.before]]);
-    } else {
-      await client.batchUpdate(targetId, [
-        { kind: 'format', sheetId, ...cellAt(change.a1), format: undoFormat(change) },
-      ]);
+      restored.push({ a1: change.a1, column: change.column, kind: 'value', value: change.before });
+      continue;
     }
-    restored.push({ a1: change.a1, column: change.column, value: change.before });
+    const format = undoFormat(change);
+    await client.batchUpdate(targetId, [{ kind: 'format', sheetId, ...cellAt(change.a1), format }]);
+    // Значение здесь идёт справочно и не менялось — поэтому `kind: 'format'` стоит рядом.
+    restored.push({
+      a1: change.a1,
+      column: change.column,
+      kind: 'format',
+      value: change.before,
+      format,
+    });
   }
   return restored;
 }
@@ -254,12 +222,14 @@ function assertRecent(record: WriteRecord, options: UndoOptions): void {
   const maxMinutes = limitOf('undo.recency-minutes', 60);
   const ageMinutes = (Date.now() - new Date(record.at).getTime()) / 60_000;
   if (ageMinutes <= maxMinutes) return;
-  throw gcError('revision_conflict', {
+  const touched = record.changes.map((c) => c.a1).join(', ');
+  throw gcError('undo_too_old', {
     detail:
       `Последняя неоткаченная запись сделана ${new Date(record.at).toLocaleString('ru-RU')} ` +
-      `(${Math.round(ageMinutes)} мин назад) и меняла ${record.changes.map((c) => c.a1).join(', ')}. ` +
-      'Откат без уточнения работает только на свежих записях: если нужна именно эта, ' +
-      `назови её id — ${record.correlationId}.`,
+      `(${Math.round(ageMinutes)} мин назад)${touched === '' ? '' : ` и меняла ${touched}`}` +
+      `${record.structure === undefined ? '' : ` (правка геометрии: ${record.structure.kind})`}. ` +
+      'Откат без уточнения работает только на свежих записях. Нужна именно эта — передай ' +
+      `её id в поле record: ${record.correlationId}.`,
     cause: 'undo_target_too_old',
   });
 }
@@ -281,6 +251,9 @@ export async function undoLast(
     return nothingToUndo(reasonFor(history, options), history.length, options.correlationId);
   }
   assertRecent(record, options);
+  if (record.structure !== undefined) {
+    return undoStructure(client, targetId, record, options, journalUndo);
+  }
   const snapshot = await client.getSpreadsheet(targetId, { sheet: record.sheet });
   assertSafeToUndo(snapshot, record, options);
   const sheetId = snapshot.sheets.find((s) => s.title === record.sheet)?.sheetId ?? 0;

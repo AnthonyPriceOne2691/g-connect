@@ -15,23 +15,21 @@ import { z } from 'zod';
 import { parseEnvelope } from '../core/envelope.js';
 import { gcError, isGcError } from '../core/errors.js';
 import type { SearchQuery } from '../core/google/drive.js';
-import type { SheetData, SheetsClient } from '../core/sheets/types.js';
 import { operationJsonSchema, parseOperation } from '../core/ops.js';
+import { runOperation } from './run-operation.js';
+import { runCreate } from './run-create.js';
 import { limitOf, policyText, policyRules } from '../core/policy.js';
 import { listProfiles, profileStatus } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
-import { findReplace } from '../core/sheets/find-replace-op.js';
-import { formatCells } from '../core/sheets/format-op.js';
-import { appendRow, upsertRow, type ApplyOutcome } from '../core/sheets/rows.js';
-import { setCells } from '../core/sheets/set-cells-op.js';
+import type { ApplyOutcome } from '../core/sheets/rows.js';
 import { assertWritable, resolveTarget, type RegistryEntry } from '../core/targets.js';
 import { undoLast } from '../core/undo.js';
 
 export type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
 import type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
 import { applyHint, applyOptions, maybeReport } from './apply-support.js';
-
-const targetArg = z.string().min(1).describe('alias из реестра, ссылка на файл или его ID');
+import { applyInput } from './apply-schema.js';
+import { targetArg } from './target-arg.js';
 
 /** Общий разбор цели: реестр + ссылка. Здесь же решается, можно ли писать. */
 async function resolve(deps: ToolDeps, target: string) {
@@ -269,41 +267,6 @@ export const gcScan: ToolDefinition = {
   },
 };
 
-/** Разводка по операциям. Вынесено: в обработчике это была четвёртая ветка подряд. */
-async function runOperation(
-  client: SheetsClient,
-  data: SheetData,
-  operation: ReturnType<typeof parseOperation>,
-  options: Parameters<typeof appendRow>[3],
-): Promise<ApplyOutcome> {
-  if (operation.op === 'appendRow') return appendRow(client, data, operation.values, options);
-  if (operation.op === 'upsertRow') {
-    return upsertRow(client, data, operation.key, operation.values, options);
-  }
-  if (operation.op === 'findReplace') {
-    return findReplace(
-      client,
-      data,
-      {
-        find: operation.find,
-        replace: operation.replace,
-        ...(operation.columns === undefined ? {} : { columns: operation.columns }),
-        matchCase: operation.matchCase,
-        matchEntireCell: operation.matchEntireCell,
-        searchByRegex: operation.searchByRegex,
-      },
-      options,
-    );
-  }
-  if (operation.op === 'formatCells') {
-    return formatCells(client, data, operation.where, operation.columns, operation.format, {
-      ...options,
-      includeHeader: operation.includeHeader,
-    });
-  }
-  return setCells(client, data, operation.where, operation.values, options);
-}
-
 export const gcApply: ToolDefinition = {
   name: 'gc_apply',
   title: 'Записать в таблицу (по умолчанию — превью)',
@@ -312,54 +275,7 @@ export const gcApply: ToolDefinition = {
     '(status=preview) и ничего не пишет — покажи план человеку. Запись только с ' +
     'dryRun=false. Неизвестная колонка или значение вне списка допустимых дают ' +
     'status=needs_clarification с вариантами: спроси, не угадывай.',
-  input: {
-    op: z.enum(['appendRow', 'upsertRow', 'setCells', 'formatCells', 'findReplace']),
-    /** Превью файлом: широкую таблицу в терминале не читают (§13.3, ступень 0). */
-    report: z.boolean().default(false).describe('Дополнительно записать превью HTML-файлом'),
-    target: targetArg,
-    sheet: z.string().min(1).optional(),
-    headerRow: z.number().int().positive().optional(),
-    key: z.record(z.string(), z.unknown()).optional().describe('upsertRow: ключ строки'),
-    where: z.record(z.string(), z.unknown()).optional().describe('setCells: условие отбора'),
-    values: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .describe('Имена колонок → значения (для записи; formatCells их не требует)'),
-    columns: z
-      .array(z.string().min(1))
-      .optional()
-      .describe('formatCells: имена колонок, чей вид правим'),
-    format: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .describe(
-        'formatCells: bold, italic, underline, align (left|center|right), background #RRGGBB',
-      ),
-    includeHeader: z
-      .boolean()
-      .optional()
-      .describe('formatCells: заодно поправить ячейку заголовка этих колонок'),
-    find: z.string().min(1).optional().describe('findReplace: что искать'),
-    replace: z.string().optional().describe('findReplace: на что заменить'),
-    matchCase: z.boolean().optional().describe('findReplace: учитывать регистр'),
-    matchEntireCell: z.boolean().optional().describe('findReplace: совпадение по всей ячейке'),
-    searchByRegex: z
-      .boolean()
-      .optional()
-      .describe('findReplace: find — регулярное выражение (битое отклоняется до записи)'),
-    dryRun: z.boolean().default(true),
-    force: z.boolean().default(false),
-    confirm: z
-      .string()
-      .min(1)
-      .optional()
-      .describe('Код плана из превью — им человек подтверждает ИМЕННО эту правку'),
-    expectRevision: z
-      .string()
-      .min(1)
-      .optional()
-      .describe('Ревизия для вызовов БЕЗ превью (CLI, раннер): у превью её несёт код плана'),
-  },
+  input: applyInput,
   async handle(args, deps) {
     const operation = parseOperation(args);
 
@@ -369,6 +285,17 @@ export const gcApply: ToolDefinition = {
     // протокол, юнит-тесты вызывали обработчик и этого не видели.
     const resolved = await resolve(deps, operation.target);
     if (operation.dryRun === false) assertWritable(resolved);
+
+    // Создание файла идёт до всякого чтения таблицы: у него нет ни листа, ни карты, а
+    // цель — папка. Ветка ранняя намеренно — иначе `getSpreadsheet` на папке отказал бы
+    // «файл не найден» вместо понятного ответа.
+    if (
+      operation.op === 'createSheet' ||
+      operation.op === 'createDoc' ||
+      operation.op === 'createFolder'
+    ) {
+      return runCreate(operation, resolved, deps);
+    }
 
     const client = await deps.sheets();
     const wanted = sheetDefaults(resolved.entry, operation.sheet, operation.headerRow);
@@ -403,7 +330,41 @@ export const gcApply: ToolDefinition = {
 const undoInput = {
   target: targetArg,
   force: z.boolean().default(false).describe('Откатить, даже если документ правили после'),
+  /**
+   * Живой прогон 2026-09-04: отказ «назови её id — gc-…» советовал то, чего нельзя было
+   * сделать — параметра для id в схеме не существовало. Совет без способа его исполнить
+   * хуже отсутствия совета.
+   */
+  record: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('id записи журнала (correlationId) — откатить именно её, а не последнюю'),
 };
+
+/**
+ * Что сказать человеку после отката. Форма отчёта обязана совпадать с формой правки:
+ * живой прогон 2026-09-04 показал, что откат правки ВИДА отчитывался значением ячейки —
+ * значением, которого правка не касалась (урок L5).
+ */
+function undoHint(outcome: Awaited<ReturnType<typeof undoLast>>): string | undefined {
+  if (outcome.status === 'nothing_to_undo') {
+    return `Откатывать нечего. ${outcome.detail ?? ''}`.trim();
+  }
+  const values = outcome.restored.filter((r) => r.kind !== 'format').length;
+  const formats = outcome.restored.filter((r) => r.kind !== 'value').length;
+  const parts = [
+    ...(values === 0 ? [] : [`значения в ${values} ячейк(ах)`]),
+    ...(formats === 0 ? [] : [`вид ${formats} ячейк(и)`]),
+    ...(outcome.structureUndone === undefined ? [] : [outcome.structureUndone]),
+  ];
+  const what = parts.length === 0 ? 'ничего: список возвращённого пуст' : parts.join('; ');
+  const not =
+    outcome.notRestored === undefined || outcome.notRestored.length === 0
+      ? ''
+      : ` НЕ вернулось: ${outcome.notRestored.join('; ')}.`;
+  return `Откат выполнен. Вернулось — ${what}.${not} Скажи человеку именно это, а не «откачено».`;
+}
 
 export const gcUndo: ToolDefinition = {
   name: 'gc_undo',
@@ -421,8 +382,13 @@ export const gcUndo: ToolDefinition = {
     const outcome = await undoLast(client, resolved.id, deps.journalSource, {
       account: deps.account,
       force: input.force,
+      ...(input.record === undefined ? {} : { correlationId: input.record }),
       currentRevision: await deps.revision(resolved.id),
       readRevision: () => deps.revision(resolved.id),
+      trash: async (fileId: string) => {
+        const drive = await deps.drive();
+        await drive.trash(fileId);
+      },
       journal: deps.journal,
     });
     return {
@@ -430,10 +396,7 @@ export const gcUndo: ToolDefinition = {
       target: { id: resolved.id, alias: resolved.alias },
       // Раньше здесь стояло «журнал по этой цели пуст» — утверждение, неверное в двух
       // из трёх случаев (всё уже откачено; записи с таким id нет). Причину называет ядро.
-      hint:
-        outcome.status === 'nothing_to_undo'
-          ? `Откатывать нечего. ${outcome.detail ?? ''}`.trim()
-          : undefined,
+      hint: undoHint(outcome),
     };
   },
 };

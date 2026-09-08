@@ -7,7 +7,7 @@
       "title": "Записывающая операция по умолчанию возвращает план, а не пишет",
       "kind": "default",
       "value": true,
-      "enforced_in": "src/core/ops.ts (dryRun.default) + src/core/sheets/rows.ts (finish)",
+      "enforced_in": "src/core/ops.ts (commonFields, dryRun) + src/core/sheets/commit.ts (finishWrite)",
       "probe": "операция без dryRun не пишет ни одной ячейки"
     },
     {
@@ -50,7 +50,7 @@
       "id": "columns.no-silent-create",
       "title": "Неизвестная колонка не создаётся молча — задаётся вопрос",
       "kind": "ask",
-      "enforced_in": "src/core/resolver.ts (ступень 6) + rows.ts (prepare)",
+      "enforced_in": "src/core/resolver.ts (resolveColumn, needsClarification)",
       "probe": "values с несуществующей колонкой → needs_clarification, колонка не создана"
     },
     {
@@ -72,7 +72,7 @@
       "title": "Чтение ограничено по строкам, а усечение помечается",
       "kind": "limit",
       "value": 500,
-      "enforced_in": "src/core/google/sheets.ts (DEFAULT_MAX_ROWS, ReadOptions.maxRows)",
+      "enforced_in": "src/core/google/sheets.ts (DEFAULT_MAX_ROWS)",
       "probe": "чтение без maxRows берёт не больше значения правила"
     },
     {
@@ -123,7 +123,7 @@
       "title": "Тесты должны убивать мутантов: порог объявлен и проверяется прогоном",
       "kind": "limit",
       "value": 50,
-      "enforced_in": "src/core/policy.ts (limitOf) + stryker.config.json (thresholds.break)",
+      "enforced_in": "src/core/policy.ts (limitOf) + stryker.config.json",
       "probe": "порог из правила совпадает с порогом, на котором падает мутационный прогон"
     },
     {
@@ -146,7 +146,7 @@
       "id": "auth.testing-mode-warning",
       "title": "О приближении семидневного предела доступа предупреждаем заранее",
       "kind": "invariant",
-      "enforced_in": "src/core/profiles.ts (profileStatus.warnings)",
+      "enforced_in": "src/core/profiles.ts (profileStatus)",
       "probe": "профиль с токеном старше шести дней отдаёт предупреждение с указанием, что делать"
     },
     {
@@ -201,11 +201,11 @@
     },
     {
       "id": "write.irreversible-outside-envelope",
-      "title": "В конверт кладутся только операции, откат которых построен",
+      "title": "В конверт кладутся только операции, которые не уничтожают данные",
       "kind": "default",
       "value": true,
-      "enforced_in": "src/core/envelope.ts (ENVELOPE_OPS, parseOps)",
-      "probe": "структурная операция в auto отклоняется при разборе конверта с названной причиной"
+      "enforced_in": "src/core/envelope.ts (ENVELOPE_OPS, NAMED_CONFIRM_OPS, parseOps, envelopeAuthorizes)",
+      "probe": "разрушающая операция в auto отклоняется при разборе конверта с названной причиной"
     },
     {
       "id": "write.plan-cells-only",
@@ -222,6 +222,38 @@
       "value": 10,
       "enforced_in": "src/core/sheets/write-guards.ts (recentDuplicateAppend)",
       "probe": "второй appendRow с тем же содержимым без кода плана даёт no_change, а не вторую строку"
+    },
+    {
+      "id": "write.snapshot-max-cells",
+      "title": "Операция, чей снимок для отката больше 2000 ячеек, отказывает до записи",
+      "kind": "limit",
+      "value": 2000,
+      "enforced_in": "src/core/sheets/structure-op.ts (assertSnapshotBudget)",
+      "probe": "удаление диапазона больше бюджета отказывает ДО записи, назвав оба числа"
+    },
+    {
+      "id": "write.undo-names-what-it-cannot",
+      "title": "Откат, вернувший не всё, обязан назвать, чего не вернул",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/sheets/structure-op.ts (lostWith) + src/core/undo-structure.ts (undoStructure, notRestored)",
+      "probe": "откат удаления листа сообщает notRestored с числами, а не отчитывается полным успехом"
+    },
+    {
+      "id": "write.structural-needs-snapshot",
+      "title": "Правка, уничтожающая содержимое, не идёт без снимка для отката",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/sheets/structure-op.ts (deleteRows, deleteColumns, deleteSheet) + src/core/sheets/order-op.ts (sortRange) + src/core/undo-structure.ts (restoreSnapshot)",
+      "probe": "в записи журнала об удалении есть снимок со значениями и видом, и откат заливает его обратно"
+    },
+    {
+      "id": "write.destructive-needs-name",
+      "title": "Разрушающая правка подтверждается названием предмета, а не «да»",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/envelope.ts (NAMED_CONFIRM_OPS) + src/core/sheets/write-guards.ts (namedConfirmOutcome)",
+      "probe": "удаление с подтверждением «да» не пишет; с названием предмета — пишет"
     }
   ]
 }

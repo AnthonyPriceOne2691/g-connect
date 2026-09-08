@@ -8,7 +8,7 @@
  * Меты обязательны: добавить правило и не исполнить его → тест красный.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -29,10 +29,23 @@ import { findReplace } from '../src/core/sheets/find-replace-op.js';
 import { formatCells } from '../src/core/sheets/format-op.js';
 import { setCells } from '../src/core/sheets/set-cells-op.js';
 import { assertWritable, resolveTarget } from '../src/core/targets.js';
+import { deleteColumns, deleteRows, deleteSheet } from '../src/core/sheets/structure-op.js';
+
+/** Лист с тем, чего откат вернуть не может: считается, чтобы назвать числом. */
+const EXTRAS = {
+  conditionalFormats: 2,
+  dataValidations: 0,
+  protectedRanges: 0,
+  charts: 1,
+  filters: 0,
+};
 import { undoLast } from '../src/core/undo.js';
 import {
   upsertConfirmed,
   FakeSheetsClient,
+  MutableSheetsClient,
+  instructionSheet,
+  reportSheet,
   formattedSheet,
   formulaSheet,
   protectedSheet,
@@ -299,8 +312,101 @@ const probes: Record<string, () => Promise<void>> = {
     } catch (error) {
       const { payload } = error as { payload: { detail: string; cause?: string } };
       expect(payload.cause).toBe('write.envelope-invalid');
-      expect(payload.detail).toContain('журнал хранит ячейки');
+      // Причина сменилась с 2.5b: снимок строки построен, и в конверт такая операция не
+      // кладётся не «потому что нечем откатить», а потому что требует названия (D-20).
+      expect(payload.detail).toContain('названием');
     }
+  },
+
+  'write.structural-needs-snapshot': async () => {
+    // Снимок — не «на всякий случай»: без него откат вернёт пустую строку и отчитается
+    // успехом. Проверяем и наличие в журнале, и то, что откат его заливает.
+    const c = new MutableSheetsClient(snapshot([reportSheet(), instructionSheet()]));
+    const journalled: WriteRecord[] = [];
+    const options = {
+      dryRun: false,
+      confirm: 'удаляю lash-try-on',
+      journal: async (r: WriteRecord) => {
+        journalled.push(r);
+      },
+      journalSource: { recent: () => Promise.resolve(journalled) },
+    };
+    await deleteRows(
+      c,
+      buildSheetData(snapshot([reportSheet(), instructionSheet()])),
+      { Проект: 'lash-try-on' },
+      options,
+    );
+    const snap = journalled[0]?.snapshots?.[0];
+    expect(snap?.rows[0]?.map((cell) => cell.value)).toContain('lash-try-on');
+
+    const undone = await undoLast(c, 'SHEET', { recent: () => Promise.resolve(journalled) });
+    expect(undone.restored.length).toBeGreaterThan(0);
+    expect(JSON.stringify((await c.getSpreadsheet()).sheets[0]?.rows)).toContain('lash-try-on');
+  },
+
+  'write.destructive-needs-name': async () => {
+    const c = new MutableSheetsClient(snapshot([reportSheet(), instructionSheet()]));
+    const data = () => buildSheetData(snapshot([reportSheet(), instructionSheet()]));
+    const denied = await deleteRows(
+      c,
+      data(),
+      { Проект: 'lash-try-on' },
+      {
+        dryRun: false,
+        confirm: 'да',
+      },
+    );
+    expect(denied.status).toBe('confirm_required');
+    const allowed = await deleteRows(
+      c,
+      data(),
+      { Проект: 'lash-try-on' },
+      {
+        dryRun: false,
+        confirm: 'да, удаляю lash-try-on',
+      },
+    );
+    expect(allowed.status).toBe('ok');
+  },
+
+  'write.undo-names-what-it-cannot': async () => {
+    // Откат листа возвращает значения, вид и свойства — но не условное форматирование,
+    // проверки данных и диаграммы. Он обязан это СКАЗАТЬ: иначе человек прочитает
+    // «откачено» и будет думать, что вернулось всё (урок L5).
+    const rich = snapshot([reportSheet(), { ...instructionSheet(), extras: EXTRAS }]);
+    const client = new MutableSheetsClient(rich);
+    const journalled: WriteRecord[] = [];
+    await deleteSheet(client, buildSheetData(rich, { sheet: 'Инструкция' }), {
+      dryRun: false,
+      confirm: 'удаляю лист Инструкция',
+      journal: async (r) => {
+        journalled.push(r);
+      },
+      journalSource: { recent: () => Promise.resolve(journalled) },
+    });
+    const undone = await undoLast(client, 'SHEET', {
+      recent: () => Promise.resolve(journalled),
+    });
+    expect(undone.status).toBe('ok');
+    expect(undone.notRestored?.join('; ')).toContain('условного форматирования');
+  },
+
+  'write.snapshot-max-cells': async () => {
+    // Правка, которую нечем вернуть, не делается вовсе: отказ ДО записи, с обоими числами.
+    const wide = snapshot([wideSheet(2100)]);
+    const c = new FakeSheetsClient(wide);
+    try {
+      await deleteColumns(c, buildSheetData(wide), 'Значение', { dryRun: false });
+      expect.unreachable('снимок больше бюджета должен отказать');
+    } catch (error) {
+      const { payload } = error as { payload: { code: string; cause?: string; detail: string } };
+      expect(payload.code).toBe('policy_denied');
+      expect(payload.cause).toBe('write.snapshot-max-cells');
+      expect(payload.detail).toContain('2000');
+    }
+    expect(c.writes).toHaveLength(0);
+    expect(limitOf('write.snapshot-max-cells', 0)).toBe(2000);
   },
 
   'write.plan-cells-only': async () => {
@@ -492,7 +598,10 @@ const probes: Record<string, () => Promise<void>> = {
           recent: () =>
             Promise.resolve([
               {
-                at: '2026-09-01T10:00:00.000Z',
+                // Время СВЕЖЕЕ намеренно: охранник свежести стоит раньше сверки ячеек, и
+                // с датой из прошлого проба проверяла бы не то правило, которое названа
+                // проверять (порядок ветвей — урок L11).
+                at: new Date().toISOString(),
                 account: 'default',
                 targetId: 'SHEET1',
                 alias: null,
@@ -562,12 +671,27 @@ describe('правила как механизм (D-12)', () => {
     }
   });
 
-  it('enforced_in каждого правила указывает на существующий файл', () => {
+  it('enforced_in каждого правила указывает на существующий файл И на функцию в нём', () => {
+    // Проверка усилена после разбора читателя без прогона 2026-09-04: она смотрела только
+    // существование ФАЙЛА, поэтому четыре правила годами указывали на функции, уехавшие в
+    // другие модули (`assertSnapshotBudget`, `finish`, `writeCells`), и оракул молчал.
+    // Цена ошибки — потерянное время того, кто пойдёт искать механизм по указателю.
     for (const rule of policyRules()) {
       const paths = rule.enforced_in.match(/src\/[\w./-]+\.ts/g) ?? [];
       expect(paths.length, `${rule.id}: в enforced_in нет пути к файлу`).toBeGreaterThan(0);
-      for (const path of paths) {
+      const sources = paths.map((path) => {
         expect(existsSync(path), `${rule.id}: файла ${path} нет`).toBe(true);
+        return readFileSync(path, 'utf8');
+      });
+      // Имена в скобках — это точки отказа: «src/core/x.ts (funcA, funcB)».
+      for (const named of rule.enforced_in.matchAll(/\(([^)]+)\)/g)) {
+        for (const name of named[1]!.split(',').map((part) => part.trim())) {
+          if (name.length === 0 || name.includes(' ')) continue;
+          expect(
+            sources.some((source) => source.includes(name)),
+            `${rule.id}: в файлах ${paths.join(', ')} нет упоминания «${name}»`,
+          ).toBe(true);
+        }
       }
     }
   });
@@ -586,7 +710,7 @@ describe('правила как механизм (D-12)', () => {
       // оракул ниже, но здесь важно, что именно эти четыре правила не остались текстом.
       expect(rule.enforced_in).toMatch(/src\//);
     }
-    expect(policyRules()).toHaveLength(30);
+    expect(policyRules()).toHaveLength(34);
   });
 
   it('у КАЖДОГО правила есть проба — и наоборот', () => {

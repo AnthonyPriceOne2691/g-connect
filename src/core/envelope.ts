@@ -17,9 +17,12 @@ import type { EnvelopeDecision, OperationKind } from './sheets/write-types.js';
 
 /**
  * Операции, которые ВООБЩЕ можно положить в конверт. Список, а не «всё, кроме»: любая
- * будущая операция (структурные из 2.5b — `insertRows`, `deleteRows`, `addSheet`) окажется
- * снаружи по построению, а не по чьей-то памяти. Удаление строки обратимо только при
- * снимке всей строки, а журнал хранит ячейки — до этого структурному в конверте не место.
+ * будущая операция окажется снаружи по построению, а не по чьей-то памяти.
+ *
+ * Критерий — «не уничтожает и не перемешивает»: добавляющее и обратимое сюда кладётся,
+ * разрушающее живёт в `NAMED_CONFIRM_OPS` и требует названия предмета всегда. Текст про
+ * «структурные не кладутся» устарел со слайса 3 и был исправлен после разбора читателя
+ * без прогона 2026-09-04 — он же стоял в D-18.
  */
 export const ENVELOPE_OPS: readonly OperationKind[] = [
   'appendRow',
@@ -27,6 +30,50 @@ export const ENVELOPE_OPS: readonly OperationKind[] = [
   'setCells',
   'formatCells',
   'findReplace',
+  // Позиционные структурные (2.5b): добавляют место, ничего не уничтожая, и их откат —
+  // обратная операция с охранником «вставленное ещё пусто».
+  'insertRows',
+  'insertColumns',
+  'addSheet',
+  'renameSheet',
+  // Добавляющие и обратимые: копия колонки и автозаполнение возвращаются снимком,
+  // копия листа удаляется откатом, созданный файл уходит в корзину.
+  'copyRange',
+  'autoFill',
+  'duplicateSheet',
+  // Создание файла (`createFile`) тоже добавляющее и обратимое — в корзину.
+  'createFile',
+];
+
+/**
+ * Имена, которыми создание файла зовут В ПРОТОКОЛЕ, → имя операции ядра.
+ *
+ * Читатель без прогона нашёл ловушку: в реестре надо было писать `createFile`, а человек
+ * видит в схеме `createSheet`/`createDoc`/`createFolder` — и неверное имя роняло конверт
+ * ЦЕЛИКОМ, то есть ломало и все прочие записи по этой цели. Принимаем оба написания.
+ */
+const OP_ALIASES: Readonly<Record<string, OperationKind>> = {
+  createSheet: 'createFile',
+  createDoc: 'createFile',
+  createFolder: 'createFile',
+};
+
+/**
+ * Операции, которые требуют финального подтверждения ВСЕГДА (D-20), сколько бы конверт ни
+ * разрешал: «как очистка корзины в Windows» (решение владельца 2026-09-03).
+ *
+ * Деление не «опасно на слух», а проверяемое: здесь одна фраза уничтожает или
+ * перемешивает то, чего в ответе не видно целиком. Такую операцию нельзя положить в
+ * конверт — разбор реестра её отклонит.
+ */
+export const NAMED_CONFIRM_OPS: readonly OperationKind[] = [
+  'deleteRows',
+  'deleteColumns',
+  'deleteSheet',
+  'moveRows',
+  'sortRange',
+  // Вырезание уничтожает источник целиком, независимо от того, что переносит.
+  'cutRange',
 ];
 
 /** Граница по числу ячеек, когда конверт её не назвал. */
@@ -65,15 +112,27 @@ function parseOps(raw: unknown, where: string): readonly OperationKind[] {
   if (!Array.isArray(raw) || raw.length === 0) {
     throw envelopeError(`Конверт ${where}: поле ops обязательно и непусто.`);
   }
-  for (const op of raw) {
-    if (typeof op === 'string' && ENVELOPE_OPS.includes(op as OperationKind)) continue;
+  const named: OperationKind[] = [];
+  for (const item of raw as readonly unknown[]) {
+    const asked = typeof item === 'string' ? item : '';
+    const op = OP_ALIASES[asked] ?? asked;
+    if (ENVELOPE_OPS.includes(op as OperationKind)) {
+      named.push(op as OperationKind);
+      continue;
+    }
+    const destructive = NAMED_CONFIRM_OPS.includes(op as OperationKind);
     throw envelopeError(
-      `Конверт ${where}: операция «${String(op)}» в конверт не кладётся. ` +
-        `Можно: ${ENVELOPE_OPS.join(', ')}. Структурные операции остаются снаружи, ` +
-        'пока журнал хранит ячейки, а не строки: их откат нечем построить.',
+      `Конверт ${where}: операция «${String(item)}» в конверт не кладётся. ` +
+        (destructive
+          ? 'Она уничтожает или перемешивает то, чего в ответе не видно целиком, и ' +
+            'требует финального подтверждения названием — всегда, сколько бы конверт ни ' +
+            'разрешал (D-20). '
+          : '') +
+        `Можно: ${ENVELOPE_OPS.join(', ')}` +
+        ` (создание файла можно назвать и так, как в протоколе: ${Object.keys(OP_ALIASES).join(', ')}).`,
     );
   }
-  return raw as readonly OperationKind[];
+  return named;
 }
 
 function parseMaxCells(raw: unknown, where: string): number {
@@ -109,6 +168,14 @@ export function envelopeAuthorizes(
   op: OperationKind,
   cellCount: number,
 ): EnvelopeDecision {
+  // Разрушающая операция не авторизуется конвертом никогда — даже если её туда как-то
+  // занесло: разбор реестра её отклоняет, но охранник записи не полагается на разбор.
+  if (NAMED_CONFIRM_OPS.includes(op)) {
+    return {
+      authorized: false,
+      reason: 'Эта правка уничтожает или перемешивает данные — нужно назвать её предмет.',
+    };
+  }
   if (envelope === null) {
     return { authorized: false, reason: 'У цели нет конверта: правка показывается планом.' };
   }

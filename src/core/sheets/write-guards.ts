@@ -57,6 +57,9 @@ export function confirmationOutcome(
   decision: EnvelopeDecision,
 ): ApplyOutcome | null {
   const code = base.planId;
+  // Разрушающая правка (D-20): подтверждение НАЗЫВАЕТ предмет — «да, удаляю AutoLink
+  // Platform». Отдельной функцией, потому что гейт сложности отклонил тринадцатую ветвь.
+  if (base.structural?.confirmToken !== undefined) return namedConfirmOutcome(base, options);
   if (options.confirm === undefined) {
     if (decision.authorized) return null;
     return {
@@ -223,3 +226,75 @@ async function standingWrites(
   );
   return history.filter((r) => r.op !== 'undo' && !undone.has(r.correlationId));
 }
+
+/**
+ * Названо ли в подтверждении то, что правим (D-20).
+ *
+ * Нормализация перечислена, а не «умная»: регистр, кавычки любых видов, повторные
+ * пробелы. Совпадением считается ВХОЖДЕНИЕ имени — «да, удаляю „AutoLink Platform“»
+ * проходит, «да» нет. Код плана принимается тоже: у вызовов без превью названия нет.
+ */
+function namesTheSubject(confirm: string, token: string, code: string | null): boolean {
+  const normalized = normalizeConfirm(confirm);
+  if (code !== null && normalized === normalizeConfirm(code)) return true;
+  return normalized.includes(normalizeConfirm(token));
+}
+
+function normalizeConfirm(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[«»"'`„“”]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Подтверждение названием (D-20): «как очистка корзины в Windows».
+ *
+ * Код плана продолжает приниматься — он нужен вызовам без превью (CLI, раннер). Голое
+ * «да» не проходит: это разница между диалогом «вы уверены?» и подписью под конкретной
+ * правкой.
+ */
+function namedConfirmOutcome(
+  base: Omit<ApplyOutcome, 'status' | 'revisionAfter'>,
+  options: RowOptions,
+): ApplyOutcome | null {
+  const token = base.structural?.confirmToken ?? '';
+  const code = base.planId;
+  const given = options.confirm;
+  if (given !== undefined && namesTheSubject(given, token, code)) return null;
+
+  // Чужой код — это РАСХОЖДЕНИЕ, а не отсутствие подтверждения, и говорить о нём надо
+  // по-разному. Живой прогон 2026-09-04: разрушающий путь на код `ffffff` отвечал
+  // «одного „да“ недостаточно» человеку, который «да» не говорил, — а на неразрушающем
+  // пути `plan_mismatch` в это же время работал правильно.
+  const mismatch = given !== undefined && looksLikePlanCode(given);
+  return {
+    status: mismatch ? 'plan_mismatch' : 'confirm_required',
+    ...base,
+    notes: [...base.notes, confirmNote(base, given, mismatch)],
+    revisionAfter: null,
+  };
+}
+
+/** Текст отказа: он разный для чужого кода, для «не назвал предмет» и для «не сказал ничего». */
+function confirmNote(
+  base: Omit<ApplyOutcome, 'status' | 'revisionAfter'>,
+  given: string | undefined,
+  mismatch: boolean,
+): string {
+  const phrase = base.structural?.confirmPhrase ?? base.structural?.confirmToken ?? '';
+  const code = base.planId ?? '—';
+  if (mismatch) {
+    return (
+      `Подтверждён код ${given ?? ''}, а у этого плана код ${code}. Записи не было. ` +
+      `Эта правка разрушающая: подтверди её, назвав предмет — «${phrase}» — или кодом плана ниже.`
+    );
+  }
+  const what =
+    given === undefined ? 'Подтверждения не было вовсе' : `«${given}» предметом правки не называет`;
+  return `Записи не было. Подтверди правку, назвав её предмет: «${phrase}» (или кодом плана ${code}). ${what}.`;
+}
+
+/** Похоже на код плана: шесть hex. Нужно, чтобы отличить чужой код от «да». */
+const looksLikePlanCode = (value: string): boolean => /^[0-9a-f]{6}$/i.test(value.trim());

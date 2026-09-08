@@ -8,14 +8,17 @@
 import { google, type sheets_v4 } from 'googleapis';
 
 import { fromGoogleError, gcError } from '../errors.js';
+import { toRequest } from './requests.js';
 import { limitOf } from '../policy.js';
 import { withRetry } from '../retry.js';
 import type {
   Cell,
   CellFormat,
   CellValue,
-  FormatRequest,
+  GridRange,
   ReadOptions,
+  SheetExtras,
+  SheetProperties,
   SheetRequest,
   SheetSnapshot,
   SheetsClient,
@@ -139,11 +142,9 @@ function validationsOf(sheet: sheets_v4.Schema$Sheet): ValidationRule[] {
   return out;
 }
 
-export function toSheetSnapshot(sheet: sheets_v4.Schema$Sheet): SheetSnapshot {
-  const properties = sheet.properties ?? {};
-  const rowData = sheet.data?.[0]?.rowData ?? [];
-  const frozen = properties.gridProperties?.frozenRowCount;
-  const protectedRanges = (sheet.protectedRanges ?? []).flatMap((range) => {
+/** Защищённые диапазоны в домен: 1-based строки, включительные колонки. */
+function protectedRangesOf(sheet: sheets_v4.Schema$Sheet): GridRange[] {
+  return (sheet.protectedRanges ?? []).flatMap((range) => {
     const r = range.range;
     if (r === undefined || r === null) return [];
     return [
@@ -155,13 +156,23 @@ export function toSheetSnapshot(sheet: sheets_v4.Schema$Sheet): SheetSnapshot {
       },
     ];
   });
+}
 
-  const merges = (sheet.merges ?? []).map((r) => ({
+function mergesOf(sheet: sheets_v4.Schema$Sheet): GridRange[] {
+  return (sheet.merges ?? []).map((r) => ({
     startRow: (r.startRowIndex ?? 0) + 1,
     endRow: r.endRowIndex ?? 0,
     startColumn: r.startColumnIndex ?? 0,
     endColumn: (r.endColumnIndex ?? 1) - 1,
   }));
+}
+
+export function toSheetSnapshot(sheet: sheets_v4.Schema$Sheet): SheetSnapshot {
+  const properties = sheet.properties ?? {};
+  const rowData = sheet.data?.[0]?.rowData ?? [];
+  const frozen = properties.gridProperties?.frozenRowCount;
+  const protectedRanges = protectedRangesOf(sheet);
+  const merges = mergesOf(sheet);
 
   return {
     title: properties.title ?? 'Лист',
@@ -171,8 +182,63 @@ export function toSheetSnapshot(sheet: sheets_v4.Schema$Sheet): SheetSnapshot {
     ...(frozen === undefined || frozen === null ? {} : { frozenRows: frozen }),
     validations: validationsOf(sheet),
     protectedRanges,
+    properties: sheetPropertiesOf(sheet),
+    extras: extrasOf(sheet, rowData),
   };
 }
+
+/**
+ * Свойства листа, которые откат умеет вернуть (D-19). Больше здесь не нужно: всё, чего
+ * в этом наборе нет, план обязан назвать потерей — см. `extrasOf`.
+ */
+function sheetPropertiesOf(sheet: sheets_v4.Schema$Sheet): SheetProperties {
+  const properties = sheet.properties ?? {};
+  const grid = properties.gridProperties ?? {};
+  return definedOnly<SheetProperties>({
+    frozenRows: grid.frozenRowCount,
+    frozenColumns: grid.frozenColumnCount,
+    tabColor: toHex(properties.tabColorStyle?.rgbColor ?? properties.tabColor ?? undefined),
+    hidden: properties.hidden,
+  });
+}
+
+/**
+ * Убрать поля со значением `null` или `undefined`.
+ *
+ * При `exactOptionalPropertyTypes` «поля нет» и «поле undefined» — разные типы, и чистка
+ * обязана быть в ОДНОМ месте: гейт сложности отклонил четыре тернарника подряд, и он прав,
+ * потому что читать их приходится по одному, а ошибка в любом даёт лишнее поле в домене.
+ */
+function definedOnly<T extends object>(value: Record<string, unknown>): T {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, item]) => item !== undefined && item !== null),
+  ) as T;
+}
+
+/**
+ * Сколько на листе того, чего откат не вернёт. Числа, а не признаки: человеку перед
+ * удалением листа нужно «3 правила условного форматирования», а не «есть форматирование».
+ *
+ * Заметки к ячейкам здесь НЕ считаются, и это названная непокрытость: ядро их не читает
+ * вовсе (`toCell` их не переносит), поэтому и обещать их подсчёт нельзя.
+ */
+function extrasOf(
+  sheet: sheets_v4.Schema$Sheet,
+  rowData: readonly sheets_v4.Schema$RowData[],
+): SheetExtras {
+  return {
+    conditionalFormats: countOf(sheet.conditionalFormats),
+    dataValidations: rowData.reduce((sum, row) => sum + countOf(withValidation(row)), 0),
+    protectedRanges: countOf(sheet.protectedRanges),
+    charts: countOf(sheet.charts),
+    filters: countOf(sheet.filterViews) + (present(sheet.basicFilter) ? 1 : 0),
+  };
+}
+
+const countOf = (list: readonly unknown[] | null | undefined): number => list?.length ?? 0;
+const present = (value: unknown): boolean => value !== undefined && value !== null;
+const withValidation = (row: sheets_v4.Schema$RowData): sheets_v4.Schema$CellData[] =>
+  (row.values ?? []).filter((cell) => present(cell.dataValidation));
 
 /**
  * Ответ Google → доменный снимок. Вынесено отдельно и экспортировано ради тестов:
@@ -183,6 +249,7 @@ export function toSpreadsheetSnapshot(
   data: sheets_v4.Schema$Spreadsheet,
   id: string,
   revisionId?: string,
+  partial = false,
 ): SpreadsheetSnapshot {
   const sheets = (data.sheets ?? []).map(toSheetSnapshot);
   if (sheets.length === 0) {
@@ -192,55 +259,9 @@ export function toSpreadsheetSnapshot(
     id,
     title: data.properties?.title ?? 'Таблица',
     ...(revisionId === undefined ? {} : { revisionId }),
+    ...(partial ? { partial: true } : {}),
     sheets,
   };
-}
-
-/** Доменная правка вида → запрос библиотеки. Единственное место такого перевода. */
-function toRepeatCell(request: FormatRequest): sheets_v4.Schema$Request {
-  const { format } = request;
-  const textFields = (['bold', 'italic', 'underline'] as const).filter(
-    (key) => format[key] !== undefined,
-  );
-  const fields = [
-    ...textFields.map((key) => `userEnteredFormat.textFormat.${key}`),
-    ...(format.align === undefined ? [] : ['userEnteredFormat.horizontalAlignment']),
-    ...(format.background === undefined ? [] : ['userEnteredFormat.backgroundColor']),
-  ];
-  return {
-    repeatCell: {
-      range: {
-        sheetId: request.sheetId,
-        startRowIndex: request.row - 1,
-        endRowIndex: request.row,
-        startColumnIndex: request.column,
-        endColumnIndex: request.column + 1,
-      },
-      cell: {
-        userEnteredFormat: {
-          ...(textFields.length === 0
-            ? {}
-            : {
-                textFormat: Object.fromEntries(textFields.map((key) => [key, format[key]])),
-              }),
-          ...(format.align === undefined
-            ? {}
-            : { horizontalAlignment: format.align.toUpperCase() }),
-          ...(format.background === undefined
-            ? {}
-            : { backgroundColor: fromHex(format.background) }),
-        },
-      },
-      fields: fields.join(','),
-    },
-  };
-}
-
-/** `#ff8000` → доли, как их ждёт Google. Обратная сторона `toHex`. */
-function fromHex(hex: string): sheets_v4.Schema$Color {
-  const clean = hex.replace('#', '');
-  const part = (at: number): number => parseInt(clean.slice(at, at + 2), 16) / 255;
-  return { red: part(0), green: part(2), blue: part(4) };
 }
 
 export interface GoogleSheetsClientOptions {
@@ -295,7 +316,7 @@ export class GoogleSheetsClient implements SheetsClient {
         revisionId = undefined;
       }
 
-      return toSpreadsheetSnapshot(response.data, id, revisionId);
+      return toSpreadsheetSnapshot(response.data, id, revisionId, ranges !== undefined);
     } catch (error) {
       throw fromGoogleError(error, `Не удалось прочитать таблицу ${id}.`);
     }
@@ -329,9 +350,32 @@ export class GoogleSheetsClient implements SheetsClient {
    * `{ bold: true }` снял бы и выравнивание, и фон. Маска — не оптимизация, а разница между
    * «сделать жирным» и «сделать жирным, стереть остальное».
    */
+  /**
+   * Имена листов книги одним дешёвым вызовом: `fields` без сетки.
+   *
+   * Цена названа: это дополнительный запрос там, где раньше врала карта. Полное чтение
+   * книги ради имён стоило бы у владельца ~28 000 ячеек за проверку одного имени.
+   */
+  async sheetTitles(id: string): Promise<readonly string[]> {
+    try {
+      const response = await this.retry(() =>
+        this.sheets.spreadsheets.get({
+          spreadsheetId: id,
+          fields: 'sheets(properties(title))',
+        }),
+      );
+      return (response.data.sheets ?? []).flatMap((sheet) => {
+        const title = sheet.properties?.title;
+        return title === undefined || title === null ? [] : [title];
+      });
+    } catch (error) {
+      throw fromGoogleError(error, `Не удалось прочитать список листов ${id}.`);
+    }
+  }
+
   async batchUpdate(id: string, requests: readonly SheetRequest[]): Promise<void> {
     if (requests.length === 0) return;
-    const body = requests.map((request) => toRepeatCell(request));
+    const body = requests.map((request) => toRequest(request));
     try {
       await this.retry(() =>
         this.sheets.spreadsheets.batchUpdate({
@@ -340,7 +384,7 @@ export class GoogleSheetsClient implements SheetsClient {
         }),
       );
     } catch (error) {
-      throw fromGoogleError(error, `Не удалось применить ${requests.length} правк(и) вида.`);
+      throw fromGoogleError(error, `Не удалось применить ${requests.length} правк(и).`);
     }
   }
 

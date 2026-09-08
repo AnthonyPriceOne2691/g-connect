@@ -21,6 +21,7 @@ export type ErrorCode =
   | 'policy_denied'
   | 'write_blocked'
   | 'revision_conflict'
+  | 'undo_too_old'
   | 'stale_value'
   | 'confirm_required'
   | 'plan_already_applied'
@@ -132,6 +133,18 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, CatalogEntry>> = {
     retryable: false,
     action: 'confirm_explicitly',
     actionLabel: 'Подтвердить осознанно',
+  },
+  /**
+   * Запись стара, а не документ изменился. Отдельный код, потому что живой прогон
+   * 2026-09-04 получил заголовок «Документ изменился с момента чтения» на запись
+   * восемнадцатичасовой давности при нетронутом документе — код и заголовок противоречили
+   * собственному `detail`. Действия у человека нет: доуточняет вызов агент, назвав id.
+   */
+  undo_too_old: {
+    title: 'Запись слишком стара, чтобы откатывать её без уточнения',
+    retryable: false,
+    action: null,
+    actionLabel: null,
   },
   revision_conflict: {
     title: 'Документ изменился с момента чтения',

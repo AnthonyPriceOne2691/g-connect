@@ -125,12 +125,147 @@ export const findReplaceOp = z.object({
   ...commonFields,
 });
 
+/**
+ * Структурные операции (§6.2, фаза 2.5b): геометрия листа.
+ *
+ * Позиция задаётся ЯКОРЕМ, а не числом: «вставь строку выше проекта X». Номер строки
+ * между планом и записью может стать чужим, и число на границе означало бы, что клиент
+ * его уже посчитал — по карте, которая могла устареть.
+ */
+export const insertRowsOp = z.object({
+  op: z.literal('insertRows'),
+  /** Относительно какой строки вставляем: то же условие, что у `setCells`. */
+  where: rowValues,
+  count: z.number().int().positive().max(200).default(1),
+  /** Ниже якоря, а не выше. */
+  below: z.boolean().default(false),
+  ...commonFields,
+});
+
+export const insertColumnsOp = z.object({
+  op: z.literal('insertColumns'),
+  /** Относительно какой колонки — по имени, не по букве. */
+  column: z.string().min(1),
+  count: z.number().int().positive().max(200).default(1),
+  /** Правее якоря, а не левее. */
+  below: z.boolean().default(false),
+  ...commonFields,
+});
+
+/**
+ * Удаления (§6.2). Подтверждение — названием предмета (D-20), поэтому `confirm` здесь
+ * принимает не только код плана: «да, удаляю AutoLink Platform» — законная подпись.
+ */
+export const deleteRowsOp = z.object({
+  op: z.literal('deleteRows'),
+  where: rowValues,
+  ...commonFields,
+});
+
+export const deleteColumnsOp = z.object({
+  op: z.literal('deleteColumns'),
+  column: z.string().min(1),
+  ...commonFields,
+});
+
+/** Удаление листа: какой именно — из `sheet` (или лист по умолчанию у цели реестра). */
+export const deleteSheetOp = z.object({
+  op: z.literal('deleteSheet'),
+  ...commonFields,
+});
+
+export const addSheetOp = z.object({
+  op: z.literal('addSheet'),
+  title: z.string().min(1),
+  ...commonFields,
+});
+
+export const renameSheetOp = z.object({
+  op: z.literal('renameSheet'),
+  title: z.string().min(1),
+  ...commonFields,
+});
+
+/**
+ * Перенос содержимого (§6.2, Ctrl+C / Ctrl+X / Ctrl+V). Колонки по ИМЕНИ: произвольного
+ * прямоугольника на границе нет, потому что выделения в продукте не существует.
+ */
+/** Поля переноса общие у копирования и вырезания: гейт копипаста отклонил вторую копию. */
+const pasteFields = {
+  column: z.string().min(1),
+  toColumn: z.string().min(1),
+  paste: z.enum(['all', 'values', 'format']).default('all'),
+  ...commonFields,
+};
+
+export const copyRangeOp = z.object({ op: z.literal('copyRange'), ...pasteFields });
+
+export const cutRangeOp = z.object({ op: z.literal('cutRange'), ...pasteFields });
+
+/** Перемещение строк: оба конца — якоря, номеров на границе нет. */
+export const moveRowsOp = z.object({
+  op: z.literal('moveRows'),
+  where: rowValues,
+  /** Перед какой строкой поставить: условие на строку-ориентир. */
+  before: rowValues,
+  ...commonFields,
+});
+
+export const sortRangeOp = z.object({
+  op: z.literal('sortRange'),
+  column: z.string().min(1),
+  descending: z.boolean().default(false),
+  ...commonFields,
+});
+
+export const autoFillOp = z.object({
+  op: z.literal('autoFill'),
+  column: z.string().min(1),
+  ...commonFields,
+});
+
+export const duplicateSheetOp = z.object({
+  op: z.literal('duplicateSheet'),
+  title: z.string().min(1),
+  ...commonFields,
+});
+
+/**
+ * Создание файлов Drive (§6.2, `Ctrl+N`). `target` здесь — ПАПКА из реестра с правом
+ * записи (или `root` для корня «Мой диск»): право создавать даёт реестр, как и право
+ * писать. Созданный файл права записи не получает.
+ */
+const createFields = {
+  name: z.string().min(1),
+  ...commonFields,
+};
+
+export const createSheetOp = z.object({ op: z.literal('createSheet'), ...createFields });
+export const createDocOp = z.object({ op: z.literal('createDoc'), ...createFields });
+export const createFolderOp = z.object({ op: z.literal('createFolder'), ...createFields });
+
 export const operationSchema = z.discriminatedUnion('op', [
   appendRowOp,
   upsertRowOp,
   setCellsOp,
   formatCellsOp,
   findReplaceOp,
+  insertRowsOp,
+  insertColumnsOp,
+  deleteRowsOp,
+  deleteColumnsOp,
+  deleteSheetOp,
+  addSheetOp,
+  renameSheetOp,
+  copyRangeOp,
+  cutRangeOp,
+  moveRowsOp,
+  sortRangeOp,
+  autoFillOp,
+  duplicateSheetOp,
+  createSheetOp,
+  createDocOp,
+  createFolderOp,
 ]);
 
 export type Operation = z.infer<typeof operationSchema>;
@@ -142,6 +277,22 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'setCells',
   'formatCells',
   'findReplace',
+  'insertRows',
+  'insertColumns',
+  'deleteRows',
+  'deleteColumns',
+  'deleteSheet',
+  'addSheet',
+  'renameSheet',
+  'copyRange',
+  'cutRange',
+  'moveRows',
+  'sortRange',
+  'autoFill',
+  'duplicateSheet',
+  'createSheet',
+  'createDoc',
+  'createFolder',
 ];
 
 /**

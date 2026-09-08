@@ -8,9 +8,13 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { buildSheetData } from '../src/core/sheets/map.js';
+import { insertRows } from '../src/core/sheets/structure-op.js';
+import { MutableSheetsClient, instructionSheet, reportSheet, snapshot } from './fixtures/sheet.js';
 import {
   DEFAULT_MAX_CELLS,
   ENVELOPE_OPS,
+  NAMED_CONFIRM_OPS,
   envelopeAuthorizes,
   parseEnvelope,
   type AutoEnvelope,
@@ -23,7 +27,10 @@ const envelope = (over: Partial<AutoEnvelope> = {}): AutoEnvelope => ({
 });
 
 describe('K10 — что вообще нельзя положить в конверт', () => {
-  it('структурная операция отклонена при разборе, с перечислением допустимых', () => {
+  it('G13 — разрушающая операция отклонена при разборе, с названной причиной', () => {
+    // Переведён с 2.5b: раньше причиной было «журнал хранит ячейки, а не строки», теперь
+    // снимок строки есть — и причина другая, проверяемая: такая правка уничтожает то,
+    // чего в ответе не видно целиком, и требует подтверждения названием (D-20).
     expect(() => parseEnvelope({ ops: ['upsertRow', 'deleteRows'] }, 'infra-test')).toThrow();
     try {
       parseEnvelope({ ops: ['deleteRows'] }, 'infra-test');
@@ -31,20 +38,42 @@ describe('K10 — что вообще нельзя положить в конв�
       const payload = (error as { payload: { detail: string; cause: string } }).payload;
       expect(payload.cause).toBe('write.envelope-invalid');
       expect(payload.detail).toContain('deleteRows');
+      expect(payload.detail).toContain('названием');
       expect(payload.detail).toContain('upsertRow');
-      // Причина названа, а не «неверный конверт»: журнал хранит ячейки, не строки.
-      expect(payload.detail).toContain('журнал хранит ячейки');
     }
   });
 
-  it('в списке ровно пять операций записи — ни одной структурной', () => {
+  it('в конверт можно позиционные структурные, но ни одной разрушающей', () => {
     expect([...ENVELOPE_OPS]).toEqual([
       'appendRow',
       'upsertRow',
       'setCells',
       'formatCells',
       'findReplace',
+      'insertRows',
+      'insertColumns',
+      'addSheet',
+      'renameSheet',
+      'copyRange',
+      'autoFill',
+      'duplicateSheet',
+      'createFile',
     ]);
+    // В конверте только добавляющее и обратимое: ни одного удаления, ни перемещения,
+    // ни сортировки, ни вырезания — они уничтожают или перемешивают.
+    for (const op of ['deleteRows', 'deleteSheet', 'cutRange', 'moveRows', 'sortRange']) {
+      expect(ENVELOPE_OPS).not.toContain(op);
+    }
+    // Два списка не пересекаются — иначе одна операция была бы и разрешаемой, и требующей
+    // подтверждения, и какая ветвь сработает, зависело бы от порядка проверок.
+    for (const op of NAMED_CONFIRM_OPS) expect(ENVELOPE_OPS).not.toContain(op);
+  });
+
+  it('разрушающую операцию конверт не авторизует, даже если она в него попала', () => {
+    const forced = { ops: ['deleteRows'], maxCells: 20 } as unknown as AutoEnvelope;
+    const verdict = envelopeAuthorizes(forced, 'deleteRows', 1);
+    expect(verdict.authorized).toBe(false);
+    expect(verdict.authorized === false && verdict.reason).toContain('назвать');
   });
 
   it('битый конверт отказывает с причиной, а не выбирает половину', () => {
@@ -99,5 +128,48 @@ describe('K2, K3 — суждение конверта', () => {
   it('внутри конверта и внутри границы — разрешено', () => {
     expect(envelopeAuthorizes(envelope(), 'upsertRow', 1).authorized).toBe(true);
     expect(envelopeAuthorizes(envelope({ maxCells: 50 }), 'setCells', 50).authorized).toBe(true);
+  });
+});
+
+describe('находки читателя без прогона 2026-09-04', () => {
+  it('имя операции из ПРОТОКОЛА в конверте принимается, а не роняет конверт целиком', () => {
+    // Ловушка была такая: в реестре надо было писать `createFile`, а человек видит в схеме
+    // `createSheet` — и неверное имя делало конверт битым, то есть ломало и все прочие
+    // записи по этой цели.
+    const parsed = parseEnvelope({ ops: ['upsertRow', 'createSheet', 'createFolder'] }, 'x');
+    expect(parsed?.ops).toEqual(['upsertRow', 'createFile', 'createFile']);
+  });
+
+  it('неизвестное имя по-прежнему отклоняется и называет оба написания', () => {
+    try {
+      parseEnvelope({ ops: ['createTable'] }, 'x');
+      expect.unreachable('неизвестная операция должна быть отклонена');
+    } catch (error) {
+      const { detail } = (error as { payload: { detail: string } }).payload;
+      expect(detail).toContain('createTable');
+      expect(detail).toContain('createSheet');
+    }
+  });
+
+  it('граница по числу ячеек судит правки БЕЗ ячеек в плане', async () => {
+    // Раньше судья получал `changes.length`, а у вставки он ноль — значит `maxCells: 1`
+    // разрешал вставку двухсот строк с первой фразы.
+    const client = new MutableSheetsClient(snapshot([reportSheet(), instructionSheet()]));
+    const seen: number[] = [];
+    const outcome = await insertRows(
+      client,
+      buildSheetData(snapshot([reportSheet(), instructionSheet()])),
+      { Проект: 'G connect' },
+      5,
+      {
+        dryRun: false,
+        authorize: (_op, cells) => {
+          seen.push(cells);
+          return cells <= 1 ? { authorized: true } : { authorized: false, reason: 'граница' };
+        },
+      },
+    );
+    expect(seen[0]).toBeGreaterThan(1);
+    expect(outcome.status).toBe('confirm_required');
   });
 });

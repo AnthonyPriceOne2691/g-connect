@@ -7,8 +7,16 @@ import { appendRow, upsertRow } from '../../src/core/sheets/rows.js';
 import { setCells } from '../../src/core/sheets/set-cells-op.js';
 import type { ApplyOutcome, RowOptions } from '../../src/core/sheets/rows.js';
 import type {
+  AutoFillRequest,
   Cell,
   CellValue,
+  CopyPasteRequest,
+  CutPasteRequest,
+  DeleteDimensionRequest,
+  MoveDimensionRequest,
+  SortRangeRequest,
+  FormatRequest,
+  InsertDimensionRequest,
   SheetRequest,
   SheetSnapshot,
   SheetsClient,
@@ -18,7 +26,7 @@ import type {
 const cell = (value: CellValue, formula?: string): Cell =>
   formula === undefined ? { value } : { value, formula };
 
-const row = (...values: (CellValue | Cell)[]): Cell[] =>
+export const row = (...values: (CellValue | Cell)[]): Cell[] =>
   values.map((v) => (typeof v === 'object' && v !== null && 'value' in v ? v : cell(v)));
 
 export const STATUS_VALUES = ['в работе', 'готово', 'пауза'] as const;
@@ -141,6 +149,24 @@ export function protectedSheet(): SheetSnapshot {
 }
 
 /** Лист на `rows` строк с одинаковым значением ключа — для правила write.max-changes. */
+/**
+ * Лист, где под одно условие подходят НЕПОДРЯД идущие строки: между двумя «в работе»
+ * стоит «готово». Нужен ровно для того, чтобы оракул на непрерывность блока проверял
+ * разрыв, а не «ноль подошедших» (находка читателя без прогона 2026-09-04).
+ */
+export function gappedSheet(): SheetSnapshot {
+  return {
+    title: 'Разрыв',
+    sheetId: 9,
+    rows: [
+      row('Проект', 'Статус', 'Часы'),
+      row('первый', 'в работе', 1),
+      row('второй', 'готово', 2),
+      row('третий', 'в работе', 3),
+    ],
+  };
+}
+
 export function wideSheet(rows: number): SheetSnapshot {
   const data: Cell[][] = [row('Группа', 'Значение')];
   for (let i = 0; i < rows; i += 1) data.push(row('все', i));
@@ -166,7 +192,7 @@ export interface RecordedWrite {
  * Применить правку вида к снимку. Один помощник на оба фейка: две копии этого цикла
  * поймал гейт копипаста, и он прав — разъехались бы они молча.
  */
-function withFormat(data: SpreadsheetSnapshot, request: SheetRequest): SpreadsheetSnapshot {
+function withFormat(data: SpreadsheetSnapshot, request: FormatRequest): SpreadsheetSnapshot {
   const sheet = data.sheets.find((s) => s.sheetId === request.sheetId);
   if (sheet === undefined) return data;
   const rows = sheet.rows.map((r) => [...r]);
@@ -177,6 +203,161 @@ function withFormat(data: SpreadsheetSnapshot, request: SheetRequest): Spreadshe
   return {
     ...data,
     sheets: data.sheets.map((s) => (s.sheetId === request.sheetId ? { ...s, rows } : s)),
+  };
+}
+
+/**
+ * Применить ЛЮБОЙ доменный запрос к снимку: вид или геометрию. Фейки обязаны
+ * соответствовать шву целиком — иначе оракул на откат структурной правки проверял бы
+ * «метод вызвали», а не «строка вернулась» (урок L3).
+ */
+function applyRequest(data: SpreadsheetSnapshot, request: SheetRequest): SpreadsheetSnapshot {
+  if (request.kind === 'format') return withFormat(data, request);
+  if (request.kind === 'addSheet') {
+    const sheetId = Math.max(0, ...data.sheets.map((s) => s.sheetId)) + 1;
+    const created = {
+      title: request.title,
+      sheetId,
+      rows: [],
+      ...(request.properties === undefined ? {} : { properties: request.properties }),
+    };
+    return { ...data, sheets: [...data.sheets, created] };
+  }
+  if (request.kind === 'deleteSheet') {
+    return { ...data, sheets: data.sheets.filter((s) => s.sheetId !== request.sheetId) };
+  }
+  if (request.kind === 'renameSheet') {
+    return {
+      ...data,
+      sheets: data.sheets.map((s) =>
+        s.sheetId === request.sheetId ? { ...s, title: request.title } : s,
+      ),
+    };
+  }
+  if (request.kind === 'insertDimension' || request.kind === 'deleteDimension') {
+    return withDimension(data, request);
+  }
+  if (request.kind === 'duplicateSheet') {
+    const source = data.sheets.find((s) => s.sheetId === request.sheetId);
+    if (source === undefined) return data;
+    const sheetId = Math.max(0, ...data.sheets.map((s) => s.sheetId)) + 1;
+    return {
+      ...data,
+      sheets: [...data.sheets, { ...source, title: request.title, sheetId }],
+    };
+  }
+  if (request.kind === 'moveDimension') return withMove(data, request);
+  if (request.kind === 'sortRange') return withSort(data, request);
+  // copyPaste / cutPaste / autoFill: фейк копирует ячейки сам, чтобы оракул проверял
+  // «значения переехали», а не «метод вызвали» (урок L3).
+  return withPaste(data, request);
+}
+
+/**
+ * Перемещение строк ровно так, как это делает Google: `destinationIndex` считается по
+ * координатам ДО удаления блока. Фейк повторяет эту семантику, а не удобную — иначе
+ * оракул на откат перемещения был бы зелёным при неверной формуле.
+ */
+function withMove(data: SpreadsheetSnapshot, request: MoveDimensionRequest): SpreadsheetSnapshot {
+  return {
+    ...data,
+    sheets: data.sheets.map((sheet) => {
+      if (sheet.sheetId !== request.sheetId) return sheet;
+      const rows = sheet.rows.map((r) => [...r]);
+      const start = request.at - 1;
+      const block = rows.splice(start, request.count);
+      const target =
+        request.destinationIndex -
+        Math.min(Math.max(request.destinationIndex - start, 0), request.count);
+      rows.splice(target, 0, ...block);
+      return { ...sheet, rows };
+    }),
+  };
+}
+
+/** Сортировка диапазона по колонке: строки внутри диапазона, остальные не двигаются. */
+function withSort(data: SpreadsheetSnapshot, request: SortRangeRequest): SpreadsheetSnapshot {
+  return {
+    ...data,
+    sheets: data.sheets.map((sheet) => {
+      if (sheet.sheetId !== request.sheetId) return sheet;
+      const rows = sheet.rows.map((r) => [...r]);
+      const from = request.range.row - 1;
+      const block = rows.splice(from, request.range.rowCount);
+      block.sort((a, b) => {
+        const left = String(a[request.column]?.value ?? '');
+        const right = String(b[request.column]?.value ?? '');
+        return request.descending === true ? right.localeCompare(left) : left.localeCompare(right);
+      });
+      rows.splice(from, 0, ...block);
+      return { ...sheet, rows };
+    }),
+  };
+}
+
+/** Перенос прямоугольника: копирование, вырезание и автозаполнение по образцу. */
+function withPaste(
+  data: SpreadsheetSnapshot,
+  request: CopyPasteRequest | CutPasteRequest | AutoFillRequest,
+): SpreadsheetSnapshot {
+  return {
+    ...data,
+    sheets: data.sheets.map((sheet) => {
+      if (sheet.sheetId !== request.sheetId) return sheet;
+      const rows = sheet.rows.map((r) => [...r]);
+      const { source, destination } = request;
+      for (let dr = 0; dr < destination.rowCount; dr += 1) {
+        for (let dc = 0; dc < destination.columnCount; dc += 1) {
+          const from = rows[source.row - 1 + (dr % Math.max(1, source.rowCount))]?.[
+            source.column + (dc % Math.max(1, source.columnCount))
+          ] ?? { value: null };
+          const targetRow = destination.row - 1 + dr;
+          while (rows.length <= targetRow) rows.push([]);
+          const row = rows[targetRow] as Cell[];
+          while (row.length <= destination.column + dc) row.push({ value: null });
+          row[destination.column + dc] = { ...from };
+        }
+      }
+      if (request.kind === 'cutPaste') {
+        for (let sr = 0; sr < source.rowCount; sr += 1) {
+          const row = rows[source.row - 1 + sr];
+          if (row === undefined) continue;
+          for (let sc = 0; sc < source.columnCount; sc += 1) {
+            row[source.column + sc] = { value: null };
+          }
+        }
+      }
+      return { ...sheet, rows };
+    }),
+  };
+}
+
+/** Вставка и удаление измерения: строки или колонки, 1-based «перед этим номером». */
+function withDimension(
+  data: SpreadsheetSnapshot,
+  request: InsertDimensionRequest | DeleteDimensionRequest,
+): SpreadsheetSnapshot {
+  const insert = request.kind === 'insertDimension';
+  return {
+    ...data,
+    sheets: data.sheets.map((sheet) => {
+      if (sheet.sheetId !== request.sheetId) return sheet;
+      const rows = sheet.rows.map((r) => [...r]);
+      const start = request.at - 1;
+      if (request.dimension === 'rows') {
+        if (insert) rows.splice(start, 0, ...Array.from({ length: request.count }, () => []));
+        else rows.splice(start, request.count);
+        return { ...sheet, rows };
+      }
+      const next = rows.map((row) => {
+        const copy = [...row];
+        if (insert)
+          copy.splice(start, 0, ...Array.from({ length: request.count }, () => ({ value: null })));
+        else copy.splice(start, request.count);
+        return copy;
+      });
+      return { ...sheet, rows: next };
+    }),
   };
 }
 
@@ -192,6 +373,10 @@ export class FakeSheetsClient implements SheetsClient {
 
   async getSpreadsheet(): Promise<SpreadsheetSnapshot> {
     return this.data;
+  }
+
+  async sheetTitles(): Promise<readonly string[]> {
+    return this.data.sheets.map((sheet) => sheet.title);
   }
 
   async updateValues(
@@ -217,7 +402,7 @@ export class FakeSheetsClient implements SheetsClient {
   async batchUpdate(_id: string, requests: readonly SheetRequest[]): Promise<void> {
     this.formatWrites.push(...requests);
     for (const request of requests) {
-      this.data = withFormat(this.data, request);
+      this.data = applyRequest(this.data, request);
     }
   }
 }
@@ -237,6 +422,10 @@ export class MutableSheetsClient implements SheetsClient {
     return this.data;
   }
 
+  async sheetTitles(): Promise<readonly string[]> {
+    return this.data.sheets.map((sheet) => sheet.title);
+  }
+
   async updateValues(
     _id: string,
     range: string,
@@ -245,6 +434,13 @@ export class MutableSheetsClient implements SheetsClient {
     const parsed = /^(.+)!([A-Z]+)(\d+)$/.exec(range);
     if (parsed === null) throw new Error(`фикстура не умеет диапазон ${range}`);
     const [, sheetTitle, letter, rowText] = parsed;
+    // Семантика Google values.update, а не «как удобно тесту»: `null` ПРОПУСКАЕТ ячейку
+    // (ничего не меняет), пустая строка ОЧИЩАЕТ (читается потом как пусто). Фейк писал
+    // null как очистку — и все оракулы отката были зелёными, пока живой откат сортировки
+    // смешивал две строки (LR-2, живой прогон 2026-09-06). Шов один — фейк обязан ему.
+    const incoming = values[0]?.[0] ?? null;
+    if (incoming === null) return;
+    const written: Cell = { value: incoming === '' ? null : incoming };
     const columnIndex =
       [...(letter ?? '')].reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
     const rowIndex = Number(rowText) - 1;
@@ -254,7 +450,7 @@ export class MutableSheetsClient implements SheetsClient {
       while (rows.length <= rowIndex) rows.push([]);
       const row = rows[rowIndex] as Cell[];
       while (row.length <= columnIndex) row.push({ value: null });
-      row[columnIndex] = { value: values[0]?.[0] ?? null };
+      row[columnIndex] = written;
       return { ...sheet, rows };
     });
     this.data = { ...this.data, sheets: next };
@@ -267,7 +463,7 @@ export class MutableSheetsClient implements SheetsClient {
   /** Тот же метод, что у настоящего клиента: шов один, и фейки обязаны ему соответствовать. */
   async batchUpdate(_id: string, requests: readonly SheetRequest[]): Promise<void> {
     for (const request of requests) {
-      this.data = withFormat(this.data, request);
+      this.data = applyRequest(this.data, request);
     }
   }
 }

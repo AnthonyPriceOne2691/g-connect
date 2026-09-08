@@ -43,11 +43,40 @@ export interface ValidationRule {
   readonly values: readonly string[];
 }
 
+/**
+ * Свойства листа, которые ядро умеет вернуть после удаления (D-19).
+ *
+ * Список закрытый и короткий намеренно: всё, чего здесь нет, откат не восстановит, и об
+ * этом человек читает В ПЛАНЕ до удаления, а не выясняет после.
+ */
+export interface SheetProperties {
+  readonly frozenRows?: number;
+  readonly frozenColumns?: number;
+  /** Цвет ярлыка как `#RRGGBB`. */
+  readonly tabColor?: string;
+  readonly hidden?: boolean;
+}
+
+/**
+ * Чего на листе есть, но чего ядро восстановить не может. Считается, чтобы назвать
+ * человеку ЧИСЛОМ, что он потеряет безвозвратно (решение владельца 2026-09-03).
+ */
+export interface SheetExtras {
+  readonly conditionalFormats: number;
+  readonly dataValidations: number;
+  readonly protectedRanges: number;
+  readonly charts: number;
+  readonly filters: number;
+}
+
 export interface SheetSnapshot {
   readonly title: string;
   readonly sheetId: number;
   /** Строки с первой по последнюю заполненную; вложенный массив — по колонкам. */
   readonly rows: readonly (readonly Cell[])[];
+  readonly properties?: SheetProperties;
+  /** Невосстановимое, посчитанное: условное форматирование, проверки данных и прочее. */
+  readonly extras?: SheetExtras;
   readonly frozenRows?: number;
   readonly validations?: readonly ValidationRule[];
   readonly protectedRanges?: readonly GridRange[];
@@ -57,6 +86,14 @@ export interface SheetSnapshot {
 
 export interface SpreadsheetSnapshot {
   readonly id: string;
+  /**
+   * Снимок усечён: читали один лист, а не книгу.
+   *
+   * Живой прогон 2026-09-04 нашёл следствие: карта показывала `otherSheets: []` на книге
+   * из СЕМИ листов, потому что строилась из отфильтрованного снимка. Пустой список
+   * читается как «других листов нет» — и на нём же стояла проверка занятого имени листа.
+   */
+  readonly partial?: boolean;
   readonly title: string;
   readonly revisionId?: string;
   readonly sheets: readonly SheetSnapshot[];
@@ -154,10 +191,149 @@ export interface FormatRequest {
   readonly format: CellFormat;
 }
 
-export type SheetRequest = FormatRequest;
+/** Строки или колонки: у структурных операций это одно и то же с разной осью. */
+export type Dimension = 'rows' | 'columns';
+
+/**
+ * Вставка строк или колонок (§6.2, `Ctrl+Shift+=`). Позиция 1-based и означает «перед
+ * этим номером»: `at: 4, count: 1` вставляет одну строку так, что прежняя четвёртая
+ * становится пятой.
+ */
+export interface InsertDimensionRequest {
+  readonly kind: 'insertDimension';
+  readonly sheetId: number;
+  readonly dimension: Dimension;
+  readonly at: number;
+  readonly count: number;
+}
+
+/** Удаление строк или колонок. Обратная операция для вставки и наоборот. */
+export interface DeleteDimensionRequest {
+  readonly kind: 'deleteDimension';
+  readonly sheetId: number;
+  readonly dimension: Dimension;
+  readonly at: number;
+  readonly count: number;
+}
+
+/** Новый лист. Id не возвращаем: откат адресует лист по имени, оно уникально в книге. */
+export interface AddSheetRequest {
+  readonly kind: 'addSheet';
+  readonly title: string;
+  /** Свойства при создании — ими откат возвращает удалённый лист «как был» (D-19). */
+  readonly properties?: SheetProperties;
+}
+
+export interface DeleteSheetRequest {
+  readonly kind: 'deleteSheet';
+  readonly sheetId: number;
+}
+
+export interface RenameSheetRequest {
+  readonly kind: 'renameSheet';
+  readonly sheetId: number;
+  readonly title: string;
+}
+
+/**
+ * Прямоугольник листа для доменных запросов: 1-based строка, 0-based колонка — как в
+ * остальном домене, а не как в библиотеке. Перевод в полуинтервал Google живёт в шве.
+ */
+export interface DomainRange {
+  readonly row: number;
+  readonly column: number;
+  readonly rowCount: number;
+  readonly columnCount: number;
+}
+
+/** Что переносить при вставке: всё, только значения или только вид (§6.2, Ctrl+Shift+V). */
+export type PasteKind = 'all' | 'values' | 'format';
+
+export interface CopyPasteRequest {
+  readonly kind: 'copyPaste';
+  readonly sheetId: number;
+  readonly source: DomainRange;
+  readonly destination: DomainRange;
+  readonly paste: PasteKind;
+}
+
+/** Вырезать и вставить: источник очищается тем же запросом Google. */
+export interface CutPasteRequest {
+  readonly kind: 'cutPaste';
+  readonly sheetId: number;
+  readonly source: DomainRange;
+  readonly destination: DomainRange;
+  readonly paste: PasteKind;
+}
+
+/** Автозаполнение: Google экстраполирует по образцу из `source` на `destination`. */
+export interface AutoFillRequest {
+  readonly kind: 'autoFill';
+  readonly sheetId: number;
+  readonly source: DomainRange;
+  readonly destination: DomainRange;
+}
+
+/**
+ * Перемещение строк (§6.2). `destinationIndex` — 0-based и считается ПО КООРДИНАТАМ ДО
+ * удаления блока, как требует Google: `at=2, count=3, destinationIndex=9` оставляет блок
+ * на позиции 6 (проверено по документации и её же примеру). Формула обратного хода живёт
+ * в `undo-structure.ts` и покрыта оракулом на числах.
+ */
+export interface MoveDimensionRequest {
+  readonly kind: 'moveDimension';
+  readonly sheetId: number;
+  readonly dimension: Dimension;
+  readonly at: number;
+  readonly count: number;
+  readonly destinationIndex: number;
+}
+
+/**
+ * Сортировка диапазона по одной колонке. Диапазон всегда начинается с колонки A: в
+ * документации не сказано, относительно чего считается `dimensionIndex` у `sortSpecs` —
+ * листа или диапазона, — а при начале от A оба чтения совпадают.
+ */
+export interface SortRangeRequest {
+  readonly kind: 'sortRange';
+  readonly sheetId: number;
+  readonly range: DomainRange;
+  /** 0-based индекс колонки листа. */
+  readonly column: number;
+  readonly descending?: boolean;
+}
+
+export interface DuplicateSheetRequest {
+  readonly kind: 'duplicateSheet';
+  readonly sheetId: number;
+  readonly title: string;
+}
+
+export type SheetRequest =
+  | FormatRequest
+  | InsertDimensionRequest
+  | DeleteDimensionRequest
+  | AddSheetRequest
+  | DeleteSheetRequest
+  | RenameSheetRequest
+  | CopyPasteRequest
+  | CutPasteRequest
+  | AutoFillRequest
+  | DuplicateSheetRequest
+  | MoveDimensionRequest
+  | SortRangeRequest;
 
 export interface SheetsClient {
   getSpreadsheet(id: string, options?: ReadOptions): Promise<SpreadsheetSnapshot>;
+  /**
+   * Только имена листов книги — без сетки.
+   *
+   * Отдельным методом, потому что проверка занятого имени листа не имеет права опираться
+   * на карту: карта строится из усечённого снимка, и её `otherSheets` пуст даже когда
+   * листов семь (живой прогон 2026-09-04). А полное чтение книги ради имён стоило бы
+   * десятков тысяч ячеек.
+   */
+  sheetTitles(id: string): Promise<readonly string[]>;
   /** Запись значений в A1-диапазон; `values` — как ввёл бы человек. */
   updateValues(id: string, range: string, values: readonly (readonly CellValue[])[]): Promise<void>;
   appendValues(id: string, range: string, values: readonly (readonly CellValue[])[]): Promise<void>;

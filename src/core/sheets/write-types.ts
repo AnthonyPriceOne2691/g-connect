@@ -4,14 +4,57 @@
  * «что записываем» и «пускать ли записывать» разъехался бы первым же рефакторингом.
  */
 
-import type { JournalSink, JournalSource } from '../journal.js';
+import type { JournalSink, JournalSource, StructuralKind } from '../journal.js';
 import type { ResolveOptions } from '../resolver.js';
-import type { CellFormat, CellValue } from './types.js';
+import type { CellFormat, CellValue, SheetProperties } from './types.js';
 
 export type RowValues = Readonly<Record<string, unknown>>;
 
-/** Три операции записи (§5). Имя типа нужно и охранникам, и журналу. */
-export type OperationKind = 'appendRow' | 'upsertRow' | 'setCells' | 'formatCells' | 'findReplace';
+/** Операции записи. Имя типа нужно и охранникам, и журналу. */
+export type OperationKind =
+  'appendRow' | 'upsertRow' | 'setCells' | 'formatCells' | 'findReplace' | StructuralKind;
+
+/**
+ * Структурная часть плана (D-19): превью правки геометрии описывает ПОЗИЦИИ, а не ячейки.
+ *
+ * Живёт рядом с `changes`, а не вместо них: у удаления строки есть и то и другое —
+ * геометрия («строка 4 исчезнет») и содержимое («в ней лежало вот это»), и человеку нужно
+ * второе, чтобы понять, что он теряет.
+ */
+export interface StructuralPlan {
+  readonly kind: StructuralKind;
+  readonly sheet: string;
+  readonly at?: number;
+  readonly count?: number;
+  readonly title?: string;
+  readonly previousTitle?: string;
+  /** Куда переносили (0-based, по координатам до удаления блока). */
+  readonly to?: number;
+  /** Свойства листа для восстановления после удаления (D-19). */
+  readonly properties?: SheetProperties;
+  /**
+   * Якорь, по которому найдена позиция: «строка проекта G connect». В плане он ЕСТЬ, потому
+   * что подтверждая правку, человек подтверждает «удалить строку проекта X, которая сейчас
+   * четвёртая», а не «удалить четвёртую» — номер к моменту записи может стать чужим.
+   */
+  readonly anchor?: string;
+  /**
+   * Что откат вернуть не сможет, названное числом (решение владельца 2026-09-03 про
+   * `deleteSheet`). Пусто — значит потерь нет, и это тоже утверждение.
+   */
+  readonly irreversible?: readonly string[];
+  /**
+   * Что человек должен произнести, чтобы правка прошла (D-20): «удаляю строку AutoLink
+   * Platform». Шесть hex тут не нужны — подтверждение и так привязано к конкретной
+   * правке, потому что называет её предмет. Голое «да» не проходит.
+   */
+  readonly confirmPhrase?: string;
+  /**
+   * Имя предмета правки, которое обязано встретиться в подтверждении. Сравнение
+   * нормализованное: регистр, пробелы и кавычки не считаются.
+   */
+  readonly confirmToken?: string;
+}
 
 export interface Question {
   readonly field: string;
@@ -104,6 +147,8 @@ export interface ApplyOutcome {
    * (урок L6): без id откат «именно этой» записи назвать нечем.
    */
   readonly correlationId?: string;
+  /** Структурная часть плана и записи: что произойдёт с геометрией листа (D-19). */
+  readonly structural?: StructuralPlan;
 }
 
 /**
@@ -123,6 +168,12 @@ export interface RowOptions extends ResolveOptions {
   /** Алиас цели из реестра, если он есть — по нему потом читают историю глазами. */
   readonly alias?: string | null;
   /**
+   * Лист, за который цель привязана в реестре. Нужен ровно одному месту —
+   * переименованию: живой прогон 2026-09-04 показал, что план молча сносил привязку
+   * (реестр держит цель за именем листа, а план его менял без единого слова).
+   */
+  readonly registrySheet?: string;
+  /**
    * Ревизия ПОСЛЕ записи. Отдельным колбэком, потому что API её не возвращает, а undo
    * без неё не может отличить «после нас никто не трогал» от «трогали» (§10.3).
    */
@@ -140,6 +191,11 @@ export interface RowOptions extends ResolveOptions {
   readonly authorize?: (op: OperationKind, cellCount: number) => EnvelopeDecision;
   /** Правка вида: заодно поправить ячейку заголовка — «сделай шапку жирной». */
   readonly includeHeader?: boolean;
+  /**
+   * Вставка: ниже якоря, а не выше (`Ctrl+Shift+=` против `Ctrl+Shift++`). Одно поле на
+   * строки и колонки: «ниже» и «правее» — одна и та же сторона на разной оси.
+   */
+  readonly below?: boolean;
   /**
    * Откуда читать историю, чтобы не записать тот же план дважды. Не задан — проверка
    * повторного «пиши» не работает, и это видно в тестах, а не по молчанию.

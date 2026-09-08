@@ -196,6 +196,22 @@ describe('A5, A6 — неоднозначность и отсутствие сп
     expect(outcome.changes).toHaveLength(0);
   });
 
+  it('пустое значение ОЧИЩАЕТ ячейку, а не пропускается молча', async () => {
+    // LR-2b (живой прогон 2026-09-06): `null` в values-API Google значит «пропустить
+    // ячейку» — setCells с пустотой отвечал ok, не записав ничего. Пустота — значение.
+    const client = new MutableSheetsClient();
+    const outcome = await setCellsConfirmed(
+      client,
+      data(),
+      { Проект: 'G connect' },
+      { Статус: '' },
+      { dryRun: false },
+    );
+    expect(outcome.status).toBe('ok');
+    const after = (await client.getSpreadsheet()).sheets[0];
+    expect(after?.rows[2]?.[2]?.value).toBeNull(); // было «в работе»
+  });
+
   it('A6: колонки нет → вопрос со полным списком, колонка не создана', async () => {
     const client = new FakeSheetsClient();
     const outcome = await setCellsConfirmed(

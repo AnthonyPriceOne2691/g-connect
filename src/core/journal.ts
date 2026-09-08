@@ -6,7 +6,7 @@
  * системы, а гейт `di-indirection` был бы прав, что зависимость добывается, а не даётся.
  */
 
-import type { CellFormat } from './sheets/types.js';
+import type { CellFormat, SheetProperties } from './sheets/types.js';
 
 export interface JournalChange {
   readonly a1: string;
@@ -22,6 +22,73 @@ export interface JournalChange {
   readonly afterFormat?: CellFormat;
 }
 
+/**
+ * Что сделали с геометрией листа (D-19, фаза 2.5b).
+ *
+ * Ячеечной формой `JournalChange` структурную правку описать нельзя: у исчезнувшей строки
+ * нет ячейки, в которую можно вернуть значение, — сначала надо вернуть саму строку.
+ * Поэтому откат структурной правки читает ЭТО поле и применяет обратную операцию, а уже
+ * потом заливает `snapshot`.
+ */
+export type StructuralKind =
+  | 'insertRows'
+  | 'insertColumns'
+  | 'deleteRows'
+  | 'deleteColumns'
+  | 'addSheet'
+  | 'renameSheet'
+  | 'deleteSheet'
+  | 'moveRows'
+  | 'sortRange'
+  | 'copyRange'
+  | 'cutRange'
+  | 'autoFill'
+  | 'duplicateSheet'
+  | 'createFile';
+
+export interface StructuralChange {
+  readonly kind: StructuralKind;
+  /** Лист, чью геометрию правили. Для `createFile` — имя созданного файла. */
+  readonly sheet: string;
+  /** 1-based позиция «перед этим номером» — как в домене, а не как в библиотеке. */
+  readonly at?: number;
+  readonly count?: number;
+  /**
+   * Куда переносили: 0-based `destinationIndex` в том виде, в каком его понимает Google —
+   * по координатам ДО удаления блока. Обратный ход считается из него формулой, покрытой
+   * оракулом на числах.
+   */
+  readonly to?: number;
+  /** Новое имя листа или файла; прежнее — в `previousTitle`. */
+  readonly title?: string;
+  readonly previousTitle?: string;
+  /** Id созданного файла Drive: по нему откат кладёт его в корзину. */
+  readonly fileId?: string;
+  /** Свойства удалённого листа, которые откат умеет вернуть (закрепления, цвет, ширины). */
+  readonly properties?: SheetProperties;
+  /**
+   * Чего откат вернуть НЕ сможет, названное числом. Уезжает в журнал, потому что ответ
+   * отката обязан сказать не только что вернулось, но и что нет (урок L5).
+   */
+  readonly irreversible?: readonly string[];
+}
+
+export interface SnapshotCell {
+  readonly value: string | number | boolean | null;
+  readonly format?: CellFormat;
+}
+
+/**
+ * Снимок содержимого для восстановления. Только затронутый диапазон и только в пределах
+ * бюджета (`write.snapshot-max-cells`): журнал не должен расти пропорционально таблице, а
+ * операция, чей снимок в бюджет не влез, обязана отказать ДО записи, а не записаться
+ * необратимо.
+ */
+export interface RangeSnapshot {
+  readonly a1Range: string;
+  readonly rows: readonly (readonly SnapshotCell[])[];
+}
+
 export interface WriteRecord {
   /** ISO-время записи. */
   readonly at: string;
@@ -29,8 +96,24 @@ export interface WriteRecord {
   readonly targetId: string;
   readonly alias: string | null;
   readonly sheet: string;
-  readonly op: 'appendRow' | 'upsertRow' | 'setCells' | 'formatCells' | 'findReplace' | 'undo';
+  readonly op:
+    | 'appendRow'
+    | 'upsertRow'
+    | 'setCells'
+    | 'formatCells'
+    | 'findReplace'
+    | StructuralKind
+    | 'undo';
   readonly changes: readonly JournalChange[];
+  /** Геометрия: что сделали со строками, колонками, листами или файлами (D-19). */
+  readonly structure?: StructuralChange;
+  /**
+   * Содержимое затронутых диапазонов «до» — им откат восстанавливает исчезнувшее.
+   *
+   * Список, а не один диапазон: у `cutRange` их два (источник и получатель), и добавлять
+   * второе поле рядом с первым значило бы держать одно понятие в двух местах.
+   */
+  readonly snapshots?: readonly RangeSnapshot[];
   /** Ревизия таблицы до и после записи — по ним undo решает, безопасен ли откат. */
   readonly revisionBefore: string | null;
   readonly revisionAfter: string | null;
@@ -58,6 +141,11 @@ export const noopJournal: JournalSink = () => Promise.resolve();
 /**
  * Последняя запись, которую ещё не откатывали. Откат уже откаченного — не «повтор»,
  * а второй откат: он вернул бы значения, которых человек не выбирал.
+ *
+ * Запись БЕЗ ячеек пропускается — но только если у неё нет и геометрии: у структурной
+ * правки ячеек не бывает вовсе («вставили строку» нечего описывать ячейками), и раньше
+ * такая запись становилась неоткатываемой молча — `gc_undo` отвечал «откатывать нечего»
+ * сразу после успешной вставки.
  */
 export function lastUndoable(records: readonly WriteRecord[]): WriteRecord | null {
   const undone = new Set(
@@ -67,7 +155,7 @@ export function lastUndoable(records: readonly WriteRecord[]): WriteRecord | nul
     const record = records[i]!;
     if (record.op === 'undo') continue;
     if (undone.has(record.correlationId)) continue;
-    if (record.changes.length === 0) continue;
+    if (record.changes.length === 0 && record.structure === undefined) continue;
     return record;
   }
   return null;
