@@ -253,3 +253,46 @@ describe('textInRange — сборка текста диапазона', () => {
     expect(textInRange(withTable, table.startIndex - 1, table.startIndex + 3)).toBeNull();
   });
 });
+
+describe('P15, P17 на пути записи (находка читателя 2026-10-01: проверялись только чтение и шов)', () => {
+  it('P15: без tab в двух табах — отказ с их перечнем; с tab — абзац встаёт именно там', async () => {
+    const client = freshClient();
+    await expect(
+      runDocInsert(
+        client,
+        await client.getDocument(),
+        { op: 'insertText', text: 'х', where: { textContains: 'прогноз' } },
+        options({ dryRun: false, authorize: () => ({ authorized: true }) }),
+      ),
+    ).rejects.toMatchObject({ payload: { detail: expect.stringContaining('Прогноз, Черновики') } });
+    const written = await confirmed(client, {
+      op: 'insertText',
+      text: 'Новая заметка',
+      tab: 'Черновики',
+      where: { textStartsWith: 'Черновик заметки' },
+    });
+    expect(written.written.status).toBe('ok');
+    const after = await client.getDocument();
+    expect(after.tabs[1]!.paragraphs.map((p) => p.text)).toContain('Новая заметка');
+    expect(after.tabs[0]!.paragraphs.map((p) => p.text)).not.toContain('Новая заметка');
+  });
+
+  it('P17: вставка после абзаца с эмодзи — ПОСЛЕ пары, обе половины целы', async () => {
+    const client = freshClient();
+    await confirmed(client, {
+      op: 'insertText',
+      text: 'Судья: Раморенко',
+      tab: 'Прогноз',
+      where: { textStartsWith: 'Изучаем форму' },
+    });
+    const paragraphs = (await client.getDocument()).tabs[0]!.paragraphs;
+    const emoji = paragraphs.find((p) => p.text.startsWith('Изучаем форму'))!;
+    const added = paragraphs.find((p) => p.text === 'Судья: Раморенко')!;
+    expect(emoji.text.endsWith('😀')).toBe(true);
+    // Пара целиком: ни одной одинокой половины суррогата в тексте.
+    expect(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(emoji.text),
+    ).toBe(false);
+    expect(added.startIndex).toBe(emoji.endIndex);
+  });
+});

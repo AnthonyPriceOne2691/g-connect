@@ -706,17 +706,27 @@ describe('правила как механизм (D-12)', () => {
     for (const rule of policyRules()) {
       const paths = rule.enforced_in.match(/src\/[\w./-]+\.ts/g) ?? [];
       expect(paths.length, `${rule.id}: в enforced_in нет пути к файлу`).toBeGreaterThan(0);
-      const sources = paths.map((path) => {
+      for (const path of paths)
         expect(existsSync(path), `${rule.id}: файла ${path} нет`).toBe(true);
-        return readFileSync(path, 'utf8');
-      });
       // Имена в скобках — это точки отказа: «src/core/x.ts (funcA, funcB)».
-      for (const named of rule.enforced_in.matchAll(/\(([^)]+)\)/g)) {
-        for (const name of named[1]!.split(',').map((part) => part.trim())) {
-          if (name.length === 0 || name.includes(' ')) continue;
+      // Имена в скобках проверяются в ТЕХ файлах, что стоят прямо перед скобкой: иначе
+      // «asData» находилось в policy.ts, где функция объявлена, хотя gc_read её не звал
+      // (находка читателя 2026-10-01). Описание прозой не пропускается — из него берутся
+      // латинские идентификаторы.
+      for (const segment of rule.enforced_in.matchAll(/([^()]*)\(([^)]+)\)/g)) {
+        const own = segment[1]!.match(/src\/[\w./-]+\.ts/g) ?? paths;
+        const ownSources = own.map((path) => readFileSync(path, 'utf8'));
+        const names = segment[2]!
+          .split(',')
+          .map((part) => part.trim())
+          .flatMap((part) =>
+            part.includes(' ') ? (part.match(/[A-Za-z_][A-Za-z0-9_]{2,}/g) ?? []) : [part],
+          );
+        for (const name of names) {
+          if (name.length === 0) continue;
           expect(
-            sources.some((source) => source.includes(name)),
-            `${rule.id}: в файлах ${paths.join(', ')} нет упоминания «${name}»`,
+            ownSources.some((source) => source.includes(name)),
+            `${rule.id}: в файлах ${own.join(', ')} нет упоминания «${name}»`,
           ).toBe(true);
         }
       }
