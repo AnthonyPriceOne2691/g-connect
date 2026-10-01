@@ -8,7 +8,6 @@
  */
 
 import { gcError } from '../errors.js';
-import { assertPlanNotApplied } from '../sheets/write-guards.js';
 import { snapshotRange } from './delete-op.js';
 import { docPlanId, type DocPlanShape } from './plan.js';
 import { pickTab } from './selectors.js';
@@ -22,13 +21,14 @@ import type {
   ParagraphNamedStyle,
 } from './types.js';
 import {
+  assertDocPlanNotApplied,
   commitDocWrite,
-  permissionRefusal,
-  resolveBodyParagraph,
   type DocApplyOutcome,
   type DocChangePreview,
   type DocRunOptions,
   type DocWhere,
+  permissionRefusal,
+  resolveBodyParagraph,
 } from './write-support.js';
 
 export interface DocStyleRequest {
@@ -154,7 +154,7 @@ export async function runDocStyle(
   if (options.dryRun !== false) {
     return { status: 'preview', planId: code, changes, notes, questions: [] };
   }
-  await assertPlanNotApplied(options, options.confirm ?? null, snapshot.docId);
+  await assertDocPlanNotApplied(options, code, snapshot.docId);
   const refusal = permissionRefusal(options, request.op, end - start, { code, changes, notes });
   if (refusal !== null) return refusal;
 

@@ -12,20 +12,20 @@
  */
 
 import { gcError } from '../errors.js';
-import { assertPlanNotApplied } from '../sheets/write-guards.js';
 import type { Question } from '../sheets/write-types.js';
 import { docPlanId, type DocPlanChange, type DocPlanShape } from './plan.js';
 import { paragraphLabel, pickTab, resolveParagraph, resolveSection } from './selectors.js';
 import type { DocParagraph, DocRequest, DocSnapshot, DocTab, DocsClient } from './types.js';
 import {
+  assertDocPlanNotApplied,
   clarify,
   commitDocWrite,
-  narrowSelector,
-  permissionRefusal,
   type DocApplyOutcome,
   type DocChangePreview,
   type DocRunOptions,
   type DocWhere,
+  narrowSelector,
+  permissionRefusal,
 } from './write-support.js';
 
 export type { DocApplyOutcome, DocChangePreview, DocRunOptions } from './write-support.js';
@@ -213,7 +213,7 @@ async function performInsert(
   // Однократность судится по ПЕРЕДАННОМУ коду и раньше сверки с новым планом: повтор
   // «пиши abc123» должен получить «уже записано», а не свежий код с приглашением
   // записать то же второй раз (тот же порядок, что у таблиц, B20/B21).
-  await assertPlanNotApplied(options, options.confirm ?? null, snapshot.docId);
+  await assertDocPlanNotApplied(options, code, snapshot.docId);
   const refusal = permissionRefusal(options, op, inserted.length, commit);
   if (refusal !== null) return refusal;
 

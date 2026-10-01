@@ -55,6 +55,7 @@ export async function runDocApply(
     account: deps.account,
     alias: resolved.alias,
     ...(operation.confirm === undefined ? {} : { confirm: operation.confirm }),
+    ...(operation.planId === undefined ? {} : { planId: operation.planId }),
     force: operation.force,
     authorize: envelopeJudge(resolved),
   };

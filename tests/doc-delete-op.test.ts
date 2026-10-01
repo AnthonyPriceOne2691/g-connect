@@ -10,6 +10,7 @@ import { undoDocLast } from '../src/core/undo-docs.js';
 import type { DocRunOptions } from '../src/core/docs/insert-op.js';
 import type { JournalSource, WriteRecord } from '../src/core/journal.js';
 import { FakeDocsClient, buildDoc, forecastDoc, p, runs } from './fixtures/doc.js';
+import { named } from './fixtures/named.js';
 
 const journalled: WriteRecord[] = [];
 const source = (): JournalSource => ({ recent: () => Promise.resolve([...journalled]) });
@@ -65,13 +66,14 @@ describe('P8 — план удаления: текст целиком, подт�
     expect(bareYes.status).toBe('confirm_required');
     expect(bareYes.notes.join(' ')).toContain('предметом правки не называет');
 
-    const named = await runDocDelete(
+    const written = await named(
+      runDocDelete,
       client,
-      await client.getDocument(),
       request,
-      options({ dryRun: false, confirm: 'да, удаляю абзац Устаревший прогноз на прошлый' }),
+      'да, удаляю абзац Устаревший прогноз на прошлый',
+      options,
     );
-    expect(named.status).toBe('ok');
+    expect(written.status).toBe('ok');
     const after = await client.getDocument();
     expect(after.tabs[1]!.paragraphs.map((x) => x.text).join(' ')).not.toContain('Устаревший');
     expect(journalled[0]!.doc?.snapshot?.runs.map((r) => r.text).join('')).toContain(
@@ -124,14 +126,12 @@ describe('P9 — откат возвращает текст СО СТИЛЯМИ 
     const before = await client.getDocument();
     const first = before.tabs[0]!.paragraphs[0]!;
     const third = before.tabs[0]!.paragraphs[2]!;
-    await runDocDelete(
+    await named(
+      runDocDelete,
       client,
-      before,
       { op: 'deleteRange', startIndex: first.startIndex, endIndex: third.endIndex },
-      options({
-        dryRun: false,
-        confirm: `да, удаляю диапазон ${first.startIndex}–${third.endIndex}`,
-      }),
+      `да, удаляю диапазон ${first.startIndex}–${third.endIndex}`,
+      options,
     );
     const gone = await client.getDocument();
     expect(gone.tabs[0]!.paragraphs.map((x) => x.text)).toEqual(['последний']);
@@ -179,11 +179,12 @@ describe('P9 — откат возвращает текст СО СТИЛЯМИ 
       return `${found.namedStyle}${found.bulleted === true ? ' •' : ''}`;
     };
     for (const text of ['обычный перед заголовком', 'обычный перед списком']) {
-      await runDocDelete(
+      await named(
+        runDocDelete,
         client,
-        await client.getDocument(),
         { op: 'deleteParagraph', where: { textStartsWith: text } },
-        options({ dryRun: false, confirm: `удаляю абзац ${text}` }),
+        `удаляю абзац ${text}`,
+        options,
       );
       await undoDocLast(client, 'doc-fixture', source(), {});
       expect(await view(text)).toBe('NORMAL_TEXT');
@@ -196,11 +197,12 @@ describe('P9 — откат возвращает текст СО СТИЛЯМИ 
     const client = fresh(styledDoc());
     const before = await client.getDocument();
     const first = before.tabs[0]!.paragraphs[0]!;
-    await runDocDelete(
+    await named(
+      runDocDelete,
       client,
-      before,
       { op: 'deleteParagraph', where: { paragraphIndex: 1 } },
-      options({ dryRun: false, confirm: 'удаляю абзац Шапка' }),
+      'удаляю абзац Шапка',
+      options,
     );
     await client.batchUpdate(
       'd',
@@ -214,11 +216,12 @@ describe('P9 — откат возвращает текст СО СТИЛЯМИ 
 
   it('удаление последнего абзаца уводит диапазон на перенос предыдущего — и откатывается', async () => {
     const client = fresh(styledDoc());
-    await runDocDelete(
+    await named(
+      runDocDelete,
       client,
-      await client.getDocument(),
       { op: 'deleteParagraph', where: { lastParagraph: true } },
-      options({ dryRun: false, confirm: 'удаляю абзац последний' }),
+      'удаляю абзац последний',
+      options,
     );
     const gone = await client.getDocument();
     expect(gone.tabs[0]!.paragraphs.map((x) => x.text)).toEqual([

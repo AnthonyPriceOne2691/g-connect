@@ -10,6 +10,7 @@ import { undoDocLast } from '../src/core/undo-docs.js';
 import type { DocRunOptions } from '../src/core/docs/write-support.js';
 import type { JournalSource, WriteRecord } from '../src/core/journal.js';
 import { FakeDocsClient, forecastDoc } from './fixtures/doc.js';
+import { named } from './fixtures/named.js';
 
 const journalled: WriteRecord[] = [];
 const source = (): JournalSource => ({ recent: () => Promise.resolve([...journalled]) });
@@ -65,14 +66,85 @@ describe('P5 — превью массовой замены: счёт по та�
   });
 });
 
+describe('поправка D-20 (2026-10-01): фраза пишет только с кодом плана из превью', () => {
+  const request = { op: 'replaceAllText', find: 'Fluminense', replace: 'Fluminense FC' } as const;
+  const docText = async (client: FakeDocsClient) =>
+    (await client.getDocument()).tabs.flatMap((t) => t.paragraphs.map((x) => x.text)).join('\n');
+
+  it('повтор «да, заменяю Fluminense» с кодом прежнего превью второй замены не делает', async () => {
+    // Находка читателя: фраза — не код, и охранник «один план — одна запись» её не видел;
+    // второй вызов давал «Fluminense FC FC» по всем табам.
+    const client = fresh();
+    const preview = await runDocReplace(client, await client.getDocument(), request, options());
+    const first = await runDocReplace(
+      client,
+      await client.getDocument(),
+      request,
+      options({ dryRun: false, confirm: 'да, заменяю Fluminense', planId: preview.planId! }),
+    );
+    expect(first.status).toBe('ok');
+    // «Fluminense FC» был в тексте ДО правки — одна замена законно даёт там «FC FC»;
+    // вторая дала бы «FC FC FC» и задела бы всё остальное.
+    const once = await docText(client);
+    expect(once).not.toContain('FC FC FC');
+
+    await expect(
+      runDocReplace(
+        client,
+        await client.getDocument(),
+        request,
+        options({ dryRun: false, confirm: 'да, заменяю Fluminense', planId: preview.planId! }),
+      ),
+    ).rejects.toMatchObject({ payload: { code: 'plan_already_applied' } });
+    expect(await docText(client)).toBe(once);
+  });
+
+  it('фраза без кода плана — записи нет, ответ просит приложить код', async () => {
+    const client = fresh();
+    const before = await docText(client);
+    const outcome = await runDocReplace(
+      client,
+      await client.getDocument(),
+      request,
+      options({ dryRun: false, confirm: 'да, заменяю Fluminense' }),
+    );
+    expect(outcome.status).toBe('confirm_required');
+    expect(outcome.notes.join(' ')).toContain('не приложен код плана');
+    expect(await docText(client)).toBe(before);
+  });
+
+  it('документ правили между превью и записью — фраза со старым кодом не пишет', async () => {
+    const client = fresh();
+    const preview = await runDocReplace(client, await client.getDocument(), request, options());
+    const doc = await client.getDocument();
+    await client.batchUpdate(
+      'd',
+      [{ kind: 'insertText', tabId: 't1', at: 1, text: 'чужая правка ' }],
+      doc.revisionId,
+    );
+    const before = await docText(client);
+    const outcome = await runDocReplace(
+      client,
+      await client.getDocument(),
+      request,
+      options({ dryRun: false, confirm: 'да, заменяю Fluminense', planId: preview.planId! }),
+    );
+    expect(outcome.status).toBe('confirm_required');
+    expect(outcome.notes.join(' ')).toContain('план изменился с превью');
+    expect(outcome.planId).not.toBe(preview.planId);
+    expect(await docText(client)).toBe(before);
+  });
+});
+
 describe('P6, P7 — запись названием и откат по снимку позиций', () => {
   it('замена пишется фразой; откат возвращает исходные вхождения, не тронув старый «Fluminense FC»', async () => {
     const client = fresh();
-    const written = await runDocReplace(
+    const written = await named(
+      runDocReplace,
       client,
-      await client.getDocument(),
       { op: 'replaceAllText', find: 'Fluminense', replace: 'Fluminense FC' },
-      options({ dryRun: false, confirm: 'да, заменяю Fluminense' }),
+      'да, заменяю Fluminense',
+      options,
     );
     expect(written.status).toBe('ok');
     const after = await client.getDocument();
@@ -99,11 +171,12 @@ describe('P6, P7 — запись названием и откат по сним
   it('жирный кусок внутри заменённого вхождения возвращается жирным', async () => {
     const client = fresh();
     // «Fluminense» во втором абзаце таба «Прогноз» — жирный прогон.
-    await runDocReplace(
+    await named(
+      runDocReplace,
       client,
-      await client.getDocument(),
       { op: 'replaceAllText', find: 'Fluminense', replace: 'X' },
-      options({ dryRun: false, confirm: 'заменяю Fluminense' }),
+      'заменяю Fluminense',
+      options,
     );
     await undoDocLast(client, 'doc-fixture', source(), {});
     const restored = await client.getDocument();
@@ -118,11 +191,12 @@ describe('P6, P7 — запись названием и откат по сним
 
   it('документ правили после замены — откат отказывает, force открывает', async () => {
     const client = fresh();
-    const written = await runDocReplace(
+    const written = await named(
+      runDocReplace,
       client,
-      await client.getDocument(),
       { op: 'replaceAllText', find: 'прогноз', replace: 'разбор' },
-      options({ dryRun: false, confirm: 'заменяю прогноз' }),
+      'заменяю прогноз',
+      options,
     );
     await client.batchUpdate(
       'd',
@@ -160,11 +234,12 @@ describe('replaceText — точечная замена в пределах аб
 
   it('нет вхождений — no_change с честным текстом; вхождения в таблицах названы числом', async () => {
     const client = fresh();
-    const outcome = await runDocReplace(
+    const outcome = await named(
+      runDocReplace,
       client,
-      await client.getDocument(),
       { op: 'replaceAllText', find: 'Иванов', replace: 'Смирнов' },
-      options({ dryRun: false, confirm: 'заменяю Иванов' }),
+      'заменяю Иванов',
+      options,
     );
     expect(outcome.status).toBe('no_change');
     expect(outcome.notes.join(' ')).toContain('в ячейках таблиц: 1');

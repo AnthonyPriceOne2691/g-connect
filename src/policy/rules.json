@@ -264,6 +264,14 @@
       "probe": "удаление с подтверждением «да» не пишет; с названием предмета — пишет"
     },
     {
+      "id": "write.named-confirm-bound-to-plan",
+      "title": "Фраза человека пишет разрушающую правку только вместе с кодом плана из показанного превью",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/sheets/write-guards.ts (namedConfirmVerdict) + src/core/docs/write-support.ts (namedConfirmRefusal, assertDocPlanNotApplied)",
+      "probe": "повтор «да, заменяю Fluminense» с кодом прежнего превью — plan_already_applied, текст заменён один раз; фраза без кода плана — confirm_required без записи"
+    },
+    {
       "id": "docs.selector-not-guess",
       "title": "Неоднозначный селектор абзаца — вопрос с кандидатами, а не правка первого совпавшего",
       "kind": "deny",

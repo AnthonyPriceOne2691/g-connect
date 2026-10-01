@@ -13,6 +13,7 @@ import { undoDocLast } from '../src/core/undo-docs.js';
 import type { DocRunOptions } from '../src/core/docs/write-support.js';
 import type { JournalSource, WriteRecord } from '../src/core/journal.js';
 import { FakeDocsClient, buildDoc, p } from './fixtures/doc.js';
+import { named } from './fixtures/named.js';
 
 const journalled: WriteRecord[] = [];
 const source = (): JournalSource => ({ recent: () => Promise.resolve([...journalled]) });
@@ -40,11 +41,12 @@ describe('откат удаления колонки: край и середин
       ['A', 'B', 'C'],
       ['1', '2', '3'],
     ]);
-    await runDocTable(
+    await named(
+      runDocTable,
       client,
-      await client.getDocument(),
       { op: 'deleteTableColumn', columnIndex: 3 },
-      options({ dryRun: false, confirm: 'удаляю колонку C' }),
+      'удаляю колонку C',
+      options,
     );
     expect(await cells(client)).toEqual([
       ['A', 'B'],
@@ -63,11 +65,12 @@ describe('откат удаления колонки: край и середин
       ['A', '', 'C'],
       ['1', '', '3'],
     ]);
-    await runDocTable(
+    await named(
+      runDocTable,
       client,
-      await client.getDocument(),
       { op: 'deleteTableColumn', columnIndex: 2 },
-      options({ dryRun: false, confirm: 'удаляю колонку' }),
+      'удаляю колонку',
+      options,
     );
     expect(await cells(client)).toEqual([
       ['A', 'C'],
@@ -140,12 +143,7 @@ describe('таблица записи изменилась — откат отк
 
   it('таб исчез — отказ у восстановления таблицы называет таб', async () => {
     const client = fresh([['A']]);
-    await runDocTable(
-      client,
-      await client.getDocument(),
-      { op: 'deleteTable', table: 1 },
-      options({ dryRun: false, confirm: 'удаляю таблицу A' }),
-    );
+    await named(runDocTable, client, { op: 'deleteTable', table: 1 }, 'удаляю таблицу A', options);
     // Подменяем запись: таб, которого нет.
     journalled[0] = {
       ...journalled[0]!,
@@ -163,12 +161,7 @@ describe('откат удаления таблицы: сетка с пустым
       ['A', ''],
       ['', 'D'],
     ]);
-    await runDocTable(
-      client,
-      await client.getDocument(),
-      { op: 'deleteTable', table: 1 },
-      options({ dryRun: false, confirm: 'удаляю таблицу A' }),
-    );
+    await named(runDocTable, client, { op: 'deleteTable', table: 1 }, 'удаляю таблицу A', options);
     expect((await client.getDocument()).tabs[0]!.tables).toHaveLength(0);
     await undoDocLast(client, 'doc-fixture', source(), {});
     expect(await cells(client)).toEqual([

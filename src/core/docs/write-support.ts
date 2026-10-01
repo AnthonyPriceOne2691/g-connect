@@ -7,7 +7,11 @@
  */
 
 import { gcError, newCorrelationId } from '../errors.js';
-import { looksLikePlanCode, namesTheSubject } from '../sheets/write-guards.js';
+import {
+  assertPlanNotApplied,
+  namedConfirmNote,
+  namedConfirmVerdict,
+} from '../sheets/write-guards.js';
 import type { DocWriteDetail, JournalSink, JournalSource } from '../journal.js';
 import type { EnvelopeDecision, OperationKind, Question } from '../sheets/write-types.js';
 import { paragraphLabel, resolveParagraph } from './selectors.js';
@@ -36,6 +40,8 @@ export interface DocApplyOutcome {
 export interface DocRunOptions {
   readonly dryRun?: boolean;
   readonly confirm?: string;
+  /** Код плана из превью к фразе человека у разрушающих правок (поправка D-20). */
+  readonly planId?: string;
   readonly force?: boolean;
   readonly journal?: JournalSink;
   readonly journalSource?: JournalSource;
@@ -145,32 +151,47 @@ export interface PlannedPreview {
 }
 
 /**
- * Подтверждение названием (D-20) — один текст отказа на все разрушающие doc-операции:
- * голое «да», чужой код и молчание различены (класс находки живого прогона 2026-09-04).
- * `null` — предмет назван (или дан код этого плана), запись разрешена.
+ * Один план записывается один раз — по ОБОИМ кодам: тому, на который ссылается вызов
+ * (`planId` к фразе или код в `confirm`), и коду текущего плана. Первый ловит повтор уже
+ * записанного плана с понятной причиной, второй — план, равный записанному. Раньше
+ * сверялся только `confirm`, и фраза (не код) проходила мимо охранника всегда.
+ */
+export async function assertDocPlanNotApplied(
+  options: DocRunOptions,
+  code: string,
+  docId: string,
+): Promise<void> {
+  const referenced = options.planId ?? options.confirm;
+  if (referenced !== undefined && referenced !== code) {
+    await assertPlanNotApplied(options, referenced, docId);
+  }
+  await assertPlanNotApplied(options, code, docId);
+}
+
+/** Заметка превью разрушающей правки: чем её подтверждать — фраза человека плюс код плана. */
+export const destructiveNote = (phrase: string, code: string): string =>
+  `Правка разрушающая: запись — фразой человека «${phrase}» в confirm и кодом плана ${code} ` +
+  'из этого превью в planId (код прикладываешь ты, человеку его называть не нужно).';
+
+/**
+ * Подтверждение названием (D-20 с поправкой 2026-10-01) — общий вердикт с листами:
+ * фраза человека пишет только вместе с кодом плана из превью; голое «да», чужой код,
+ * устаревший план и молчание различены. `null` — подтверждено, запись разрешена.
  */
 export function namedConfirmRefusal(
-  given: string | undefined,
+  options: Pick<DocRunOptions, 'confirm' | 'planId'>,
   phrase: string,
   planned: PlannedPreview,
 ): DocApplyOutcome | null {
-  if (given !== undefined && namesTheSubject(given, phrase, planned.code)) return null;
-  const mismatch = given !== undefined && looksLikePlanCode(given);
+  const verdict = namedConfirmVerdict(options.confirm, options.planId, phrase, planned.code);
+  if (verdict === 'confirmed') return null;
   return {
     status: 'confirm_required',
     planId: planned.code,
     changes: planned.changes,
     notes: [
       ...planned.notes,
-      mismatch
-        ? `Подтверждён код ${given ?? ''}, а у этого плана код ${planned.code}. Записи не было. ` +
-          `Подтверди, назвав предмет: «${phrase}» — или кодом плана.`
-        : `Записи не было. Подтверди правку, назвав её предмет: «${phrase}» ` +
-          `(или кодом плана ${planned.code}). ${
-            given === undefined
-              ? 'Подтверждения не было вовсе'
-              : `«${given}» предметом правки не называет`
-          }.`,
+      namedConfirmNote(verdict, phrase, planned.code, options.confirm, options.planId),
     ],
     questions: [],
   };

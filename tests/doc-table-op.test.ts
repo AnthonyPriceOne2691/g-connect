@@ -10,6 +10,7 @@ import { undoDocLast } from '../src/core/undo-docs.js';
 import type { DocRunOptions } from '../src/core/docs/write-support.js';
 import type { JournalSource, WriteRecord } from '../src/core/journal.js';
 import { FakeDocsClient, buildDoc, forecastDoc, p } from './fixtures/doc.js';
+import { named } from './fixtures/named.js';
 
 const journalled: WriteRecord[] = [];
 const source = (): JournalSource => ({ recent: () => Promise.resolve([...journalled]) });
@@ -168,11 +169,12 @@ describe('P14 — удаление строки: подтверждение на
     );
     expect(bare.status).toBe('confirm_required');
 
-    const written = await runDocTable(
+    const written = await named(
+      runDocTable,
       client,
-      await client.getDocument(),
       { op: 'deleteTableRow', rowWithCell: 'Иванов' },
-      options({ dryRun: false, confirm: 'да, удаляю строку Иванов в основе' }),
+      'да, удаляю строку Иванов в основе',
+      options,
     );
     expect(written.status).toBe('ok');
     expect(await cells(client)).toEqual([
@@ -208,11 +210,12 @@ describe('P14 — удаление строки: подтверждение на
       ],
     });
     const client = fresh(doc);
-    await runDocTable(
+    await named(
+      runDocTable,
       client,
-      await client.getDocument(),
       { op: 'deleteTableRow', rowIndex: 2 },
-      options({ dryRun: false, confirm: 'удаляю строку в г' }),
+      'удаляю строку в г',
+      options,
     );
     expect(await cells(client)).toEqual([['а', 'б']]);
     await undoDocLast(client, 'doc-fixture', source(), {});
@@ -226,11 +229,12 @@ describe('P14 — удаление строки: подтверждение на
 describe('колонки и целые таблицы', () => {
   it('удаление колонки по заголовку и откат с содержимым', async () => {
     const client = fresh();
-    await runDocTable(
+    await named(
+      runDocTable,
       client,
-      await client.getDocument(),
       { op: 'deleteTableColumn', tab: 'Прогноз', columnTitle: 'Позиция' },
-      options({ dryRun: false, confirm: 'удаляю колонку Позиция' }),
+      'удаляю колонку Позиция',
+      options,
     );
     expect((await cells(client))[0]).toEqual(['Игрок', 'Статус']);
     const undone = await undoDocLast(client, 'doc-fixture', source(), {});
@@ -262,11 +266,12 @@ describe('колонки и целые таблицы', () => {
       ],
     });
     const client = fresh(doc);
-    const written = await runDocTable(
+    const written = await named(
+      runDocTable,
       client,
-      await client.getDocument(),
       { op: 'deleteTable', table: 1 },
-      options({ dryRun: false, confirm: 'удаляю таблицу Шапка Ш2' }),
+      'удаляю таблицу Шапка Ш2',
+      options,
     );
     expect(written.status).toBe('ok');
     expect((await client.getDocument()).tabs[0]!.tables).toHaveLength(0);
@@ -333,11 +338,12 @@ describe('колонки и целые таблицы', () => {
       ],
     });
     const client = fresh(doc);
-    await runDocTable(
+    await named(
+      runDocTable,
       client,
-      await client.getDocument(),
       { op: 'deleteTable', table: 1 },
-      options({ dryRun: false, confirm: 'удаляю таблицу a b' }),
+      'удаляю таблицу a b',
+      options,
     );
     // Журнал держит прогоны со стилями, а не плоский текст.
     expect(journalled[0]!.doc?.table?.grid?.[0]?.[0]).toEqual(bold('a'));
@@ -371,11 +377,12 @@ describe('живой прогон 2026-10-01: откат возвращает в
         ],
       }),
     );
-    await runDocTable(
+    await named(
+      runDocTable,
       client,
-      await client.getDocument(),
       { op: 'deleteTableRow', rowIndex: 2 },
-      options({ dryRun: false, confirm: 'удаляю строку Иванов Fluminense' }),
+      'удаляю строку Иванов Fluminense',
+      options,
     );
     await undoDocLast(client, 'doc-fixture', source(), {});
     // Живьём новая строка копирует стиль образца: без явного сброса «Иванов» стал жирным.
@@ -405,11 +412,12 @@ describe('живой прогон 2026-10-01: откат возвращает в
         ],
       }),
     );
-    await runDocTable(
+    await named(
+      runDocTable,
       client,
-      await client.getDocument(),
       { op: 'deleteTableColumn', columnTitle: 'Клуб' },
-      options({ dryRun: false, confirm: 'удаляю колонку Клуб' }),
+      'удаляю колонку Клуб',
+      options,
     );
     await undoDocLast(client, 'doc-fixture', source(), {});
     expect(await cellView(client)).toEqual([

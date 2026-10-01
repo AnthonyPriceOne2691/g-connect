@@ -215,9 +215,12 @@ describe('G5, G6, G6b, G7, G17 — удаление строки и подтве
   it('G6, G7 — «да, удаляю lash-try-on» пишет, откат возвращает строку СО ЗНАЧЕНИЯМИ', async () => {
     const client = new MutableSheetsClient(book());
     const journalled: WriteRecord[] = [];
+    // Путь агента (поправка D-20): фраза человека + код плана из превью.
+    const preview = await deleteRows(client, buildSheetData(book()), target, {});
     const outcome = await deleteRows(client, buildSheetData(book()), target, {
       dryRun: false,
       confirm: 'да, удаляю lash-try-on',
+      planId: preview.planId!,
       journal: async (record) => {
         journalled.push(record);
       },
@@ -241,9 +244,11 @@ describe('G5, G6, G6b, G7, G17 — удаление строки и подтве
 
   it('G17 — регистр, кавычки и лишние пробелы в подтверждении не считаются', async () => {
     const client = new MutableSheetsClient(book());
+    const preview = await deleteRows(client, buildSheetData(book()), target, {});
     const outcome = await deleteRows(client, buildSheetData(book()), target, {
       dryRun: false,
       confirm: '  да, удаляю  «LASH-TRY-ON»  ',
+      planId: preview.planId!,
     });
     expect(outcome.status).toBe('ok');
   });
@@ -363,9 +368,12 @@ describe('G9, G9b — удаление листа: потеря названа �
   it('G9b — откат возвращает лист со свойствами и ГОВОРИТ, чего не вернул', async () => {
     const client = new MutableSheetsClient(richBook());
     const journalled: WriteRecord[] = [];
-    const outcome = await deleteSheet(client, buildSheetData(richBook(), { sheet: 'Инструкция' }), {
+    const sheet = () => buildSheetData(richBook(), { sheet: 'Инструкция' });
+    const preview = await deleteSheet(client, sheet(), {});
+    const outcome = await deleteSheet(client, sheet(), {
       dryRun: false,
       confirm: 'да, удаляю лист Инструкция',
+      planId: preview.planId!,
       journal: async (record) => {
         journalled.push(record);
       },

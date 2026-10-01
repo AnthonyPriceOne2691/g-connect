@@ -10,7 +10,6 @@
 
 import { gcError } from '../errors.js';
 import { limitOf } from '../policy.js';
-import { assertPlanNotApplied } from '../sheets/write-guards.js';
 import { docPlanId, type DocPlanShape } from './plan.js';
 import { pickTab, resolveTable, resolveTableColumn, resolveTableRow } from './selectors.js';
 import { sliceParagraphRuns } from './delete-op.js';
@@ -26,15 +25,17 @@ import type {
 } from './types.js';
 import type { DocTableDetail } from '../journal.js';
 import {
+  assertDocPlanNotApplied,
   clarify,
   commitDocWrite,
-  namedConfirmRefusal,
-  permissionRefusal,
-  resolveBodyParagraph,
+  destructiveNote,
   type DocApplyOutcome,
   type DocChangePreview,
   type DocRunOptions,
   type DocWhere,
+  namedConfirmRefusal,
+  permissionRefusal,
+  resolveBodyParagraph,
 } from './write-support.js';
 
 export interface DocTableRequest {
@@ -372,13 +373,13 @@ export async function runDocTable(
       notes: [
         ...notes,
         planned.destructive
-          ? `Правка разрушающая: запись — фразой «удаляю ${planned.subject}».`
+          ? destructiveNote(`удаляю ${planned.subject}`, code)
           : `Запись — по коду плана или конвертом.`,
       ],
       questions: [],
     };
   }
-  await assertPlanNotApplied(options, options.confirm ?? null, snapshot.docId);
+  await assertDocPlanNotApplied(options, code, snapshot.docId);
   const refusal = tableRefusal(options, request, planned, code, changes, notes);
   if (refusal !== null) return refusal;
 
@@ -426,6 +427,6 @@ function tableRefusal(
 ): DocApplyOutcome | null {
   const preview = { code, changes, notes };
   return planned.destructive
-    ? namedConfirmRefusal(options.confirm, `удаляю ${planned.subject}`, preview)
+    ? namedConfirmRefusal(options, `удаляю ${planned.subject}`, preview)
     : permissionRefusal(options, request.op, planned.units, preview);
 }

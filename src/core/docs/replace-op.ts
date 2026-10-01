@@ -13,20 +13,21 @@
 
 import { gcError } from '../errors.js';
 import type { DocReplacement } from '../journal.js';
-import { assertPlanNotApplied } from '../sheets/write-guards.js';
 import { docPlanId, type DocPlanChange, type DocPlanShape } from './plan.js';
 import { paragraphLabel, pickTab } from './selectors.js';
 import { sliceParagraphRuns } from './delete-op.js';
 import type { DocParagraph, DocRequest, DocSnapshot, DocTab, DocsClient } from './types.js';
 import {
+  assertDocPlanNotApplied,
   commitDocWrite,
-  namedConfirmRefusal,
-  permissionRefusal,
-  resolveBodyParagraph,
+  destructiveNote,
   type DocApplyOutcome,
   type DocChangePreview,
   type DocRunOptions,
   type DocWhere,
+  namedConfirmRefusal,
+  permissionRefusal,
+  resolveBodyParagraph,
 } from './write-support.js';
 
 export interface DocReplaceRequest {
@@ -140,7 +141,7 @@ export async function runDocReplace(
   const built = buildReplacePlan(snapshot, request, tabs, hits, inTables);
 
   if (options.dryRun !== false) return replacePreview(request, built);
-  await assertPlanNotApplied(options, options.confirm ?? null, snapshot.docId);
+  await assertDocPlanNotApplied(options, built.code, snapshot.docId);
   const refusal = replaceRefusal(options, request, hits.length, built);
   if (refusal !== null) return refusal;
 
@@ -174,7 +175,7 @@ interface BuiltReplacePlan {
 function replacePreview(request: DocReplaceRequest, built: BuiltReplacePlan): DocApplyOutcome {
   const how =
     request.op === 'replaceAllText'
-      ? `Правка массовая: запись — фразой «заменяю ${request.find}».`
+      ? destructiveNote(`заменяю ${request.find}`, built.code)
       : `Запись — по коду плана или конвертом.`;
   return {
     status: 'preview',
@@ -193,7 +194,7 @@ function replaceRefusal(
   built: BuiltReplacePlan,
 ): DocApplyOutcome | null {
   if (request.op === 'replaceAllText') {
-    return namedConfirmRefusal(options.confirm, `заменяю ${request.find}`, built);
+    return namedConfirmRefusal(options, `заменяю ${request.find}`, built);
   }
   const touched = hitCount * Math.max(request.find.length, request.replace.length);
   return permissionRefusal(options, 'replaceText', touched, built);

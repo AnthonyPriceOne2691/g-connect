@@ -20,11 +20,12 @@ import { clampLimit, listParams } from '../src/core/google/drive.js';
 import { DEFAULT_MAX_ROWS } from '../src/core/google/sheets.js';
 import { parseOperation, OPERATION_NAMES } from '../src/core/ops.js';
 import { asData, limitOf, policyRules, policyText, ruleById } from '../src/core/policy.js';
-import { parseEnvelope } from '../src/core/envelope.js';
+import { ENVELOPE_OPS, NAMED_CONFIRM_OPS, parseEnvelope } from '../src/core/envelope.js';
 import { profileStatus, writeToken } from '../src/core/profiles.js';
 import { buildSheetData } from '../src/core/sheets/map.js';
 import { runDocDelete } from '../src/core/docs/delete-op.js';
 import { runDocInsert } from '../src/core/docs/insert-op.js';
+import { runDocReplace } from '../src/core/docs/replace-op.js';
 import { undoDocLast } from '../src/core/undo-docs.js';
 import type { WriteRecord } from '../src/core/journal.js';
 import { FakeDocsClient, buildDoc, forecastDoc, p as docParagraph } from './fixtures/doc.js';
@@ -327,9 +328,12 @@ const probes: Record<string, () => Promise<void>> = {
     // успехом. Проверяем и наличие в журнале, и то, что откат его заливает.
     const c = new MutableSheetsClient(snapshot([reportSheet(), instructionSheet()]));
     const journalled: WriteRecord[] = [];
+    const sheetData = () => buildSheetData(snapshot([reportSheet(), instructionSheet()]));
+    const preview = await deleteRows(c, sheetData(), { Проект: 'lash-try-on' }, {});
     const options = {
       dryRun: false,
       confirm: 'удаляю lash-try-on',
+      planId: preview.planId!,
       journal: async (r: WriteRecord) => {
         journalled.push(r);
       },
@@ -349,6 +353,46 @@ const probes: Record<string, () => Promise<void>> = {
     expect(JSON.stringify((await c.getSpreadsheet()).sheets[0]?.rows)).toContain('lash-try-on');
   },
 
+  'write.named-confirm-bound-to-plan': async () => {
+    // Фраза — подпись человека, код плана — привязка к показанному превью. Без привязки
+    // повтор фразы делал массовую замену второй раз (находка читателя 2026-10-01).
+    const client = new FakeDocsClient(forecastDoc());
+    const journalled: WriteRecord[] = [];
+    const request = { op: 'replaceAllText', find: 'Fluminense', replace: 'Fluminense FC' } as const;
+    const options = (over: Record<string, unknown> = {}) => ({
+      journal: async (r: WriteRecord) => {
+        journalled.push(r);
+      },
+      journalSource: { recent: () => Promise.resolve(journalled) },
+      ...over,
+    });
+    const text = async () =>
+      (await client.getDocument()).tabs.flatMap((t) => t.paragraphs.map((x) => x.text)).join('\n');
+
+    const bare = await runDocReplace(
+      client,
+      await client.getDocument(),
+      request,
+      options({ dryRun: false, confirm: 'да, заменяю Fluminense' }),
+    );
+    expect(bare.status).toBe('confirm_required');
+
+    const preview = await runDocReplace(client, await client.getDocument(), request, options());
+    const bound = options({
+      dryRun: false,
+      confirm: 'да, заменяю Fluminense',
+      planId: preview.planId!,
+    });
+    expect((await runDocReplace(client, await client.getDocument(), request, bound)).status).toBe(
+      'ok',
+    );
+    const once = await text();
+    await expect(
+      runDocReplace(client, await client.getDocument(), request, bound),
+    ).rejects.toMatchObject({ payload: { code: 'plan_already_applied' } });
+    expect(await text()).toBe(once);
+  },
+
   'write.destructive-needs-name': async () => {
     const c = new MutableSheetsClient(snapshot([reportSheet(), instructionSheet()]));
     const data = () => buildSheetData(snapshot([reportSheet(), instructionSheet()]));
@@ -362,6 +406,8 @@ const probes: Record<string, () => Promise<void>> = {
       },
     );
     expect(denied.status).toBe('confirm_required');
+    // Путь агента (поправка D-20): фраза человека + код плана из превью.
+    const preview = await deleteRows(c, data(), { Проект: 'lash-try-on' }, {});
     const allowed = await deleteRows(
       c,
       data(),
@@ -369,6 +415,7 @@ const probes: Record<string, () => Promise<void>> = {
       {
         dryRun: false,
         confirm: 'да, удаляю lash-try-on',
+        planId: preview.planId!,
       },
     );
     expect(allowed.status).toBe('ok');
@@ -381,9 +428,15 @@ const probes: Record<string, () => Promise<void>> = {
     const rich = snapshot([reportSheet(), { ...instructionSheet(), extras: EXTRAS }]);
     const client = new MutableSheetsClient(rich);
     const journalled: WriteRecord[] = [];
+    const sheetPreview = await deleteSheet(
+      client,
+      buildSheetData(rich, { sheet: 'Инструкция' }),
+      {},
+    );
     await deleteSheet(client, buildSheetData(rich, { sheet: 'Инструкция' }), {
       dryRun: false,
       confirm: 'удаляю лист Инструкция',
+      planId: sheetPreview.planId!,
       journal: async (r) => {
         journalled.push(r);
       },
@@ -458,18 +511,20 @@ const probes: Record<string, () => Promise<void>> = {
     const first = snapshot.tabs[0]!.paragraphs[0]!;
     const second = snapshot.tabs[0]!.paragraphs[1]!;
     const journalled: WriteRecord[] = [];
-    await runDocDelete(
-      client,
-      snapshot,
-      { op: 'deleteRange', startIndex: first.startIndex, endIndex: second.endIndex },
-      {
-        dryRun: false,
-        confirm: `удаляю диапазон ${first.startIndex}–${second.endIndex}`,
-        journal: async (r) => {
-          journalled.push(r);
-        },
+    const range = {
+      op: 'deleteRange',
+      startIndex: first.startIndex,
+      endIndex: second.endIndex,
+    } as const;
+    const rangePreview = await runDocDelete(client, snapshot, range, {});
+    await runDocDelete(client, snapshot, range, {
+      dryRun: false,
+      confirm: `удаляю диапазон ${first.startIndex}–${second.endIndex}`,
+      planId: rangePreview.planId!,
+      journal: async (r) => {
+        journalled.push(r);
       },
-    );
+    });
     const undone = await undoDocLast(client, 'doc-fixture', {
       recent: () => Promise.resolve(journalled),
     });
@@ -822,7 +877,28 @@ describe('правила как механизм (D-12)', () => {
       // оракул ниже, но здесь важно, что именно эти четыре правила не остались текстом.
       expect(rule.enforced_in).toMatch(/src\//);
     }
-    expect(policyRules()).toHaveLength(39);
+    // 40-е — write.named-confirm-bound-to-plan (поправка D-20, 2026-10-01).
+    expect(policyRules()).toHaveLength(40);
+  });
+
+  it('rules.md называет ровно списки ядра: конверт и подтверждение названием', () => {
+    // Находка читателя 2026-10-01: правила говорили «девять операций в конверте», «шесть
+    // правок названием» и «правок в Docs нет — не предлагай их» при 25, 12 и уровне 3 в
+    // коде. Числа в прозе с кодом не сверял никто — сверяем имена.
+    const text = policyText();
+    const section = (title: string): string => {
+      const start = text.indexOf(title);
+      const next = text.indexOf('\n## ', start + title.length);
+      return text.slice(start, next === -1 ? undefined : next);
+    };
+    const envelope = section('## Что в конверт не кладётся никогда');
+    const protocolName = (op: string) => (op === 'createFile' ? 'createSheet' : op);
+    for (const op of ENVELOPE_OPS) expect(envelope).toContain(`\`${protocolName(op)}\``);
+    const namedStart = text.indexOf('**Подтверждения названием требуют');
+    const named = text.slice(namedStart, text.indexOf('\n- **', namedStart));
+    for (const op of NAMED_CONFIRM_OPS) expect(named).toContain(`\`${op}\``);
+    expect(text).not.toMatch(/Чего по-прежнему нет[^.]*Docs/);
+    expect(text).toContain('`planId`');
   });
 
   it('у КАЖДОГО правила есть проба — и наоборот', () => {

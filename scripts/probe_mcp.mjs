@@ -88,6 +88,9 @@ try {
 
   const applySchema = (tools.result?.tools ?? []).find((t) => t.name === 'gc_apply')?.inputSchema;
   check('gc_apply объявляет confirm', applySchema?.properties?.confirm !== undefined);
+  // Поправка D-20 (2026-10-01): фраза человека пишет только с кодом плана из превью —
+  // без поля в схеме транспорта агенту нечем его приложить (урок L21: схема ≠ ядро).
+  check('gc_apply объявляет planId', applySchema?.properties?.planId !== undefined);
 
   // Сквозная проверка связи схемы транспорта с ядром. Живой прогон 2026-09-04 нашёл, что
   // схема объявляла девять операций при двадцати одной в ядре: правки отклонялись ДО

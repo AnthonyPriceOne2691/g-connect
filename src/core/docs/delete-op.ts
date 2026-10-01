@@ -9,7 +9,6 @@
 
 import { gcError } from '../errors.js';
 import { limitOf } from '../policy.js';
-import { assertPlanNotApplied } from '../sheets/write-guards.js';
 import { docPlanId, type DocPlanShape } from './plan.js';
 import { paragraphLabel, pickTab } from './selectors.js';
 import type {
@@ -22,13 +21,15 @@ import type {
   SnapshotParagraph,
 } from './types.js';
 import {
+  assertDocPlanNotApplied,
   commitDocWrite,
-  namedConfirmRefusal,
-  resolveBodyParagraph,
+  destructiveNote,
   type DocApplyOutcome,
   type DocChangePreview,
   type DocRunOptions,
   type DocWhere,
+  namedConfirmRefusal,
+  resolveBodyParagraph,
 } from './write-support.js';
 
 export interface DocDeleteRequest {
@@ -214,12 +215,12 @@ export async function runDocDelete(
       status: 'preview',
       planId: code,
       changes,
-      notes: [...notes, `Правка разрушающая: запись — фразой «удаляю ${confirmToken}».`],
+      notes: [...notes, destructiveNote(`удаляю ${confirmToken}`, code)],
       questions: [],
     };
   }
-  await assertPlanNotApplied(options, options.confirm ?? null, snapshot.docId);
-  const refusal = namedConfirmRefusal(options.confirm, `удаляю ${confirmToken}`, {
+  await assertDocPlanNotApplied(options, code, snapshot.docId);
+  const refusal = namedConfirmRefusal(options, `удаляю ${confirmToken}`, {
     code,
     changes,
     notes,
