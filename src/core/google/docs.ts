@@ -14,7 +14,7 @@
 
 import { google, type docs_v1 } from 'googleapis';
 
-import { fromGoogleError, gcError } from '../errors.js';
+import { fromGoogleError, gcError, type GcError } from '../errors.js';
 import { toDocRequest } from './doc-requests.js';
 import { authorizedClient, makeRetry, rgbToHex, type RetryReporter } from './support.js';
 import type {
@@ -291,6 +291,11 @@ export function toDocSnapshot(docId: string, document: docs_v1.Schema$Document):
 export interface GoogleDocsClientOptions {
   readonly accessToken: string;
   readonly onRetry?: RetryReporter;
+  /**
+   * Готовый клиент библиотеки — для оракулов шва: они судят разбор ответов Google в
+   * живой форме, а фейк DocsClient этот разбор обходит целиком (урок LR3-1).
+   */
+  readonly api?: docs_v1.Docs;
 }
 
 export class GoogleDocsClient implements DocsClient {
@@ -298,7 +303,8 @@ export class GoogleDocsClient implements DocsClient {
   private readonly retry: ReturnType<typeof makeRetry>;
 
   constructor(options: GoogleDocsClientOptions) {
-    this.docs = google.docs({ version: 'v1', auth: authorizedClient(options.accessToken) });
+    this.docs =
+      options.api ?? google.docs({ version: 'v1', auth: authorizedClient(options.accessToken) });
     this.retry = makeRetry(options.onRetry);
   }
 
@@ -319,41 +325,44 @@ export class GoogleDocsClient implements DocsClient {
     requiredRevisionId: string,
   ): Promise<{ revisionId: string }> {
     try {
-      const { data } = await this.retry(() =>
-        this.docs.documents.batchUpdate({
-          documentId: id,
-          requestBody: {
-            requests: requests.map(toDocRequest),
-            // Предусловие произносит сервер: ревизия ушла — отказ, ни одной правки.
-            writeControl: { requiredRevisionId },
-          },
-        }),
-      );
-      // ⚠ Допущение по документации, сверяется живым прогоном: ответ несёт writeControl
-      // с ревизией ПОСЛЕ записи. Пустая строка честнее выдумки, если поле не пришло.
+      const { data } = await this.retry(async () => {
+        try {
+          return await this.docs.documents.batchUpdate({
+            documentId: id,
+            requestBody: {
+              requests: requests.map(toDocRequest),
+              // Предусловие произносит сервер: ревизия ушла — отказ, ни одной правки.
+              writeControl: { requiredRevisionId },
+            },
+          });
+        } catch (error) {
+          // Распознаём ДО ретрая: он переводит сырую ошибку в bad_request, и текст Google
+          // про ревизию после этого уже не прочитать (живой прогон 2026-10-01, LR3-1).
+          throw staleRevision(error) ?? error;
+        }
+      });
+      // Сверено живьём 2026-10-01: ответ несёт writeControl с ревизией ПОСЛЕ записи, и
+      // она равна ревизии следующего чтения. Пустая строка честнее выдумки, если её нет.
       return { revisionId: data.writeControl?.requiredRevisionId ?? '' };
     } catch (error) {
-      throw docWriteError(error, id);
+      throw fromGoogleError(error, `Не удалось записать в документ ${id}.`);
     }
   }
 }
 
 /**
- * Отказ записи: несовпадение `requiredRevisionId` Google отдаёт кодом 400 с упоминанием
- * ревизии в тексте. ⚠ Распознавание по тексту — допущение по документации (у отказа нет
- * машинного кода причины), помечено для живого прогона: чек-лист обязан увидеть настоящий
- * отказ и сверить формулировку.
+ * Отказ по ушедшей ревизии. Машинного кода причины у него нет: живьём (2026-10-01) это
+ * 400 INVALID_ARGUMENT с текстом «The required revision ID '…' does not match the latest
+ * revision.» — распознаём по статусу и упоминанию ревизии.
  */
-function docWriteError(error: unknown, id: string): unknown {
+function staleRevision(error: unknown): GcError | undefined {
   const message = String((error as { message?: unknown })?.message ?? error);
   const status = Number(
     (error as { status?: unknown; code?: unknown })?.status ?? (error as { code?: unknown })?.code,
   );
-  if (status === 400 && /revision/i.test(message)) {
-    return gcError('doc_changed', {
-      detail: 'Документ изменился между превью и записью — Google отклонил запись целиком.',
-      cause: message,
-    });
-  }
-  return fromGoogleError(error, `Не удалось записать в документ ${id}.`);
+  if (status !== 400 || !/revision/i.test(message)) return undefined;
+  return gcError('doc_changed', {
+    detail: 'Документ изменился между превью и записью — Google отклонил запись целиком.',
+    cause: message,
+  });
 }
