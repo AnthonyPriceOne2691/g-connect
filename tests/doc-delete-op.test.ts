@@ -398,6 +398,40 @@ describe('последний абзац после пункта списка (н
   });
 });
 
+describe('абзац с предложениями не удаляется и не перекрашивается', () => {
+  const suggestedDoc = () =>
+    buildDoc({
+      tabs: [
+        { title: 'Т', content: [p('до'), { runs: [{ text: 'Счёт: 2:13:1.' }], suggested: true }] },
+      ],
+    });
+
+  it('удаление — отказ ДО подписи', async () => {
+    const client = fresh(suggestedDoc());
+    await expect(
+      runDocDelete(
+        client,
+        await client.getDocument(),
+        { op: 'deleteParagraph', where: { textStartsWith: 'Счёт' } },
+        options(),
+      ),
+    ).rejects.toMatchObject({ payload: { cause: 'docs.suggestions-not-edited' } });
+  });
+
+  it('стиль — отказ ДО подписи', async () => {
+    const client = fresh(suggestedDoc());
+    await expect(
+      runDocStyle(
+        client,
+        await client.getDocument(),
+        { op: 'updateTextStyle', where: { textStartsWith: 'Счёт' }, style: { bold: true } },
+        options({ dryRun: false, authorize: () => ({ authorized: true }) }),
+      ),
+    ).rejects.toMatchObject({ payload: { cause: 'docs.suggestions-not-edited' } });
+    expect(journalled).toHaveLength(0);
+  });
+});
+
 describe('снимок диапазона', () => {
   it('хранит прогоны со стилями, переносы и вид абзацев', () => {
     const tab = styledDoc().tabs[0]!;

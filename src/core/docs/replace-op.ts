@@ -27,6 +27,7 @@ import type {
 } from './types.js';
 import {
   assertDocPlanNotApplied,
+  assertNoSuggestions,
   commitDocWrite,
   destructiveNote,
   type DocApplyOutcome,
@@ -71,9 +72,10 @@ function findOccurrences(
   tabs: readonly DocTab[],
   find: string,
   scope?: DocParagraph,
-): { hits: Occurrence[]; inTables: number } {
+): { hits: Occurrence[]; skipped: Skipped } {
   const hits: Occurrence[] = [];
   let inTables = 0;
+  let inSuggestions = 0;
   for (const tab of tabs) {
     for (const paragraph of tab.paragraphs) {
       if (scope !== undefined && paragraph.index !== scope.index) continue;
@@ -81,21 +83,24 @@ function findOccurrences(
       for (;;) {
         const found = paragraph.text.indexOf(find, from);
         if (found === -1) break;
-        if (paragraph.inTable === undefined) {
+        if (paragraph.inTable !== undefined) {
+          inTables += 1;
+        } else if (paragraph.hasSuggestions === true) {
+          // Текст абзаца с предложениями — смесь исходного и предложенного: не правим.
+          inSuggestions += 1;
+        } else {
           hits.push({
             tab,
             paragraph,
             at: paragraph.startIndex + found,
             style: styleAt(paragraph, found),
           });
-        } else {
-          inTables += 1;
         }
         from = found + find.length;
       }
     }
   }
-  return { hits, inTables };
+  return { hits, skipped: { inTables, inSuggestions } };
 }
 
 /** Запросы замены: с конца к началу, чтобы сдвиги не портили адреса предыдущих. */
@@ -170,9 +175,10 @@ export async function runDocReplace(
   if ('outcome' in scoped) return scoped.outcome;
   const { tabs, scope } = scoped;
 
-  const { hits, inTables } = findOccurrences(tabs, request.find, scope);
-  if (hits.length === 0) return noHits(request, inTables);
-  const built = buildReplacePlan(snapshot, request, tabs, hits, inTables);
+  if (scope !== undefined) assertNoSuggestions([scope]);
+  const { hits, skipped } = findOccurrences(tabs, request.find, scope);
+  if (hits.length === 0) return noHits(request, skipped);
+  const built = buildReplacePlan(snapshot, request, tabs, hits, skipped);
 
   if (options.dryRun !== false) return replacePreview(request, built);
   await assertDocPlanNotApplied(options, built.code, snapshot.docId);
@@ -234,13 +240,34 @@ function replaceRefusal(
   return permissionRefusal(options, 'replaceText', touched, built);
 }
 
-function noHits(request: DocReplaceRequest, inTables: number): DocApplyOutcome {
+/** Вхождения, которых операция не касается, — числом и с причиной. */
+interface Skipped {
+  readonly inTables: number;
+  readonly inSuggestions: number;
+}
+
+function skippedNote({ inTables, inSuggestions }: Skipped): string[] {
+  return [
+    ...(inTables > 0
+      ? [`в ячейках таблиц ещё ${inTables} — текст ячеек ядро не правит, их меняет человек в Docs`]
+      : []),
+    ...(inSuggestions > 0
+      ? [
+          `в абзацах с неразрешёнными предложениями ещё ${inSuggestions} — их ядро не правит: ` +
+            'сначала прими или отклони предложения',
+        ]
+      : []),
+  ];
+}
+
+function noHits(request: DocReplaceRequest, skipped: Skipped): DocApplyOutcome {
+  const why = skippedNote(skipped);
   return {
     status: 'no_change',
     planId: null,
     changes: [],
     notes: [
-      `«${request.find}» не найдено${inTables > 0 ? ` (в ячейках таблиц: ${inTables} — эта операция их не правит)` : ''}. Ни одной правки.`,
+      `«${request.find}» не найдено${why.length > 0 ? ` (${why.join('; ')})` : ''}. Ни одной правки.`,
     ],
     questions: [],
   };
@@ -252,7 +279,7 @@ function buildReplacePlan(
   request: DocReplaceRequest,
   tabs: readonly DocTab[],
   hits: readonly Occurrence[],
-  inTables: number,
+  skipped: Skipped,
 ): { code: string; changes: DocChangePreview[]; notes: string[] } {
   const plan: DocPlanShape = {
     targetId: snapshot.docId,
@@ -271,11 +298,10 @@ function buildReplacePlan(
     code: docPlanId(plan),
     changes: previewOf(hits, request.find, request.replace),
     notes: [
-      `Вхождений: ${hits.length} (${countByTab(tabs, hits)})${
-        inTables > 0
-          ? `; в ячейках таблиц ещё ${inTables} — они НЕ заменяются: текст ячеек ядро не правит, их меняет человек в Docs`
-          : ''
-      }. Откат вернёт исходные вхождения по снимку, не тронув «${request.replace}», бывшие в тексте до правки.`,
+      `Вхождений: ${hits.length} (${countByTab(tabs, hits)})${skippedNote(skipped)
+        .map((part) => `; ${part} — они НЕ заменяются`)
+        .join('')}. Откат вернёт исходные вхождения по снимку, не тронув «${request.replace}», ` +
+        'бывшие в тексте до правки.',
     ],
   };
 }

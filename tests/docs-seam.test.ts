@@ -265,3 +265,32 @@ describe('встроенные объекты — живые формы отве
     expect(paragraphs[3]!.runs[1]!.object).toBe('pageBreak');
   });
 });
+
+describe('предложения — каждый вид помечает СВОЙ абзац (находка читателя 2026-10-01)', () => {
+  it.each([
+    ['вставка', { suggestedInsertionIds: ['s1'] }, {}],
+    ['удаление', { suggestedDeletionIds: ['s1'] }, {}],
+    ['стиль текста', { suggestedTextStyleChanges: { s1: {} } }, {}],
+    ['стиль абзаца', {}, { suggestedParagraphStyleChanges: { s1: {} } }],
+  ] as const)('предложение «%s» видно в снимке абзаца', (_kind, runExtra, extra) => {
+    const doc = asDocument([
+      {
+        tabProperties: { tabId: 't1', title: 'Т' },
+        documentTab: {
+          body: {
+            content: [
+              gParagraph(1, 'чистый'),
+              gParagraph(8, 'Счёт: 2:13:1.', extra, runExtra as Partial<docs_v1.Schema$TextRun>),
+            ],
+          },
+        },
+      },
+    ]);
+    const snapshot = toDocSnapshot('d1', doc);
+    expect(snapshot.hasSuggestions).toBe(true);
+    expect(snapshot.tabs[0]!.paragraphs.map((p) => p.hasSuggestions === true)).toEqual([
+      false,
+      true,
+    ]);
+  });
+});

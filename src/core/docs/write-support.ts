@@ -168,6 +168,23 @@ export async function assertDocPlanNotApplied(
   await assertPlanNotApplied(options, code, docId);
 }
 
+/**
+ * Абзацы с неразрешёнными предложениями ядро не правит: их текст — смесь исходного и
+ * предложенного («Счёт: 2:13:1.» при «2:1» → «3:1»), и замена или удаление легли бы по
+ * этой смеси (находка читателя 2026-10-01). Отказ ДО подтверждения, с советом.
+ */
+export function assertNoSuggestions(paragraphs: readonly DocParagraph[]): void {
+  const marked = paragraphs.filter((p) => p.hasSuggestions === true);
+  if (marked.length === 0) return;
+  throw gcError('policy_denied', {
+    detail:
+      `В ${marked.map((p) => `абзаце № ${p.index}`).join(', ')} неразрешённые предложения: текст ` +
+      'там — смесь исходного и предложенного, и правка легла бы по ней. Прими или отклони ' +
+      'предложения в интерфейсе Docs, потом правь.',
+    cause: 'docs.suggestions-not-edited',
+  });
+}
+
 /** Заметка превью разрушающей правки: чем её подтверждать — фраза человека плюс код плана. */
 export const destructiveNote = (phrase: string, code: string): string =>
   `Правка разрушающая: запись — фразой человека «${phrase}» в confirm и кодом плана ${code} ` +

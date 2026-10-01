@@ -31,6 +31,8 @@ export interface ParagraphSpec {
   readonly runs: readonly DocTextRun[];
   readonly style?: ParagraphNamedStyle | undefined;
   readonly bulleted?: boolean | undefined;
+  /** В абзаце неразрешённые предложения (текст — смесь, как отдаёт Google). */
+  readonly suggested?: boolean | undefined;
 }
 
 export const p = (text: string, style?: ParagraphNamedStyle): ParagraphSpec =>
@@ -85,6 +87,7 @@ function buildTab(spec: TabSpec, tabNumber: number): DocTab {
       runs: item.runs,
       namedStyle: item.style ?? 'NORMAL_TEXT',
       ...(item.bulleted === true ? { bulleted: true } : {}),
+      ...(item.suggested === true ? { hasSuggestions: true } : {}),
       ...(inTable === undefined ? {} : { inTable }),
     });
     cursor += text.length + 1;
@@ -225,6 +228,7 @@ interface MutableParagraph {
   runs: DocTextRun[];
   style?: ParagraphNamedStyle | undefined;
   bulleted?: boolean | undefined;
+  suggested?: boolean | undefined;
   /** Стиль переноса абзаца: его наследует вставка в ПУСТОЙ абзац. */
   mark?: DocTextStyle | undefined;
 }
@@ -257,7 +261,12 @@ const toMutable = (spec: DocSpec): MutableTab[] =>
               row.map((cell) => cellParagraphs(cell).map((r) => ({ runs: r }))),
             ),
           }
-        : { runs: item.runs.map((r) => ({ ...r })), style: item.style, bulleted: item.bulleted },
+        : {
+            runs: item.runs.map((r) => ({ ...r })),
+            style: item.style,
+            bulleted: item.bulleted,
+            suggested: item.suggested,
+          },
     ),
   }));
 
@@ -358,7 +367,7 @@ export class FakeDocsClient implements DocsClient {
         content: tab.blocks.map((b) =>
           isMutableTable(b)
             ? { table: b.table.map((row) => row.map(cellToSpec)) }
-            : { runs: b.runs, style: b.style, bulleted: b.bulleted },
+            : { runs: b.runs, style: b.style, bulleted: b.bulleted, suggested: b.suggested },
         ),
       })),
     };
@@ -738,7 +747,12 @@ function snapshotToSpec(snapshot: DocSnapshot): DocSpec {
           }
           continue;
         }
-        content.push({ runs: p.runs, style: p.namedStyle, bulleted: p.bulleted });
+        content.push({
+          runs: p.runs,
+          style: p.namedStyle,
+          bulleted: p.bulleted,
+          suggested: p.hasSuggestions,
+        });
       }
       return { title: tab.title, content };
     }),

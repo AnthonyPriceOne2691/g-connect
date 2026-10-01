@@ -23,6 +23,7 @@ import type {
 } from './types.js';
 import {
   assertDocPlanNotApplied,
+  assertNoSuggestions,
   commitDocWrite,
   type DocApplyOutcome,
   type DocChangePreview,
@@ -118,6 +119,7 @@ export async function runDocStyle(
   if ('outcome' in resolved) return resolved.outcome;
   const count = Math.max(1, request.count ?? 1);
   const paragraphs = targetParagraphs(tab, resolved.paragraph, count);
+  assertNoSuggestions(paragraphs);
   const last = paragraphs[paragraphs.length - 1]!;
   const start = resolved.paragraph.startIndex;
   const end = last.endIndex;

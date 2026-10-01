@@ -178,6 +178,7 @@ function buildParagraph(parts: ParagraphParts): DocParagraph {
     ...(bulleted ? { bulleted: true } : {}),
     ...(parts.inTable === undefined ? {} : { inTable: parts.inTable }),
     ...(parts.hasInlineObject ? { hasInlineObject: true } : {}),
+    ...(paragraphHasSuggestions(paragraph) ? { hasSuggestions: true } : {}),
   };
 }
 

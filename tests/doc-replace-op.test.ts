@@ -9,7 +9,7 @@ import { runDocReplace } from '../src/core/docs/replace-op.js';
 import { undoDocLast } from '../src/core/undo-docs.js';
 import type { DocRunOptions } from '../src/core/docs/write-support.js';
 import type { JournalSource, WriteRecord } from '../src/core/journal.js';
-import { FakeDocsClient, forecastDoc } from './fixtures/doc.js';
+import { FakeDocsClient, buildDoc, forecastDoc, p } from './fixtures/doc.js';
 import { named } from './fixtures/named.js';
 
 const journalled: WriteRecord[] = [];
@@ -288,6 +288,45 @@ describe('замена получает стиль заменённого (на�
   });
 });
 
+describe('абзацы с предложениями ядро не правит (находка читателя 2026-10-01)', () => {
+  const suggestedDoc = () =>
+    buildDoc({
+      tabs: [
+        {
+          title: 'Т',
+          content: [
+            p('Счёт 2:1 — прогноз Fluminense'),
+            { runs: [{ text: 'Счёт: 2:13:1, Fluminense' }], suggested: true },
+          ],
+        },
+      ],
+    });
+
+  it('массовая замена обходит такой абзац и называет его числом', async () => {
+    const client = new FakeDocsClient(suggestedDoc());
+    const preview = await runDocReplace(
+      client,
+      await client.getDocument(),
+      { op: 'replaceAllText', find: 'Fluminense', replace: 'Fluminense FC' },
+      options(),
+    );
+    expect(preview.notes.join(' ')).toContain('Вхождений: 1');
+    expect(preview.notes.join(' ')).toContain('с неразрешёнными предложениями ещё 1');
+  });
+
+  it('точечная замена в таком абзаце отказывает до подписи', async () => {
+    const client = new FakeDocsClient(suggestedDoc());
+    await expect(
+      runDocReplace(
+        client,
+        await client.getDocument(),
+        { op: 'replaceText', where: { paragraphIndex: 2 }, find: '2:1', replace: '3:1' },
+        options(),
+      ),
+    ).rejects.toMatchObject({ payload: { cause: 'docs.suggestions-not-edited' } });
+  });
+});
+
 describe('replaceText — точечная замена в пределах абзаца', () => {
   it('конвертная: в пределах маленького конверта пишет с первой фразы, вне абзаца не трогает', async () => {
     const client = fresh();
@@ -321,7 +360,7 @@ describe('replaceText — точечная замена в пределах аб
       options,
     );
     expect(outcome.status).toBe('no_change');
-    expect(outcome.notes.join(' ')).toContain('в ячейках таблиц: 1');
+    expect(outcome.notes.join(' ')).toContain('в ячейках таблиц ещё 1');
     expect(journalled).toHaveLength(0);
   });
 });

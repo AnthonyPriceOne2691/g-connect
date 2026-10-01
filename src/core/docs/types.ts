@@ -108,6 +108,11 @@ export interface DocParagraph {
   readonly inTable?: { readonly table: number; readonly row: number; readonly column: number };
   /** В абзаце есть inline-объект (картинка и т.п.). */
   readonly hasInlineObject?: boolean;
+  /**
+   * В абзаце неразрешённые предложения: его текст — смесь исходного и предложенного (так
+   * Google отдаёт его в режиме правки, индексы — по этой смеси). Ядро такой абзац не правит.
+   */
+  readonly hasSuggestions?: boolean;
 }
 
 export interface DocCellRange {

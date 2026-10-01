@@ -16,6 +16,38 @@ import { undoDocLast } from '../../src/core/undo-docs.js';
 import { FakeDocsClient, buildDoc, forecastDoc, p as docParagraph } from './doc.js';
 
 export const docProbes: Record<string, () => Promise<void>> = {
+  'docs.suggestions-not-edited': async () => {
+    // Текст абзаца с предложениями — смесь («Счёт: 2:13:1.»): правка легла бы по ней.
+    const client = new FakeDocsClient(
+      buildDoc({
+        tabs: [
+          {
+            title: 'Т',
+            content: [
+              docParagraph('Fluminense'),
+              { runs: [{ text: 'Fluminense 2:13:1' }], suggested: true },
+            ],
+          },
+        ],
+      }),
+    );
+    await expect(
+      runDocDelete(
+        client,
+        await client.getDocument(),
+        { op: 'deleteParagraph', where: { paragraphIndex: 2 } },
+        {},
+      ),
+    ).rejects.toMatchObject({ payload: { cause: 'docs.suggestions-not-edited' } });
+    const preview = await runDocReplace(
+      client,
+      await client.getDocument(),
+      { op: 'replaceAllText', find: 'Fluminense', replace: 'FC' },
+      {},
+    );
+    expect(preview.notes.join(' ')).toContain('Вхождений: 1');
+  },
+
   'write.named-confirm-bound-to-plan': async () => {
     // Фраза — подпись человека, код плана — привязка к показанному превью. Без привязки
     // повтор фразы делал массовую замену второй раз (находка читателя 2026-10-01).

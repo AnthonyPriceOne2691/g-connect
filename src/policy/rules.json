@@ -307,6 +307,13 @@
       "kind": "deny",
       "enforced_in": "src/core/docs/delete-op.ts (budgetedSnapshot) + src/core/google/docs.ts (objectRun)",
       "probe": "удаление абзаца с картинкой — policy_denied docs.objects-not-destroyed до подписи, документ не изменён"
+    },
+    {
+      "id": "docs.suggestions-not-edited",
+      "title": "Абзацы с неразрешёнными предложениями ядро не правит: их текст — смесь исходного и предложенного",
+      "kind": "deny",
+      "enforced_in": "src/core/docs/write-support.ts (assertNoSuggestions) + src/core/docs/replace-op.ts (findOccurrences) + src/core/google/docs.ts (paragraphHasSuggestions)",
+      "probe": "удаление абзаца с предложением — policy_denied docs.suggestions-not-edited до подписи; массовая замена обходит его и называет числом"
     }
   ]
 }

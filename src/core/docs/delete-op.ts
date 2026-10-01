@@ -23,6 +23,7 @@ import type {
 } from './types.js';
 import {
   assertDocPlanNotApplied,
+  assertNoSuggestions,
   commitDocWrite,
   destructiveNote,
   type DocApplyOutcome,
@@ -172,6 +173,7 @@ const rangeOf = (tab: DocTab, request: DocDeleteRequest): RangeChoice =>
  * человека подписать удаление, которое ядро не сможет вернуть.
  */
 function budgetedSnapshot(tab: DocTab, start: number, end: number): DocRangeSnapshot {
+  assertNoSuggestions(tab.paragraphs.filter((p) => p.startIndex < end && p.endIndex > start));
   const budget = limitOf('write.snapshot-max-chars', 20000);
   if (end - start > budget) {
     throw gcError('policy_denied', {

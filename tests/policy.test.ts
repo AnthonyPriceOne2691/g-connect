@@ -737,8 +737,9 @@ describe('правила как механизм (D-12)', () => {
       // оракул ниже, но здесь важно, что именно эти четыре правила не остались текстом.
       expect(rule.enforced_in).toMatch(/src\//);
     }
-    // 40-е — write.named-confirm-bound-to-plan (поправка D-20), 41-е — docs.objects-not-destroyed.
-    expect(policyRules()).toHaveLength(41);
+    // 40-е — write.named-confirm-bound-to-plan (поправка D-20), 41-е — docs.objects-not-destroyed,
+    // 42-е — docs.suggestions-not-edited.
+    expect(policyRules()).toHaveLength(42);
   });
 
   it('rules.md называет ровно списки ядра: конверт и подтверждение названием', () => {
