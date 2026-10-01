@@ -9,7 +9,12 @@
 import type { JournalSink } from './journal.js';
 import type { CellFormat } from './sheets/types.js';
 
-export type NothingToUndoReason = 'journal_empty' | 'all_undone' | 'id_not_found';
+export type NothingToUndoReason =
+  | 'journal_empty'
+  | 'all_undone'
+  | 'id_not_found'
+  /** Запись по id уже откачена: второй откат вернул бы состояние, которого не выбирали. */
+  | 'already_undone';
 
 export interface UndoOptions {
   readonly account?: string;

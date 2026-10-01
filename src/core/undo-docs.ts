@@ -330,15 +330,43 @@ function docUndoForm(doc: NonNullable<WriteRecord['doc']>): DocUndoForm | null {
   return null;
 }
 
+/**
+ * Ревизия, на которой документ «стоит» для этой записи. Свои откаты более поздних записей
+ * его не сдвигают: если всё, что в журнале после записи, — пары «правка + её откат»,
+ * документ вернулся туда, где был, и сверять надо с ревизией последнего такого отката.
+ * Находка читателя 2026-10-01: второй «откати» подряд отказывал из-за собственного
+ * первого, и выходом оставался force, снимающий ВСЕ охранники. Честной эту сверку делает
+ * точность откатов (LR3-2…4): отменённая пара возвращает документ ровно как был.
+ */
+async function settledRevision(
+  source: JournalSource,
+  targetId: string,
+  record: WriteRecord,
+): Promise<string | null> {
+  const history = await source.recent(targetId, 50);
+  const at = history.findIndex((r) => r.correlationId === record.correlationId);
+  if (at < 0) return record.revisionAfter;
+  const after = history.slice(at + 1);
+  const laterWrites = new Set(after.filter((r) => r.op !== 'undo').map((r) => r.correlationId));
+  const undone = new Set(after.filter((r) => r.op === 'undo').map((r) => r.undoOf));
+  const settled =
+    [...laterWrites].every((id) => undone.has(id)) &&
+    after.every((r) => r.op !== 'undo' || laterWrites.has(r.undoOf ?? ''));
+  if (!settled) return record.revisionAfter;
+  const undos = after.filter((r) => r.op === 'undo');
+  return undos[undos.length - 1]?.revisionAfter ?? record.revisionAfter;
+}
+
 export async function undoDocLast(
   client: DocsClient,
   targetId: string,
   source: JournalSource,
   options: UndoOptions = {},
 ): Promise<UndoOutcome> {
-  const record = await pickUndoRecord(source, targetId, options);
-  if (isUndoOutcome(record)) return record;
-  assertRecent(record, options);
+  const picked = await pickUndoRecord(source, targetId, options);
+  if (isUndoOutcome(picked)) return picked;
+  assertRecent(picked, options);
+  const record = { ...picked, revisionAfter: await settledRevision(source, targetId, picked) };
   const doc = docOf(record);
 
   const snapshot = await client.getDocument(targetId);

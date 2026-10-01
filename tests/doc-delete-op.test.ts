@@ -275,6 +275,73 @@ describe('абзац вплотную к таблице (живьём 2026-10-01
   );
 });
 
+describe('цепочка откатов (находки читателя 2026-10-01)', () => {
+  const undoJournal = { journal: async (r: WriteRecord) => void journalled.push(r) };
+  const texts = async (client: FakeDocsClient) =>
+    (await client.getDocument()).tabs[0]!.paragraphs.map((x) => x.text);
+
+  it('два удаления → два «откати» подряд проходят без force: свой откат — не чужая правка', async () => {
+    const client = fresh(styledDoc());
+    const original = await texts(client);
+    for (const text of ['последний', 'пункт списка']) {
+      await named(
+        runDocDelete,
+        client,
+        { op: 'deleteParagraph', where: { textStartsWith: text } },
+        `удаляю абзац ${text}`,
+        options,
+      );
+    }
+    expect((await undoDocLast(client, 'doc-fixture', source(), undoJournal)).status).toBe('ok');
+    // Раньше: revision_conflict «после удаления документ правили» — правили МЫ, откатом.
+    expect((await undoDocLast(client, 'doc-fixture', source(), undoJournal)).status).toBe('ok');
+    expect(await texts(client)).toEqual(original);
+  });
+
+  it('откат по id уже откаченной записи — «уже откачена», и force этого не меняет', async () => {
+    const client = fresh(styledDoc());
+    await named(
+      runDocDelete,
+      client,
+      { op: 'deleteParagraph', where: { textStartsWith: 'последний' } },
+      'удаляю абзац последний',
+      options,
+    );
+    const id = journalled[0]!.correlationId;
+    await undoDocLast(client, 'doc-fixture', source(), undoJournal);
+    const before = await texts(client);
+    const again = await undoDocLast(client, 'doc-fixture', source(), {
+      ...undoJournal,
+      correlationId: id,
+      force: true,
+    });
+    expect(again.status).toBe('nothing_to_undo');
+    expect(again.reason).toBe('already_undone');
+    expect(await texts(client)).toEqual(before);
+  });
+
+  it('старую запись без id не откатывает и force; по id — откатывает', async () => {
+    const client = fresh(styledDoc());
+    await named(
+      runDocDelete,
+      client,
+      { op: 'deleteParagraph', where: { textStartsWith: 'последний' } },
+      'удаляю абзац последний',
+      options,
+    );
+    const old = { ...journalled[0]!, at: new Date(Date.now() - 2 * 3600_000).toISOString() };
+    journalled[0] = old;
+    await expect(
+      undoDocLast(client, 'doc-fixture', source(), { ...undoJournal, force: true }),
+    ).rejects.toMatchObject({ payload: { cause: 'undo_target_too_old' } });
+    const byId = await undoDocLast(client, 'doc-fixture', source(), {
+      ...undoJournal,
+      correlationId: old.correlationId,
+    });
+    expect(byId.status).toBe('ok');
+  });
+});
+
 describe('снимок диапазона', () => {
   it('хранит прогоны со стилями, переносы и вид абзацев', () => {
     const tab = styledDoc().tabs[0]!;

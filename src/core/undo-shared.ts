@@ -27,7 +27,10 @@ export function nothingToUndo(
       ? 'По этой цели журнала нет: ни одной записи через ядро не проходило.'
       : reason === 'all_undone'
         ? `В журнале по этой цели записей: ${seen}, и все уже откачены — возвращать нечего.`
-        : `Записи с id ${correlationId ?? '—'} среди последних ${seen} по этой цели нет.`;
+        : reason === 'already_undone'
+          ? `Запись ${correlationId ?? '—'} уже откачена — второй откат вернул бы состояние, ` +
+            'которого человек не выбирал. Нужна та же правка снова — сделай её заново.'
+          : `Записи с id ${correlationId ?? '—'} среди последних ${seen} по этой цели нет.`;
   return {
     status: 'nothing_to_undo',
     restored: [],
@@ -47,7 +50,9 @@ export function nothingToUndo(
  * теряет то, о чём не думал. Старую запись откатить можно, но назвав её id явно.
  */
 export function assertRecent(record: WriteRecord, options: UndoOptions): void {
-  if (options.force === true || options.correlationId !== undefined) return;
+  // Старую запись снимает ТОЛЬКО явный id — так обещают правила. force раньше обходил и
+  // это: «откати с force» уносил чужую работу часовой давности (находка читателя).
+  if (options.correlationId !== undefined) return;
   const maxMinutes = limitOf('undo.recency-minutes', 60);
   const ageMinutes = (Date.now() - new Date(record.at).getTime()) / 60_000;
   if (ageMinutes <= maxMinutes) return;
@@ -74,6 +79,15 @@ export async function pickUndoRecord(
 ): Promise<WriteRecord | UndoOutcome> {
   const depth = Math.max(1, options.last ?? 1);
   const history = await source.recent(targetId, Math.max(50, depth * 10));
+  // Откат по id уже откаченной записи — не «повтор», а вторая правка: force этого не
+  // меняет (находка читателя 2026-10-01: повторный откат удаления по id с force вставлял
+  // абзац второй раз, хотя правила обещали «дважды один откат не проходит»).
+  if (
+    options.correlationId !== undefined &&
+    history.some((r) => r.op === 'undo' && r.undoOf === options.correlationId)
+  ) {
+    return nothingToUndo('already_undone', history.length, options.correlationId);
+  }
   const record =
     options.correlationId === undefined
       ? lastUndoable(history)
