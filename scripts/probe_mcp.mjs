@@ -28,6 +28,13 @@ const check = (name, ok, detail = '') => {
   process.stdout.write(`${ok ? '  OK  ' : '  FAIL'} ${name}${detail === '' ? '' : ` — ${detail}`}\n`);
   if (!ok) failures.push(name);
 };
+// Непроверенное — отдельное состояние, а не зелёное: «doc-цели нет» раньше засчитывалось
+// как OK, и итог «всё зелёное» прятал целый непрогнанный блок (находка читателя 2026-10-01).
+const unchecked = [];
+const skip = (name, why) => {
+  process.stdout.write(`  SKIP ${name} — ${why}\n`);
+  unchecked.push(name);
+};
 
 const server = spawn('node', [join(ROOT, 'dist/mcp/server.js')], {
   env: { ...process.env, GCONNECT_ACCOUNT: process.env.GCONNECT_ACCOUNT ?? 'default' },
@@ -216,9 +223,10 @@ try {
     // и править живьём — дело человека, проба только СУДИТ превью и отказы.
     const docEntry = (targets.targets ?? []).find((x) => x.type === 'doc');
     if (docEntry === undefined) {
-      check('doc-цель в реестре есть', true, 'нет doc-цели — doc-проба пропущена (не дефект)');
+      skip('живой doc-блок', 'в реестре нет doc-цели — шов documents.* этой пробой НЕ проверен');
     } else {
       const docMap = await callTool('gc_read', { target: docEntry.alias, mode: 'map' });
+      const revisionBefore = docMap.revisionId;
       check(
         'gc_read map читает документ: табы и оглавление',
         Array.isArray(docMap.tabs) && docMap.tabs.length > 0,
@@ -278,9 +286,16 @@ try {
       });
       check(
         'локальный источник картинки отклонён до сети',
-        (localImage.error?.cause ?? localImage.raw ?? '').toString().includes('image.local-source') ||
-          (localImage.detail ?? '').includes('https'),
+        // Только причина: «любое https в тексте» засчитывало и чужой отказ (находка читателя).
+        JSON.stringify(localImage).includes('image.local-source'),
         JSON.stringify(localImage).slice(0, 160),
+      );
+      // «Ничего не записало» — по РЕВИЗИИ документа, а не по статусу ответов.
+      const docAfter = await callTool('gc_read', { target: docEntry.alias, mode: 'map' });
+      check(
+        'doc-блок ничего не записал: ревизия документа та же',
+        typeof revisionBefore === 'string' && docAfter.revisionId === revisionBefore,
+        `${revisionBefore} → ${docAfter.revisionId}`,
       );
     }
 
@@ -392,4 +407,9 @@ if (failures.length > 0) {
   process.stdout.write(`probe_mcp: красные проверки — ${failures.join('; ')}\n`);
   process.exit(1);
 }
-process.stdout.write(`probe_mcp: всё зелёное${LIVE ? ' (живой режим)' : ' (протокол)'}\n`);
+const scope = LIVE ? 'живой режим' : 'протокол';
+process.stdout.write(
+  unchecked.length === 0
+    ? `probe_mcp: всё зелёное (${scope})\n`
+    : `probe_mcp: зелёное, но НЕ проверено: ${unchecked.join('; ')} (${scope})\n`,
+);

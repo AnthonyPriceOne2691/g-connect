@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { runDocReplace } from '../src/core/docs/replace-op.js';
+import { envelopeAuthorizes, parseEnvelope } from '../src/core/envelope.js';
 import { undoDocLast } from '../src/core/undo-docs.js';
 import type { DocRunOptions } from '../src/core/docs/write-support.js';
 import type { JournalSource, WriteRecord } from '../src/core/journal.js';
@@ -348,6 +349,59 @@ describe('replaceText — точечная замена в пределах аб
     expect(texts).toContain('Ставим на победу Fluminense со счётом 3:1.');
     // Другие абзацы с «Fluminense» не тронуты — область была одним абзацем.
     expect(texts.join(' ')).toContain('матч Fluminense — Palmeiras');
+  });
+
+  it('область — один абзац при НАСТОЯЩЕМ конверте: то же слово в соседних абзацах цело', async () => {
+    // Прежний оракул: authorize всегда «да», а «2:1» в документе одно — выход замены за
+    // свой абзац остался бы зелёным (находка читателя 2026-10-01).
+    const envelope = parseEnvelope({ ops: ['replaceText'], maxChars: 50 }, 'forecast')!;
+    const client = fresh();
+    const before = await everything(client);
+    const outcome = await runDocReplace(
+      client,
+      await client.getDocument(),
+      {
+        op: 'replaceText',
+        tab: 'Прогноз',
+        where: { textStartsWith: 'Ставим на победу' },
+        find: 'Fluminense',
+        replace: 'Флу',
+      },
+      options({
+        dryRun: false,
+        authorize: (op, chars) => envelopeAuthorizes(envelope, op, chars),
+      }),
+    );
+    expect(outcome.status).toBe('ok');
+    const expected = before.replace(
+      'Ставим на победу Fluminense со счётом 2:1.',
+      'Ставим на победу Флу со счётом 2:1.',
+    );
+    // Ровно одна правка: «Fluminense» в заголовке, во втором абзаце и в «Черновиках» целы.
+    expect(await everything(client)).toBe(expected);
+  });
+
+  it('конверт меньше правки — план, а не запись', async () => {
+    const envelope = parseEnvelope({ ops: ['replaceText'], maxChars: 3 }, 'forecast')!;
+    const client = fresh();
+    const before = await everything(client);
+    const outcome = await runDocReplace(
+      client,
+      await client.getDocument(),
+      {
+        op: 'replaceText',
+        tab: 'Прогноз',
+        where: { textStartsWith: 'Ставим на победу' },
+        find: 'Fluminense',
+        replace: 'Флу',
+      },
+      options({
+        dryRun: false,
+        authorize: (op, chars) => envelopeAuthorizes(envelope, op, chars),
+      }),
+    );
+    expect(outcome.status).toBe('confirm_required');
+    expect(await everything(client)).toBe(before);
   });
 
   it('нет вхождений — no_change с честным текстом; вхождения в таблицах названы числом', async () => {

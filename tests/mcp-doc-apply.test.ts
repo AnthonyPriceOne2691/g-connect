@@ -111,6 +111,24 @@ describe('P22 / T6 — вид цели решает до чтения', () => {
     expect(result.error!.detail).toContain('таблица');
   });
 
+  it('отказ по виду цели случается ДО любого чтения — заглушки чтения падают при вызове', async () => {
+    // Рабочие заглушки не отличали «до чтения» от «после» (находка читателя 2026-10-01).
+    const { deps } = harness();
+    const blind: ToolDeps = {
+      ...deps,
+      docs: () => Promise.reject(new Error('документ читать нельзя')),
+      sheets: () => Promise.reject(new Error('таблицу читать нельзя')),
+    };
+    const sheetOp = await call(
+      gcApply,
+      { op: 'appendRow', target: 'forecast', values: { а: 1 } },
+      blind,
+    );
+    expect(sheetOp.ok ? null : sheetOp.error?.detail).toContain('appendText');
+    const docOp = await call(gcApply, { op: 'appendText', target: 'log', text: 'х' }, blind);
+    expect(docOp.ok ? null : docOp.error?.detail).toContain('таблица');
+  });
+
   it('appendRow по документу — отказ с перечнем doc-операций', async () => {
     const { deps } = harness();
     const result = await call(

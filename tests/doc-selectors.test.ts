@@ -25,6 +25,12 @@ describe('P10 — неоднозначный селектор — вопрос �
     expect(result.question.detail).toContain('уточни');
     expect(result.question.candidates.length).toBeGreaterThan(1);
     expect(result.question.candidates[0]).toMatch(/^№ \d+: /);
+    // Кандидаты — ИМЕННО совпавшие абзацы, а не первые попавшиеся (находка читателя).
+    const matched = forecast.paragraphs
+      .filter((x) => x.text.toLowerCase().includes('прогноз'))
+      .map((x) => x.index);
+    const named = result.question.candidates.map((c) => Number(/^№ (\d+):/.exec(c)![1]));
+    expect(named).toEqual(matched.slice(0, named.length));
   });
 
   it('одно совпадение — абзац без вопросов', () => {
@@ -101,6 +107,28 @@ describe('раздел заголовка — граница по следующ
     if (result.status !== 'ok') return;
     const texts = result.value.paragraphs.map((p) => p.text);
     expect(texts).toEqual(['текст раздела', 'Подраздел', 'текст подраздела']);
+  });
+
+  it('раздел H2 закрывает и следующий H1 (старший), а не только H2 того же уровня', () => {
+    // В фикстуре P16 раздел закрывал заголовок ТОГО ЖЕ уровня — мутация «<=» → «===» в
+    // границе выживала (находка читателя 2026-10-01).
+    const doc = buildDoc({
+      tabs: [
+        {
+          title: 'Т',
+          content: [
+            p('Раздел', 'HEADING_2'),
+            p('текст раздела'),
+            p('Глава', 'HEADING_1'),
+            p('текст главы'),
+          ],
+        },
+      ],
+    });
+    const result = resolveSection(doc.tabs[0]!, 'Раздел');
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.value.paragraphs.map((x) => x.text)).toEqual(['текст раздела']);
   });
 
   it('нет такого заголовка — вопрос со списком заголовков', () => {

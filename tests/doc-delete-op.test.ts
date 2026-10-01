@@ -123,6 +123,15 @@ describe('P18 — бюджет снимка ДО подтверждения (п�
       payload: { cause: 'write.snapshot-max-chars' },
     });
     expect(journalled).toHaveLength(0);
+    // «С обоими числами» — размер диапазона И бюджет; раньше проверялась только причина.
+    const refusal = await runDocDelete(
+      client,
+      await client.getDocument(),
+      { op: 'deleteParagraph', where: { paragraphIndex: 1 } },
+      options({ dryRun: false }),
+    ).catch((e: { payload: { detail: string } }) => e.payload);
+    expect(refusal).toMatchObject({ detail: expect.stringContaining('25001') });
+    expect(refusal).toMatchObject({ detail: expect.stringContaining('20000') });
   });
 });
 
