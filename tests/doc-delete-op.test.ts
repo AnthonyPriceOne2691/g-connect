@@ -240,6 +240,41 @@ describe('P9 — откат возвращает текст СО СТИЛЯМИ 
   });
 });
 
+describe('абзац вплотную к таблице (живьём 2026-10-01: Google не даёт удалить перенос)', () => {
+  const docWithTable = () =>
+    buildDoc({
+      tabs: [
+        {
+          title: 'Т',
+          content: [p('до'), p('Перед таблицей'), { table: [['а', 'б']] }, p('Последний')],
+        },
+      ],
+    });
+  const body = async (client: FakeDocsClient) =>
+    (await client.getDocument()).tabs[0]!.paragraphs.filter((x) => x.inTable === undefined).map(
+      (x) => x.text,
+    );
+
+  it.each([
+    ['Перед таблицей', ['до', '', 'Последний']],
+    ['Последний', ['до', 'Перед таблицей', '']],
+  ])(
+    '«%s»: уходит текст, строка остаётся, план это говорит; откат возвращает',
+    async (text, gone) => {
+      const client = fresh(docWithTable());
+      const request = { op: 'deleteParagraph', where: { textStartsWith: text } } as const;
+      const preview = await runDocDelete(client, await client.getDocument(), request, options());
+      expect(preview.notes.join(' ')).toContain('Google удалить не даёт');
+      const written = await named(runDocDelete, client, request, `удаляю абзац ${text}`, options);
+      expect(written.status).toBe('ok');
+      expect(await body(client)).toEqual(gone);
+      expect((await client.getDocument()).tabs[0]!.tables[0]!.cells).toEqual([['а', 'б']]);
+      await undoDocLast(client, 'doc-fixture', source(), {});
+      expect(await body(client)).toEqual(['до', 'Перед таблицей', 'Последний']);
+    },
+  );
+});
+
 describe('снимок диапазона', () => {
   it('хранит прогоны со стилями, переносы и вид абзацев', () => {
     const tab = styledDoc().tabs[0]!;

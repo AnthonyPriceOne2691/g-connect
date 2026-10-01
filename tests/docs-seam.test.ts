@@ -207,3 +207,61 @@ describe('P21-основа — перевод ответа Google в домен�
     expect(tab.endIndex).toBe(9); // sectionBreak не абзац, но границу тела двигает
   });
 });
+
+describe('встроенные объекты — живые формы ответа (прогон 2026-10-01)', () => {
+  /** Абзац ровно в форме живого ответа: элементы со своими границами. */
+  const liveParagraph = (
+    start: number,
+    elements: docs_v1.Schema$ParagraphElement[],
+  ): docs_v1.Schema$StructuralElement => ({
+    startIndex: start,
+    endIndex: elements[elements.length - 1]!.endIndex!,
+    paragraph: { elements, paragraphStyle: { namedStyleType: 'NORMAL_TEXT' } },
+  });
+  // Снято живьём: «Фото: [картинка]подпись Х.», «Встреча с [@чип] в зале.», «Дата: [дата].»,
+  // «Разрыв тут[разрыв]» — каждый объект по 1 юниту.
+  const doc = asDocument([
+    {
+      tabProperties: { tabId: 't1', title: 'Т' },
+      documentTab: {
+        body: {
+          content: [
+            liveParagraph(1, [
+              { startIndex: 1, endIndex: 7, textRun: { content: 'Фото: ' } },
+              { startIndex: 7, endIndex: 8, inlineObjectElement: { inlineObjectId: 'kix.1' } },
+              { startIndex: 8, endIndex: 19, textRun: { content: 'подпись Х.\n' } },
+            ]),
+            liveParagraph(19, [
+              { startIndex: 19, endIndex: 29, textRun: { content: 'Встреча с ' } },
+              { startIndex: 29, endIndex: 30, person: { personId: 'p1' } },
+              { startIndex: 30, endIndex: 39, textRun: { content: ' в зале.\n' } },
+            ]),
+            liveParagraph(39, [
+              { startIndex: 39, endIndex: 45, textRun: { content: 'Дата: ' } },
+              { startIndex: 45, endIndex: 46, dateElement: { dateId: 'd1' } },
+              { startIndex: 46, endIndex: 48, textRun: { content: '.\n' } },
+            ]),
+            liveParagraph(48, [
+              { startIndex: 48, endIndex: 58, textRun: { content: 'Разрыв тут' } },
+              { startIndex: 58, endIndex: 59, pageBreak: {} },
+              { startIndex: 59, endIndex: 60, textRun: { content: '\n' } },
+            ]),
+          ],
+        },
+      },
+    },
+  ]);
+
+  it('текст абзаца равен его ширине: объект стоит знаком, индексы не съезжают', () => {
+    const paragraphs = toDocSnapshot('d1', doc).tabs[0]!.paragraphs;
+    for (const p of paragraphs) expect(p.text.length).toBe(p.endIndex - p.startIndex - 1);
+    // «подпись» начинается на юнит ПОСЛЕ картинки — там, где её видит Google (8).
+    const photo = paragraphs[0]!;
+    expect(photo.startIndex + photo.text.indexOf('подпись')).toBe(8);
+    expect(photo.runs.map((r) => r.object ?? null)).toEqual([null, 'image', null]);
+    expect(paragraphs.map((p) => p.hasInlineObject === true)).toEqual([true, true, true, true]);
+    expect(paragraphs[1]!.runs[1]!.object).toBe('person');
+    expect(paragraphs[2]!.runs[1]!.object).toBe('date');
+    expect(paragraphs[3]!.runs[1]!.object).toBe('pageBreak');
+  });
+});

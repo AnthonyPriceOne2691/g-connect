@@ -13,6 +13,7 @@
  */
 
 import { gcError } from '../../src/core/errors.js';
+import { OBJECT_MARK } from '../../src/core/docs/types.js';
 import type {
   DocParagraph,
   DocRequest,
@@ -539,14 +540,14 @@ export class FakeDocsClient implements DocsClient {
   }
 
   /**
-   * Разрыв страницы и inline-картинка: в модели это ОБЪЕКТ внутри абзаца, занимающий
-   * 1 юнит и не несущий текста. Фейк кладёт его как прогон-плейсхолдер — так же, как
-   * шов видит `inlineObjectElement` (текста нет, `hasInlineObject` поднят).
+   * Разрыв страницы и inline-картинка — ОБЪЕКТ внутри абзаца: знак OBJECT_MARK с пометкой
+   * вида, ровно как его отдаёт шов. Живьём 2026-10-01: картинка — 1 юнит; разрыв Google
+   * вставляет С переводом строки, и абзац режется надвое (знак + `\n`).
    */
   private insertObject(
     request: Extract<DocRequest, { kind: 'insertPageBreak' | 'insertInlineImage' }>,
   ): void {
-    const { blocks } = this.located(request.tabId);
+    const { tab, blocks } = this.located(request.tabId);
     const hit = blocks.find(
       (b) => !isMutableTable(b.block) && request.at >= b.start && request.at < b.end,
     );
@@ -556,10 +557,13 @@ export class FakeDocsClient implements DocsClient {
       });
     }
     const paragraph = hit.block;
-    const offset = request.at - hit.start;
-    const [left, right] = splitRuns(paragraph.runs, offset);
-    // Один юнит без текста: в домене — прогон нулевой длины с пометкой объекта.
-    paragraph.runs = [...left, { text: '\u0001' }, ...right];
+    const [left, right] = splitRuns(paragraph.runs, request.at - hit.start);
+    const object: DocTextRun[] =
+      request.kind === 'insertPageBreak'
+        ? [{ text: OBJECT_MARK, object: 'pageBreak' }, { text: '\n' }]
+        : [{ text: OBJECT_MARK, object: 'image' }];
+    const replacement = runsToParagraphs([...left, ...object, ...right], paragraph);
+    tab.blocks.splice(tab.blocks.indexOf(paragraph), 1, ...replacement);
   }
 
   /** Табличные структурные запросы: мутируют блок-таблицу, найденную по startIndex. */

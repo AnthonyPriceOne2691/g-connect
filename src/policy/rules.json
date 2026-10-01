@@ -300,6 +300,13 @@
       "kind": "deny",
       "enforced_in": "src/core/docs/insert-op.ts (assertImageSource)",
       "probe": "локальный путь и file:// дают отказ image.local-source с советом, ни одного обращения к Google"
+    },
+    {
+      "id": "docs.objects-not-destroyed",
+      "title": "Удаление, задевающее встроенный объект (картинку, @-чип, дату, разрыв), не выполняется: откат вернул бы текст без объекта",
+      "kind": "deny",
+      "enforced_in": "src/core/docs/delete-op.ts (budgetedSnapshot) + src/core/google/docs.ts (objectRun)",
+      "probe": "удаление абзаца с картинкой — policy_denied docs.objects-not-destroyed до подписи, документ не изменён"
     }
   ]
 }

@@ -6,6 +6,7 @@
  * селекторов: «paragraphIndex: 7» адресует то, что человек видит здесь.
  */
 
+import { shownText } from './objects.js';
 import type { DocSnapshot, DocTab } from './types.js';
 
 export interface DocHeadingEntry {
@@ -64,7 +65,7 @@ function tabMap(tab: DocTab): DocTabMap {
   for (const paragraph of bodyParagraphs) {
     const level = HEADING_LEVEL[paragraph.namedStyle];
     if (level !== undefined && paragraph.text.trim() !== '') {
-      headings.push({ level, text: paragraph.text, paragraph: paragraph.index });
+      headings.push({ level, text: shownText(paragraph.runs), paragraph: paragraph.index });
     }
   }
   return {
@@ -79,7 +80,7 @@ function tabMap(tab: DocTab): DocTabMap {
       columns: t.columns,
       firstRow: t.cells[0] ?? [],
     })),
-    preview: bodyParagraphs.slice(0, 3).map((p) => firstWords(p.text)),
+    preview: bodyParagraphs.slice(0, 3).map((p) => firstWords(shownText(p.runs))),
   };
 }
 
@@ -98,6 +99,16 @@ export function buildDocMap(snapshot: DocSnapshot): DocMap {
   if (hidden.length > 0) {
     warnings.push(
       `Сегменты вне тела документа карта не показывает и ядро их не правит (${hidden.join(', ')}).`,
+    );
+  }
+  const withObjects = snapshot.tabs
+    .flatMap((tab) => tab.paragraphs)
+    .filter((p) => p.hasInlineObject);
+  if (withObjects.length > 0) {
+    warnings.push(
+      `Встроенных объектов (картинки, @-чипы, даты, разрывы) — в ${withObjects.length} абзац(ах): ` +
+        'в тексте они показаны метками вроде «[картинка]». Удаление и замена, задевающие объект, ' +
+        'отказывают: откат вернул бы текст без объекта.',
     );
   }
   if (snapshot.tabs.every((tab) => tab.paragraphs.length === 0)) {

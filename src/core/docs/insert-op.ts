@@ -15,7 +15,14 @@ import { gcError } from '../errors.js';
 import type { Question } from '../sheets/write-types.js';
 import { docPlanId, type DocPlanChange, type DocPlanShape } from './plan.js';
 import { paragraphLabel, pickTab, resolveParagraph, resolveSection } from './selectors.js';
-import type { DocParagraph, DocRequest, DocSnapshot, DocTab, DocsClient } from './types.js';
+import {
+  OBJECT_MARK,
+  type DocParagraph,
+  type DocRequest,
+  type DocSnapshot,
+  type DocTab,
+  type DocsClient,
+} from './types.js';
 import {
   assertDocPlanNotApplied,
   clarify,
@@ -41,41 +48,54 @@ export interface DocInsertRequest {
   readonly where?: DocWhere | undefined;
 }
 
-/** Куда вставлять и как назвать это человеку. */
-function anchorOf(
-  tab: DocTab,
-  request: DocInsertRequest,
-): { paragraph: DocParagraph; label: string } | { question: Question } {
-  if (request.op === 'insertText') {
-    const selector = narrowSelector(request.where ?? {});
-    if ('field' in selector) return { question: selector };
-    const hit = resolveParagraph(tab, selector);
-    if (hit.status === 'question') return { question: hit.question };
-    if (hit.value.inTable !== undefined) {
-      return {
-        question: {
-          field: 'where',
-          reason: 'no_match',
-          detail:
-            `Абзац ${paragraphLabel(hit.value)} живёт в ячейке таблицы — вставка абзаца ` +
-            'внутрь таблицы не поддерживается: правь ячейку заменой текста.',
-          candidates: [],
-          available: [],
-        },
-      };
-    }
-    return { paragraph: hit.value, label: `после абзаца ${paragraphLabel(hit.value)}` };
-  }
-  if (request.afterHeading !== undefined) {
-    const section = resolveSection(tab, request.afterHeading);
-    if (section.status === 'question') return { question: section.question };
-    const body = section.value.paragraphs.filter((p) => p.inTable === undefined);
-    const last = body[body.length - 1] ?? section.value.heading;
+type Anchor = { paragraph: DocParagraph; label: string } | { question: Question };
+
+/** Куда вставлять и как назвать это человеку — разводка по виду якоря. */
+function anchorOf(tab: DocTab, request: DocInsertRequest): Anchor {
+  // Якорь-абзац: у insertText обязателен, у объектов — если назван (находка читателя
+  // 2026-10-01: `where` у картинки и разрыва молча игнорировался — объект уходил в конец).
+  const named =
+    request.op === 'insertText' || (OBJECT_OPS.has(request.op) && request.where !== undefined);
+  if (named) return paragraphAnchor(tab, request.where);
+  if (request.afterHeading !== undefined) return sectionAnchor(tab, request.afterHeading);
+  return tabEndAnchor(tab);
+}
+
+function paragraphAnchor(tab: DocTab, where: DocInsertRequest['where']): Anchor {
+  const selector = narrowSelector(where ?? {});
+  if ('field' in selector) return { question: selector };
+  const hit = resolveParagraph(tab, selector);
+  if (hit.status === 'question') return { question: hit.question };
+  if (hit.value.inTable !== undefined) {
     return {
-      paragraph: last,
-      label: `в конец раздела «${section.value.heading.text}» (${paragraphLabel(last)})`,
+      question: {
+        field: 'where',
+        reason: 'no_match',
+        // Совет «правь ячейку заменой» вёл в тупик: replaceText ячейки не правит
+        // (находка читателя 2026-10-01). Говорим, что есть, а не чего нет.
+        detail:
+          `Абзац ${paragraphLabel(hit.value)} живёт в ячейке таблицы — вставка внутрь таблицы ` +
+          'не поддерживается, и текст ячеек ядро не правит. Выбери абзац вне таблицы.',
+        candidates: [],
+        available: [],
+      },
     };
   }
+  return { paragraph: hit.value, label: `после абзаца ${paragraphLabel(hit.value)}` };
+}
+
+function sectionAnchor(tab: DocTab, heading: string): Anchor {
+  const section = resolveSection(tab, heading);
+  if (section.status === 'question') return { question: section.question };
+  const body = section.value.paragraphs.filter((p) => p.inTable === undefined);
+  const last = body[body.length - 1] ?? section.value.heading;
+  return {
+    paragraph: last,
+    label: `в конец раздела «${section.value.heading.text}» (${paragraphLabel(last)})`,
+  };
+}
+
+function tabEndAnchor(tab: DocTab): Anchor {
   const body = tab.paragraphs.filter((p) => p.inTable === undefined);
   const last = body[body.length - 1];
   if (last === undefined) {
@@ -105,8 +125,14 @@ export async function runDocInsert(
   const at = anchor.paragraph.endIndex - 1;
   const object = OBJECT_OPS.has(request.op);
   if (request.op === 'insertInlineImage') assertImageSource(request.uri);
-  // Объект (разрыв страницы, картинка) занимает РОВНО 1 юнит и текста не несёт.
-  const inserted = object ? '\u0001' : `\n${request.text ?? ''}`;
+  // Объект занимает юниты без текста — в снимке он знак OBJECT_MARK. Разрыв страницы
+  // Google вставляет С переводом строки (живьём 2026-10-01: «Разрыв тут» и «конец» стали
+  // двумя абзацами), поэтому его след — знак плюс перенос, 2 юнита; картинка — 1.
+  const inserted = !object
+    ? `\n${request.text ?? ''}`
+    : request.op === 'insertPageBreak'
+      ? `${OBJECT_MARK}\n`
+      : OBJECT_MARK;
   const shown = shownContent(request, object);
   const plan: DocPlanShape = {
     targetId: snapshot.docId,

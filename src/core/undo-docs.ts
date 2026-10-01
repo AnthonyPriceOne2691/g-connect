@@ -14,12 +14,13 @@ import { assertRecent, isUndoOutcome, pickUndoRecord } from './undo-shared.js';
 import type { UndoOptions, UndoOutcome } from './undo-types.js';
 import { tableUndoRequests } from './undo-docs-table.js';
 import { exactStyleRequests } from './docs/style-restore.js';
-import type {
-  DocRangeSnapshot,
-  DocRequest,
-  DocSnapshot,
-  DocTab,
-  DocsClient,
+import {
+  OBJECT_MARK,
+  type DocRangeSnapshot,
+  type DocRequest,
+  type DocSnapshot,
+  type DocTab,
+  type DocsClient,
 } from './docs/types.js';
 
 /** Текст диапазона из абзацев снимка; `null` — диапазон рвётся о таблицу или границы. */
@@ -364,7 +365,8 @@ export async function undoDocLast(
     );
   }
 
-  const removed = (doc.inserted ?? '').replace(/^\n/, '');
+  // Объект в следе вставки — знак OBJECT_MARK; человеку он ничего не скажет.
+  const removed = (doc.inserted ?? '').replace(/^\n/, '').split(OBJECT_MARK).join('[объект]');
   return {
     status: 'ok',
     restored: [],

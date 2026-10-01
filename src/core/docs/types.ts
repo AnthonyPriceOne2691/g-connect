@@ -44,11 +44,36 @@ export interface DocTextStyle {
   readonly color?: string;
 }
 
+/**
+ * Встроенный объект абзаца: занимает юниты, но текста не несёт. Живьём (2026-10-01)
+ * картинка, @-чип человека, чип даты и разрыв страницы — по 1 юниту.
+ */
+export type DocObjectKind =
+  | 'image'
+  | 'person'
+  | 'date'
+  | 'pageBreak'
+  | 'columnBreak'
+  | 'footnote'
+  | 'equation'
+  | 'richLink'
+  | 'autoText'
+  | 'horizontalRule';
+
+/**
+ * Знак, которым объект стоит в тексте снимка, — по одному на юнит: индексы ТЕКСТА равны
+ * индексам Google. До живого прогона шов объекты пропускал, и всё индексное после
+ * картинки или чипа съезжало на юнит (замена задевала соседний символ).
+ */
+export const OBJECT_MARK = '\uFFFC';
+
 /** Непрерывный кусок текста одного стиля внутри абзаца. */
 export interface DocTextRun {
   readonly text: string;
   /** Явно заданный стиль; отсутствует, когда ничего не задано. */
   readonly style?: DocTextStyle;
+  /** Объект, а не текст: `text` — знаки OBJECT_MARK по его ширине. */
+  readonly object?: DocObjectKind;
 }
 
 /**

@@ -17,16 +17,18 @@ import { google, type docs_v1 } from 'googleapis';
 import { fromGoogleError, gcError, type GcError } from '../errors.js';
 import { toDocRequest } from './doc-requests.js';
 import { authorizedClient, makeRetry, rgbToHex, type RetryReporter } from './support.js';
-import type {
-  DocParagraph,
-  DocRequest,
-  DocSnapshot,
-  DocTab,
-  DocTable,
-  DocTextRun,
-  DocTextStyle,
-  DocsClient,
-  ParagraphNamedStyle,
+import {
+  OBJECT_MARK,
+  type DocObjectKind,
+  type DocParagraph,
+  type DocRequest,
+  type DocSnapshot,
+  type DocTab,
+  type DocTable,
+  type DocTextRun,
+  type DocTextStyle,
+  type DocsClient,
+  type ParagraphNamedStyle,
 } from '../docs/types.js';
 
 /** `null` в ответе Google значит «поля нет». */
@@ -93,7 +95,36 @@ function paragraphHasSuggestions(paragraph: docs_v1.Schema$Paragraph): boolean {
   });
 }
 
-/** Прогоны абзаца и признак inline-объекта — без завершающего `\n` последнего прогона. */
+/** Элемент абзаца, который занимает юниты без текста, — и как он зовётся в домене. */
+const OBJECT_ELEMENTS: readonly (readonly [
+  keyof docs_v1.Schema$ParagraphElement,
+  DocObjectKind,
+])[] = [
+  ['inlineObjectElement', 'image'],
+  ['person', 'person'],
+  ['dateElement', 'date'],
+  ['pageBreak', 'pageBreak'],
+  ['columnBreak', 'columnBreak'],
+  ['footnoteReference', 'footnote'],
+  ['equation', 'equation'],
+  ['richLink', 'richLink'],
+  ['autoText', 'autoText'],
+  ['horizontalRule', 'horizontalRule'],
+];
+
+/**
+ * Объект — знаками OBJECT_MARK по его ширине из ответа (живьём 2026-10-01: картинка, чипы,
+ * разрыв — по 1 юниту). Раньше шов брал только textRun, и текст абзаца с объектом был
+ * короче его ширины: всё индексное после картинки съезжало на юнит.
+ */
+function objectRun(el: docs_v1.Schema$ParagraphElement): DocTextRun | undefined {
+  const hit = OBJECT_ELEMENTS.find(([key]) => el[key] !== undefined && el[key] !== null);
+  if (hit === undefined) return undefined;
+  const width = Math.max(1, (el.endIndex ?? 0) - (el.startIndex ?? 0));
+  return { text: OBJECT_MARK.repeat(width), object: hit[1] };
+}
+
+/** Прогоны абзаца и признак встроенного объекта — без завершающего `\n` последнего прогона. */
 function collectRuns(paragraph: docs_v1.Schema$Paragraph): {
   runs: DocTextRun[];
   hasInlineObject: boolean;
@@ -101,7 +132,12 @@ function collectRuns(paragraph: docs_v1.Schema$Paragraph): {
   const runs: DocTextRun[] = [];
   let hasInlineObject = false;
   for (const el of paragraph.elements ?? []) {
-    if (el.inlineObjectElement !== undefined) hasInlineObject = true;
+    const object = objectRun(el);
+    if (object !== undefined) {
+      runs.push(object);
+      hasInlineObject = true;
+      continue;
+    }
     const content = some(el.textRun?.content);
     if (content === undefined) continue;
     const style = toStyle(some(el.textRun?.textStyle));

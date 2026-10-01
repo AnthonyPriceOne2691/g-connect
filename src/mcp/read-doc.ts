@@ -6,6 +6,7 @@
  */
 
 import { buildDocMap } from '../core/docs/map.js';
+import { shownText } from '../core/docs/objects.js';
 import { pickTab } from '../core/docs/selectors.js';
 import { gcError } from '../core/errors.js';
 import { limitOf } from '../core/policy.js';
@@ -41,7 +42,7 @@ export async function readDoc(
     revisionId: snapshot.revisionId,
     paragraphs: slice.map((p) => ({
       n: p.index,
-      text: p.text,
+      text: shownText(p.runs),
       style: p.namedStyle,
       ...(p.bulleted === true ? { bulleted: true } : {}),
       ...(p.inTable === undefined ? {} : { inTable: p.inTable }),

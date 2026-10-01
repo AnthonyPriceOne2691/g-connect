@@ -7,6 +7,7 @@
  * закреплён (урок L11): вид цели → бюджет → однократность → подтверждение → запись.
  */
 
+import { objectLabels, shownText, visibleText } from './objects.js';
 import { gcError } from '../errors.js';
 import { limitOf } from '../policy.js';
 import { docPlanId, type DocPlanShape } from './plan.js';
@@ -90,7 +91,8 @@ export function snapshotRange(tab: DocTab, start: number, end: number): DocRange
 
 /** Какой диапазон удаляется и как назвать предмет человеку. */
 type RangeChoice =
-  { start: number; end: number; subject: string; shownText: string } | { outcome: DocApplyOutcome };
+  | { start: number; end: number; subject: string; shownText: string; caveat?: string }
+  | { outcome: DocApplyOutcome };
 
 function explicitRange(request: DocDeleteRequest): RangeChoice {
   const { startIndex, endIndex } = request;
@@ -107,28 +109,58 @@ function explicitRange(request: DocDeleteRequest): RangeChoice {
   };
 }
 
+/**
+ * Диапазон удаления абзаца. Перенос ВПЛОТНУЮ к таблице Google удалить не даёт (живьём
+ * 2026-10-01: «Invalid deletion range. Cannot delete the requested range») — у абзаца
+ * перед таблицей и у последнего абзаца после неё уходит только текст, строка остаётся, и
+ * план говорит это заранее. Последний абзац сегмента без таблицы перед ним уводит
+ * диапазон на перенос ПРЕДЫДУЩЕГО абзаца (приём из документации).
+ */
+function paragraphSpan(tab: DocTab, paragraph: DocParagraph): [number, number, string?] {
+  const textOnly =
+    'Перенос вплотную к таблице Google удалить не даёт: уйдёт текст абзаца, пустая строка останется.';
+  if (tab.tables.some((t) => t.startIndex === paragraph.endIndex)) {
+    return [paragraph.startIndex, paragraph.endIndex - 1, textOnly];
+  }
+  const body = tab.paragraphs.filter((p) => p.inTable === undefined);
+  const last = body[body.length - 1];
+  if (last === undefined || paragraph.index !== last.index || paragraph.startIndex <= 1) {
+    return [paragraph.startIndex, paragraph.endIndex];
+  }
+  if (tab.tables.some((t) => t.endIndex === paragraph.startIndex)) {
+    return [paragraph.startIndex, paragraph.endIndex - 1, textOnly];
+  }
+  return [paragraph.startIndex - 1, paragraph.endIndex - 1];
+}
+
 function paragraphRange(tab: DocTab, request: DocDeleteRequest): RangeChoice {
   const resolved = resolveBodyParagraph(
     tab,
     request.where,
-    'удаление строк таблицы — deleteTableRow, ячейку правит замена текста.',
+    'удаление строк таблицы — deleteTableRow; текст ячеек ядро не правит.',
   );
   if ('outcome' in resolved) return resolved;
   const paragraph = resolved.paragraph;
-  const body = tab.paragraphs.filter((p) => p.inTable === undefined);
-  const last = body[body.length - 1];
-  // Последний абзац сегмента: его завершающий перенос удалить нельзя — уводим диапазон
-  // на перенос ПРЕДЫДУЩЕГО абзаца, и абзац исчезает как строка (приём из документации).
-  const [start, end] =
-    last !== undefined && paragraph.index === last.index && paragraph.startIndex > 1
-      ? [paragraph.startIndex - 1, paragraph.endIndex - 1]
-      : [paragraph.startIndex, paragraph.endIndex];
-  const words = paragraph.text.split(/\s+/).filter((w) => w !== '');
+  const [start, end, caveat] = paragraphSpan(tab, paragraph);
+  if (start === end) {
+    throw gcError('bad_request', {
+      detail:
+        `Абзац ${paragraphLabel(paragraph)} пуст и стоит вплотную к таблице: его перенос Google ` +
+        'удалить не даёт, а текста в нём нет — удалять нечего.',
+    });
+  }
+  const words = visibleText(paragraph.text)
+    .split(/\s+/)
+    .filter((w) => w !== '');
   return {
     start,
     end,
-    subject: `абзац ${words.slice(0, 4).join(' ')}`,
-    shownText: paragraph.text,
+    // Абзац без слов (пустой) называется номером: иначе предметом стало бы «абзац », и его
+    // «называло» бы любое «да, удаляю абзац» (находка читателя 2026-10-01).
+    subject:
+      words.length === 0 ? `абзац № ${paragraph.index}` : `абзац ${words.slice(0, 4).join(' ')}`,
+    shownText: shownText(paragraph.runs),
+    ...(caveat === undefined ? {} : { caveat }),
   };
 }
 
@@ -155,7 +187,19 @@ function budgetedSnapshot(tab: DocTab, start: number, end: number): DocRangeSnap
     throw gcError('bad_request', {
       detail:
         `Диапазон ${start}–${end} рвётся о таблицу или границы тела — целиком его не снять ` +
-        'и не удалить. Таблицы удаляет deleteTable (слайс 6), ячейки правит замена.',
+        'и не удалить. Таблицы удаляет deleteTable, строки — deleteTableRow; текст ячеек ядро не правит.',
+    });
+  }
+  // Объект откатом не вернуть: снимок держит текст, а не картинку или чип. Правку, которую
+  // нечем вернуть, ядро не делает (находка читателя 2026-10-01: удаление абзаца с картинкой
+  // уносило её, а откат объявлял «восстановлено»).
+  const objects = objectLabels(rangeSnapshot.runs);
+  if (objects.length > 0) {
+    throw gcError('policy_denied', {
+      detail:
+        `В удаляемом есть встроенный объект (${objects.join(', ')}) — откат вернул бы текст ` +
+        'без него. Удаление не выполнено: убери объект руками в Docs или сузь диапазон до текста.',
+      cause: 'docs.objects-not-destroyed',
     });
   }
   return rangeSnapshot;
@@ -173,7 +217,7 @@ export async function runDocDelete(
   const tab = pickTab(snapshot, request.tab);
   const range = rangeOf(tab, request);
   if ('outcome' in range) return range.outcome;
-  const { start, end, subject, shownText } = range;
+  const { start, end, subject, shownText, caveat } = range;
 
   const rangeSnapshot = budgetedSnapshot(tab, start, end);
 
@@ -208,6 +252,7 @@ export async function runDocDelete(
     `Исчезнет ${end - start} юнитов текста${
       anchorParagraph === undefined ? '' : ` (${paragraphLabel(anchorParagraph)})`
     }. Откат вернёт текст со стилями и видом абзацев.`,
+    ...(caveat === undefined ? [] : [caveat]),
   ];
 
   if (options.dryRun !== false) {

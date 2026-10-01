@@ -13,6 +13,7 @@
 
 import { gcError } from '../errors.js';
 import { normalizeName } from '../resolver.js';
+import { shownText, visibleText } from './objects.js';
 import type { Question } from '../sheets/write-types.js';
 import type { DocParagraph, DocSnapshot, DocTab, DocTable } from './types.js';
 
@@ -34,7 +35,9 @@ const ask = <T>(question: Question): Resolved<T> => ({ status: 'question', quest
 
 /** «№ 7: первые слова…» — кандидат, по которому человек узнаёт абзац, не читая весь. */
 export const paragraphLabel = (p: DocParagraph, words = 6): string => {
-  const parts = p.text.split(/\s+/).filter((w) => w !== '');
+  const parts = shownText(p.runs)
+    .split(/\s+/)
+    .filter((w) => w !== '');
   const head = parts.slice(0, words).join(' ');
   return `№ ${p.index}: ${parts.length > words ? `${head}…` : head}`;
 };
@@ -60,7 +63,10 @@ function byText(
   field: string,
 ): Resolved<DocParagraph> {
   const query = normalizeName(wanted);
-  const hits = tab.paragraphs.filter((p) => match(normalizeName(p.text), query));
+  // Объект посередине не мешает: сравниваем и без знаков объектов, и с их метками.
+  const hits = tab.paragraphs.filter((p) =>
+    [visibleText(p.text), shownText(p.runs)].some((t) => match(normalizeName(t), query)),
+  );
   if (hits.length === 1) return ok(hits[0]!);
   if (hits.length === 0) {
     return ask({
