@@ -6,7 +6,7 @@
  */
 
 import { runDocDelete } from '../core/docs/delete-op.js';
-import { runDocInsert, type DocApplyOutcome } from '../core/docs/insert-op.js';
+import { assertImageSource, runDocInsert, type DocApplyOutcome } from '../core/docs/insert-op.js';
 import { runDocReplace } from '../core/docs/replace-op.js';
 import { runDocStyle } from '../core/docs/style-op.js';
 import type { DocTextStyle } from '../core/docs/types.js';
@@ -46,8 +46,21 @@ export async function runDocApply(
   resolved: ResolvedTarget,
   deps: ToolDeps,
 ): Promise<DocApplyOutcome & { target: { id: string; alias: string | null } }> {
+  // P19b: локальный источник картинки отклоняется ДО любого обращения к Google — и до
+  // чтения документа тоже (находка читателя 2026-10-01: проверка стояла после get).
+  if (operation.op === 'insertInlineImage') assertImageSource(operation.uri);
   const client = await deps.docs();
   const snapshot = await client.getDocument(resolved.id);
+  // Вызов без превью (CLI, раннер) несёт ревизию, на которой строил план: ушла — отказ,
+  // а не тихая запись по свежему чтению (находка читателя: поле не передавалось вовсе).
+  if (operation.expectRevision !== undefined && operation.expectRevision !== snapshot.revisionId) {
+    throw gcError('doc_changed', {
+      detail:
+        `Ревизия ${operation.expectRevision}, на которой строился план, ушла: документ сейчас на ` +
+        `${snapshot.revisionId}. Записи не было — перечитай и построй план заново.`,
+      cause: 'expect_revision',
+    });
+  }
   const options = {
     dryRun: operation.dryRun,
     journal: deps.journal,

@@ -7,6 +7,7 @@
  * несколько абзацев подряд («сделай список из трёх абзацев» — P12).
  */
 
+import { limitOf } from '../policy.js';
 import { gcError } from '../errors.js';
 import { snapshotRange } from './delete-op.js';
 import { docPlanId, type DocPlanShape } from './plan.js';
@@ -121,6 +122,17 @@ export async function runDocStyle(
   const start = resolved.paragraph.startIndex;
   const end = last.endIndex;
 
+  // Снимок прежних стилей уходит в журнал — тот же бюджет, что у удаления, и отказ ДО
+  // подтверждения (находка читателя 2026-10-01: по коду плана в журнал ушло 60 001 юнит).
+  const budget = limitOf('write.snapshot-max-chars', 20000);
+  if (end - start > budget) {
+    throw gcError('policy_denied', {
+      detail:
+        `Снимок прежних стилей не построить: диапазон ${end - start} юнитов, бюджет ${budget} ` +
+        '(правило write.snapshot-max-chars). Правка не выполнена — раздели её на части.',
+      cause: 'write.snapshot-max-chars',
+    });
+  }
   const stored = snapshotRange(tab, start, end);
   if (stored === null) {
     throw gcError('bad_request', { detail: 'Диапазон стилей рвётся о таблицу.' });

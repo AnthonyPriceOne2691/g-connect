@@ -6,6 +6,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { runDocDelete, snapshotRange } from '../src/core/docs/delete-op.js';
+import { runDocStyle } from '../src/core/docs/style-op.js';
+import { limitOf } from '../src/core/policy.js';
 import { undoDocLast } from '../src/core/undo-docs.js';
 import type { DocRunOptions } from '../src/core/docs/insert-op.js';
 import type { JournalSource, WriteRecord } from '../src/core/journal.js';
@@ -339,6 +341,22 @@ describe('цепочка откатов (находки читателя 2026-10
       correlationId: old.correlationId,
     });
     expect(byId.status).toBe('ok');
+  });
+});
+
+describe('бюджет снимка у правки стилей (находка читателя 2026-10-01)', () => {
+  it('стиль по абзацу больше бюджета — отказ ДО подтверждения, журнал не растёт', async () => {
+    const huge = 'х'.repeat(limitOf('write.snapshot-max-chars', 20000) + 1);
+    const client = fresh(buildDoc({ tabs: [{ title: 'Т', content: [p('до'), p(huge)] }] }));
+    await expect(
+      runDocStyle(
+        client,
+        await client.getDocument(),
+        { op: 'updateTextStyle', where: { paragraphIndex: 2 }, style: { bold: true } },
+        options({ dryRun: false, authorize: () => ({ authorized: true }) }),
+      ),
+    ).rejects.toMatchObject({ payload: { cause: 'write.snapshot-max-chars' } });
+    expect(journalled).toHaveLength(0);
   });
 });
 

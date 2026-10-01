@@ -13,6 +13,7 @@
  */
 
 import { gcError } from './errors.js';
+import { limitOf } from './policy.js';
 import type { EnvelopeDecision, OperationKind } from './sheets/write-types.js';
 
 /**
@@ -110,8 +111,11 @@ export const DEFAULT_MAX_CELLS = 50;
 /** Граница по UTF-16-юнитам для документов (подписано владельцем 2026-09-08). */
 export const DEFAULT_MAX_CHARS = 1000;
 
-/** Потолок maxChars: выше бюджета снимка граница ничего не значит. */
-const CHARS_CEILING = 20000;
+/**
+ * Потолок maxChars: выше бюджета снимка граница ничего не значит. Значение — из правила,
+ * а не своя константа: две копии одного числа разошлись бы молча (находка читателя).
+ */
+const charsCeiling = (): number => limitOf('write.snapshot-max-chars', 20000);
 
 /** Потолок границы: выше общего бюджета изменений (`write.max-changes`) она бессмысленна. */
 const BUDGET_CEILING = 200;
@@ -198,10 +202,10 @@ function parseMaxChars(raw: unknown, where: string): number {
   if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1) {
     throw envelopeError(`Конверт ${where}: maxChars — целое число больше нуля.`);
   }
-  if (raw > CHARS_CEILING) {
+  if (raw > charsCeiling()) {
     throw envelopeError(
       `Конверт ${where}: maxChars ${raw} больше бюджета снимка ` +
-        `(${CHARS_CEILING}, правило write.snapshot-max-chars) — такая граница ничего не значит.`,
+        `(${charsCeiling()}, правило write.snapshot-max-chars) — такая граница ничего не значит.`,
     );
   }
   return raw;

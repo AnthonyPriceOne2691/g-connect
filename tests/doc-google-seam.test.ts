@@ -118,3 +118,20 @@ describe('GoogleDocsClient.batchUpdate: предусловие уходит и �
     expect(calls).toBe(2);
   });
 });
+
+describe('GoogleDocsClient.batchUpdate: картинку Google не взял (P19)', () => {
+  it.each([
+    'Invalid requests[0].insertInlineImage: The provided image was not found.',
+    'Invalid requests[0].insertInlineImage: There was a problem retrieving the image. ' +
+      'The provided image should be publicly accessible, within size limit, and in supported formats.',
+  ])('живой отказ «%s» доходит с советом, а не «Запрос составлен неверно»', async (message) => {
+    const { client } = failingClient(Object.assign(new Error(message), { status: 400, code: 400 }));
+    const payload = await client.batchUpdate('d', [], 'r').then(
+      () => null,
+      (e: { payload: { code: string; cause: string; detail: string } }) => e.payload,
+    );
+    expect(payload?.code).toBe('bad_request');
+    expect(payload?.cause).toMatch(/^image\.unreachable/);
+    expect(payload?.detail).toContain('публичный доступ');
+  });
+});

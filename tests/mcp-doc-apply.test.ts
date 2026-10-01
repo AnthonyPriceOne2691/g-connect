@@ -122,3 +122,45 @@ describe('P22 / T6 — вид цели решает до чтения', () => {
     expect(result.error!.detail).toContain('appendText');
   });
 });
+
+describe('находки читателя 2026-10-01: до Google — значит до Google', () => {
+  it('P19b: локальная картинка отклоняется, и docs() не вызывается вовсе', async () => {
+    const { deps } = harness();
+    let touched = 0;
+    const strict: ToolDeps = {
+      ...deps,
+      docs: () => {
+        touched += 1;
+        return Promise.reject(new Error('к Google ходить нельзя'));
+      },
+    };
+    const result = await call(
+      gcApply,
+      { target: 'forecast', op: 'insertInlineImage', uri: '/Users/anthony/shot.png' },
+      strict,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.ok ? null : result.error?.cause).toBe('image.local-source');
+    // Раньше проверка стояла после documents.get: «до сети» было неправдой.
+    expect(touched).toBe(0);
+  });
+
+  it('expectRevision с ушедшей ревизией — отказ без записи, а не тихая запись по свежему чтению', async () => {
+    const { deps, docs, journalled } = harness();
+    const result = await call(
+      gcApply,
+      {
+        target: 'forecast',
+        op: 'appendText',
+        text: 'новый абзац',
+        dryRun: false,
+        expectRevision: 'rev-давняя',
+      },
+      deps,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.ok ? null : result.error?.cause).toBe('expect_revision');
+    expect(docs.applied).toHaveLength(0);
+    expect(journalled).toHaveLength(0);
+  });
+});

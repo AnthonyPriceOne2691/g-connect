@@ -181,7 +181,7 @@ const OBJECT_OPS: ReadonlySet<string> = new Set(['insertPageBreak', 'insertInlin
  * вставки. Локальный путь и `file://` отклоняются ДО обращения к Google, с советом
  * (P19b): загрузка локальных файлов — отдельная поставка (решение владельца 2026-09-08).
  */
-function assertImageSource(uri: string | undefined): void {
+export function assertImageSource(uri: string | undefined): void {
   if (uri === undefined || uri.trim() === '') {
     throw gcError('bad_request', { detail: 'insertInlineImage требует uri картинки.' });
   }

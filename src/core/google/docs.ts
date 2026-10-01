@@ -379,7 +379,8 @@ export class GoogleDocsClient implements DocsClient {
           const stale = staleRevision(error);
           // Повтор после обрыва упёрся в ушедшую ревизию: первая попытка могла дойти до
           // Google и записать — «ни одной правки» здесь было бы неправдой.
-          throw stale !== undefined && attempts > 1 ? outcomeUnknown(id) : (stale ?? error);
+          if (stale !== undefined) throw attempts > 1 ? outcomeUnknown(id) : stale;
+          throw imageRefused(error) ?? error;
         }
       });
       // Сверено живьём 2026-10-01: ответ несёт writeControl с ревизией ПОСЛЕ записи, и
@@ -389,6 +390,23 @@ export class GoogleDocsClient implements DocsClient {
       throw fromGoogleError(error, `Не удалось записать в документ ${id}.`);
     }
   }
+}
+
+/**
+ * Google не смог взять картинку по ссылке (P19). Живьём 2026-10-01 это 400 с текстом
+ * «insertInlineImage: The provided image was not found.» или «There was a problem
+ * retrieving the image…» — человеку нужен совет, а не «Запрос составлен неверно».
+ */
+function imageRefused(error: unknown): GcError | undefined {
+  const message = String((error as { message?: unknown })?.message ?? error);
+  if (!/insertInlineImage/.test(message)) return undefined;
+  return gcError('bad_request', {
+    detail:
+      'Google не смог взять картинку по ссылке — записи не было. Ссылка должна открываться ' +
+      'без входа (публичный доступ), файл — PNG, JPEG или GIF в пределах размера Google. ' +
+      'Проверь ссылку в окне инкогнито.',
+    cause: `image.unreachable: ${message}`,
+  });
 }
 
 /** Исход записи неизвестен: повтор после обрыва встретил ушедшую ревизию. */
