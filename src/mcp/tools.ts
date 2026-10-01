@@ -19,7 +19,7 @@ import { operationJsonSchema, parseOperation } from '../core/ops.js';
 import { runOperation } from './run-operation.js';
 import { runCreate } from './run-create.js';
 import { assertTargetKind, isDocOperation, runDocApply, runDocUndo } from './run-doc-operation.js';
-import { limitOf, policyText, policyRules } from '../core/policy.js';
+import { asData, limitOf, policyText, policyRules } from '../core/policy.js';
 import { listProfiles, profileStatus } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
 import { readDoc } from './read-doc.js';
@@ -188,7 +188,8 @@ export const gcRead: ToolDefinition = {
         sheet: data.map.sheet,
         headerRow: data.map.headerRow,
         columns: data.map.columns.map((c) => c.name),
-        rows: withData.slice(0, limit),
+        // Содержимое — ДАННЫЕ с пометкой источника (правило content.is-data).
+        rows: asData(`таблица ${resolved.id}, лист «${data.map.sheet}»`, withData.slice(0, limit)),
         truncated: withData.length > limit,
         warnings: data.map.warnings,
       };

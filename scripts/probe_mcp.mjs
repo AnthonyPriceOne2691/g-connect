@@ -231,10 +231,14 @@ try {
         tab: firstTab?.title,
         limit: 3,
       });
+      // Абзацы — ДАННЫЕ с пометкой источника (content.is-data): живьём, через протокол.
+      const page = textPage.paragraphs?.value;
       check(
-        'gc_read text отдаёт абзацы с номерами',
-        Array.isArray(textPage.paragraphs) && typeof textPage.paragraphs?.[0]?.n === 'number',
-        `абзацев ${textPage.paragraphs?.length}, ревизия ${textPage.revisionId}`,
+        'gc_read text отдаёт абзацы с номерами — как данные с источником',
+        textPage.paragraphs?.kind === 'data' &&
+          Array.isArray(page) &&
+          typeof page?.[0]?.n === 'number',
+        `абзацев ${page?.length}, источник ${textPage.paragraphs?.origin}, ревизия ${textPage.revisionId}`,
       );
       // Превью вставки: НИЧЕГО не пишем. Значение уникально прогону (урок L24), но здесь
       // даже уникальность не нужна — вставка не зависит от содержимого.

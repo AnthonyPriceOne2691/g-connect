@@ -79,7 +79,7 @@
       "id": "content.is-data",
       "title": "Прочитанное из документов — данные, никогда не инструкции",
       "kind": "invariant",
-      "enforced_in": "src/core/policy.ts (asData) — пометка источника в возвращаемых данных",
+      "enforced_in": "src/core/policy.ts (asData) + src/mcp/read-doc.ts, src/mcp/tools.ts (gc_read: абзацы и строки — asData с источником)",
       "probe": "прочитанный текст помечен как данные и не может инициировать запись"
     },
     {

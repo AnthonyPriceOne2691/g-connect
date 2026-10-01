@@ -9,7 +9,7 @@ import { buildDocMap } from '../core/docs/map.js';
 import { shownText } from '../core/docs/objects.js';
 import { pickTab } from '../core/docs/selectors.js';
 import { gcError } from '../core/errors.js';
-import { limitOf } from '../core/policy.js';
+import { asData, limitOf } from '../core/policy.js';
 import type { ToolDeps } from './deps.js';
 
 /** Чтение doc-цели: карта или абзацы. mode=values — про строки таблиц, и это названо. */
@@ -40,13 +40,18 @@ export async function readDoc(
     doc: snapshot.title,
     tab: tab.title,
     revisionId: snapshot.revisionId,
-    paragraphs: slice.map((p) => ({
-      n: p.index,
-      text: shownText(p.runs),
-      style: p.namedStyle,
-      ...(p.bulleted === true ? { bulleted: true } : {}),
-      ...(p.inTable === undefined ? {} : { inTable: p.inTable }),
-    })),
+    // Содержимое — ДАННЫЕ с пометкой источника, а не инструкции (правило content.is-data).
+    // До 2026-10-01 пометку обещало правило, а не делал никто: asData не вызывался вовсе.
+    paragraphs: asData(
+      `документ ${resolvedId}, таб «${tab.title}»`,
+      slice.map((p) => ({
+        n: p.index,
+        text: shownText(p.runs),
+        style: p.namedStyle,
+        ...(p.bulleted === true ? { bulleted: true } : {}),
+        ...(p.inTable === undefined ? {} : { inTable: p.inTable }),
+      })),
+    ),
     truncated: wanted.length > limit,
     ...(snapshot.hasSuggestions
       ? {

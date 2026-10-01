@@ -354,10 +354,12 @@ describe('gc_read — карта как первый шаг', () => {
     const { deps } = harness();
     const data = (await runTool(gcRead, { target: 'log', mode: 'values', limit: 1 }, deps))
       .data as {
-      rows: unknown[];
+      rows: { kind: string; origin: string; value: unknown[] };
       truncated: boolean;
     };
-    expect(data.rows).toHaveLength(1);
+    expect(data.rows.kind).toBe('data');
+    expect(data.rows.origin).toContain('лист');
+    expect(data.rows.value).toHaveLength(1);
     expect(data.truncated).toBe(true);
   });
 });
@@ -643,10 +645,10 @@ describe('живой прогон B13 — что он нашёл', () => {
       sheets: () => Promise.resolve(new FakeSheetsClient(snapshot([padded]))),
     });
     const data = (await runTool(gcRead, { target: 'log', mode: 'values' }, deps)).data as {
-      rows: Record<string, unknown>[];
+      rows: { value: Record<string, unknown>[] };
       truncated: boolean;
     };
-    expect(data.rows).toHaveLength(2);
+    expect(data.rows.value).toHaveLength(2);
     expect(data.truncated).toBe(false);
   });
 

@@ -85,9 +85,15 @@ describe('mode=text — абзацы документа', () => {
     const d = deps(new FakeDocsClient(forecastDoc()));
     const result = await read({ target: 'forecast', mode: 'text', tab: 'Черновики' }, d);
     expect(result.ok).toBe(true);
-    const data = result.data as { tab: string; paragraphs: { n: number; text: string }[] };
+    const data = result.data as {
+      tab: string;
+      paragraphs: { kind: string; origin: string; value: { n: number; text: string }[] };
+    };
     expect(data.tab).toBe('Черновики');
-    expect(data.paragraphs[0]!.text).toContain('Устаревший прогноз');
+    // Содержимое — данные с пометкой источника (content.is-data), а не голый текст.
+    expect(data.paragraphs.kind).toBe('data');
+    expect(data.paragraphs.origin).toContain('таб «Черновики»');
+    expect(data.paragraphs.value[0]!.text).toContain('Устаревший прогноз');
 
     const missing = err(await read({ target: 'forecast', mode: 'text', tab: 'Нет такого' }, d));
     expect(missing.detail).toContain('Прогноз, Черновики');
@@ -100,8 +106,13 @@ describe('mode=text — абзацы документа', () => {
     const d = deps(new FakeDocsClient(doc));
     const result = await read({ target: 'forecast', mode: 'text', fromParagraph: 2, limit: 1 }, d);
     expect(result.ok).toBe(true);
-    const data = result.data as { paragraphs: { n: number; text: string }[]; truncated: boolean };
-    expect(data.paragraphs).toEqual([{ n: 2, text: 'второй', style: 'NORMAL_TEXT' }]);
+    const data = result.data as {
+      paragraphs: { kind: string; value: { n: number; text: string }[] };
+      truncated: boolean;
+    };
+    // Раньше этот оракул ЗАКРЕПЛЯЛ ответ без пометки «данные» (находка читателя).
+    expect(data.paragraphs.kind).toBe('data');
+    expect(data.paragraphs.value).toEqual([{ n: 2, text: 'второй', style: 'NORMAL_TEXT' }]);
     expect(data.truncated).toBe(true);
   });
 
