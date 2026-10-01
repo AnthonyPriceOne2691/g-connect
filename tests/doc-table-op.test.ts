@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { runDocTable } from '../src/core/docs/table-op.js';
+import { emptyTableWidth, newTableCellInsertionPoints } from '../src/core/docs/table-math.js';
 import { undoDocLast } from '../src/core/undo-docs.js';
 import type { DocRunOptions } from '../src/core/docs/write-support.js';
 import type { JournalSource, WriteRecord } from '../src/core/journal.js';
@@ -27,6 +28,32 @@ const fresh = (doc = forecastDoc()) => {
 };
 const cells = async (client: FakeDocsClient, tab = 0, table = 0) =>
   (await client.getDocument()).tabs[tab]!.tables[table]!.cells;
+/** Ячейки так, как их видит человек: жирные прогоны — в `**…**`. */
+const cellView = async (client: FakeDocsClient): Promise<string[][]> => {
+  const tab = (await client.getDocument()).tabs[0]!;
+  const table = tab.tables[0]!;
+  return table.cells.map((row, r) =>
+    row.map((_, c) =>
+      tab.paragraphs
+        .filter(
+          (x) =>
+            x.inTable?.table === table.index &&
+            x.inTable.row === r + 1 &&
+            x.inTable.column === c + 1,
+        )
+        .flatMap((x) => x.runs)
+        .filter((run) => run.text !== '')
+        .map((run) => (run.style?.bold === true ? `**${run.text}**` : run.text))
+        .join(''),
+    ),
+  );
+};
+/** Абзацы вне таблиц — по ним видно лишний пустой абзац вокруг таблицы. */
+const bodyTexts = async (client: FakeDocsClient): Promise<string[]> =>
+  (await client.getDocument()).tabs[0]!.paragraphs.filter((x) => x.inTable === undefined).map(
+    (x) => x.text,
+  );
+const bold = (text: string) => [{ text, style: { bold: true } }];
 
 describe('P13 — вставка строки по якорю ячейки и её откат', () => {
   it('строка встаёт ниже якоря пустой; откат удаляет её, пока она пуста', async () => {
@@ -225,7 +252,7 @@ describe('колонки и целые таблицы', () => {
             p('до'),
             {
               table: [
-                ['Шапка', 'Ш2'],
+                [bold('Шапка'), 'Ш2'],
                 ['важное', 'хвост'],
               ],
             },
@@ -246,15 +273,13 @@ describe('колонки и целые таблицы', () => {
 
     const undone = await undoDocLast(client, 'doc-fixture', source(), {});
     expect(undone.docUndone).toContain('восстановлена');
-    expect(await cells(client)).toEqual([
-      ['Шапка', 'Ш2'],
+    // Вид, а не только текст: жирное — жирным, обычное не унаследовало жирного.
+    expect(await cellView(client)).toEqual([
+      ['**Шапка**', 'Ш2'],
       ['важное', 'хвост'],
     ]);
-    // Соседние абзацы целы.
-    const texts = (await client.getDocument()).tabs[0]!.paragraphs.filter(
-      (x) => x.inTable === undefined,
-    ).map((x) => x.text);
-    expect(texts).toEqual(['до', 'после']);
+    // Соседние абзацы целы — и лишнего пустого после таблицы нет (LR3-3, живьём).
+    expect(await bodyTexts(client)).toEqual(['до', 'после']);
   });
 
   it('вставка таблицы: превью, запись кодом, откат пустой; непустую не откатывает', async () => {
@@ -294,13 +319,19 @@ describe('колонки и целые таблицы', () => {
       tabs: [
         {
           title: 'Т',
-          content: [p('х'), { table: [['a', 'b']] }],
+          content: [
+            p('х'),
+            {
+              table: [
+                [bold('a'), 'b'],
+                ['c', [{ text: 'd' }, { text: 'e', style: { bold: true } }]],
+              ],
+            },
+            p('у'),
+          ],
         },
       ],
     });
-    // Вручную положим жирный прогон в ячейку через фейк нельзя (plain) — стили ячеек
-    // в снимке проверяются на уровне запросов: runStyleRequests уже покрыт P9.
-    // Здесь — что снимок಼ сетки кладётся в журнал.
     const client = fresh(doc);
     await runDocTable(
       client,
@@ -308,6 +339,145 @@ describe('колонки и целые таблицы', () => {
       { op: 'deleteTable', table: 1 },
       options({ dryRun: false, confirm: 'удаляю таблицу a b' }),
     );
-    expect(journalled[0]!.doc?.table?.grid?.[0]?.[0]?.[0]?.text).toBe('a');
+    // Журнал держит прогоны со стилями, а не плоский текст.
+    expect(journalled[0]!.doc?.table?.grid?.[0]?.[0]).toEqual(bold('a'));
+    await undoDocLast(client, 'doc-fixture', source(), {});
+    expect(await cellView(client)).toEqual([
+      ['**a**', 'b'],
+      ['c', 'd**e**'],
+    ]);
+    expect(await bodyTexts(client)).toEqual(['х', 'у']);
+  });
+});
+
+describe('живой прогон 2026-10-01: откат возвращает вид, а не только текст (LR3-2, LR3-3)', () => {
+  it('откат последней строки не наследует жирный строки-образца', async () => {
+    const client = fresh(
+      buildDoc({
+        tabs: [
+          {
+            title: 'Т',
+            content: [
+              p('х'),
+              {
+                table: [
+                  [bold('Игрок'), bold('Клуб')],
+                  ['Иванов', 'Fluminense'],
+                ],
+              },
+              p('у'),
+            ],
+          },
+        ],
+      }),
+    );
+    await runDocTable(
+      client,
+      await client.getDocument(),
+      { op: 'deleteTableRow', rowIndex: 2 },
+      options({ dryRun: false, confirm: 'удаляю строку Иванов Fluminense' }),
+    );
+    await undoDocLast(client, 'doc-fixture', source(), {});
+    // Живьём новая строка копирует стиль образца: без явного сброса «Иванов» стал жирным.
+    expect(await cellView(client)).toEqual([
+      ['**Игрок**', '**Клуб**'],
+      ['Иванов', 'Fluminense'],
+    ]);
+  });
+
+  it('откат колонки не наследует жирный колонки-образца', async () => {
+    const client = fresh(
+      buildDoc({
+        tabs: [
+          {
+            title: 'Т',
+            content: [
+              p('х'),
+              {
+                table: [
+                  [bold('Игрок'), 'Клуб'],
+                  [bold('Иванов'), 'Fluminense'],
+                ],
+              },
+              p('у'),
+            ],
+          },
+        ],
+      }),
+    );
+    await runDocTable(
+      client,
+      await client.getDocument(),
+      { op: 'deleteTableColumn', columnTitle: 'Клуб' },
+      options({ dryRun: false, confirm: 'удаляю колонку Клуб' }),
+    );
+    await undoDocLast(client, 'doc-fixture', source(), {});
+    expect(await cellView(client)).toEqual([
+      ['**Игрок**', 'Клуб'],
+      ['**Иванов**', 'Fluminense'],
+    ]);
+  });
+
+  it('откат вставки таблицы не оставляет пустого абзаца, который поставил Google', async () => {
+    const client = fresh(buildDoc({ tabs: [{ title: 'Т', content: [p('якорь'), p('дальше')] }] }));
+    const preview = await runDocTable(
+      client,
+      await client.getDocument(),
+      { op: 'insertTable', rows: 2, columns: 2 },
+      options(),
+    );
+    await runDocTable(
+      client,
+      await client.getDocument(),
+      { op: 'insertTable', rows: 2, columns: 2 },
+      options({ dryRun: false, confirm: preview.planId! }),
+    );
+    // Вставка в конец абзаца: хвост абзаца (пустой) остаётся ПОСЛЕ таблицы — как у Google.
+    expect(await bodyTexts(client)).toEqual(['якорь', 'дальше', '']);
+    const undone = await undoDocLast(client, 'doc-fixture', source(), {});
+    expect(undone.status).toBe('ok');
+    expect(await bodyTexts(client)).toEqual(['якорь', 'дальше']);
+  });
+
+  it('геометрия таблицы — живые числа 2026-10-01, а не прочтение документации', async () => {
+    const client = fresh(
+      buildDoc({ tabs: [{ title: 'Т', content: [p('Before ⚽🔥 end'), p('After')] }] }),
+    );
+    await client.batchUpdate(
+      'd',
+      [{ kind: 'insertTable', tabId: 't1', at: 15, rows: 3, columns: 3 }],
+      'rev-1',
+    );
+    const tab = (await client.getDocument()).tabs[0]!;
+    const table = tab.tables[0]!;
+    expect([table.startIndex, table.endIndex]).toEqual([16, 39]);
+    expect(table.rowRanges.map((r) => [r.startIndex, r.endIndex])).toEqual([
+      [17, 24],
+      [24, 31],
+      [31, 38],
+    ]);
+    const starts = table.cellRanges.map((row, r) =>
+      row.map(
+        (_, c) =>
+          tab.paragraphs.find((x) => x.inTable?.row === r + 1 && x.inTable.column === c + 1)!
+            .startIndex,
+      ),
+    );
+    expect(starts).toEqual([
+      [19, 21, 23],
+      [26, 28, 30],
+      [33, 35, 37],
+    ]);
+    expect(newTableCellInsertionPoints(16, 3, 3)).toEqual(starts);
+    expect(emptyTableWidth(3, 3)).toBe(39 - 16);
+    expect(
+      tab.paragraphs
+        .filter((x) => x.inTable === undefined)
+        .map((x) => [x.text, x.startIndex, x.endIndex]),
+    ).toEqual([
+      ['Before ⚽🔥 end', 1, 16],
+      ['', 39, 40],
+      ['After', 40, 46],
+    ]);
   });
 });

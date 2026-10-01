@@ -153,6 +153,45 @@ describe('P9 — откат возвращает текст СО СТИЛЯМИ 
     ).toBe('жирный');
   });
 
+  it('обычный абзац перед заголовком или списком возвращается обычным, а не видом соседа', async () => {
+    // Вставка наследует вид абзаца, в который вставлена: восстановленный абзац ложится в
+    // начало СЛЕДУЮЩЕГО. Вид без условий — та же мысль, что у отката стилей (найдено
+    // чтением 2026-10-01: две копии «вида абзаца» разошлись, класс L21).
+    const client = fresh(
+      buildDoc({
+        tabs: [
+          {
+            title: 'Т',
+            content: [
+              p('Раздел', 'HEADING_2'),
+              p('обычный перед заголовком'),
+              p('Следующий', 'HEADING_2'),
+              p('обычный перед списком'),
+              { runs: [{ text: 'пункт' }], bulleted: true },
+              p('хвост'),
+            ],
+          },
+        ],
+      }),
+    );
+    const view = async (text: string) => {
+      const found = (await client.getDocument()).tabs[0]!.paragraphs.find((x) => x.text === text)!;
+      return `${found.namedStyle}${found.bulleted === true ? ' •' : ''}`;
+    };
+    for (const text of ['обычный перед заголовком', 'обычный перед списком']) {
+      await runDocDelete(
+        client,
+        await client.getDocument(),
+        { op: 'deleteParagraph', where: { textStartsWith: text } },
+        options({ dryRun: false, confirm: `удаляю абзац ${text}` }),
+      );
+      await undoDocLast(client, 'doc-fixture', source(), {});
+      expect(await view(text)).toBe('NORMAL_TEXT');
+    }
+    expect(await view('Следующий')).toBe('HEADING_2');
+    expect(await view('пункт')).toBe('NORMAL_TEXT •');
+  });
+
   it('документ правили после удаления — откат отказывает: снимок лёг бы не туда', async () => {
     const client = fresh(styledDoc());
     const before = await client.getDocument();

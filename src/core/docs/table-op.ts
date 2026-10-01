@@ -14,7 +14,7 @@ import { assertPlanNotApplied } from '../sheets/write-guards.js';
 import { docPlanId, type DocPlanShape } from './plan.js';
 import { pickTab, resolveTable, resolveTableColumn, resolveTableRow } from './selectors.js';
 import { sliceParagraphRuns } from './delete-op.js';
-import { emptyRowWidth } from './table-math.js';
+import { emptyRowWidth, emptyTableWidth } from './table-math.js';
 import type {
   DocParagraph,
   DocRequest,
@@ -134,7 +134,9 @@ function planInsertTable(
   const anchor = insertAnchor(tab, request.where);
   if ('outcome' in anchor) return anchor;
   const tableStart = anchor.paragraph.endIndex;
-  const units = 1 + rows * emptyRowWidth(columns);
+  const width = emptyTableWidth(rows, columns);
+  // Документ вырастет на таблицу и на `\n`, который Google ставит перед ней (живьём).
+  const units = width + 1;
   return {
     subject: `таблицу ${rows}×${columns}`,
     preview: {
@@ -150,7 +152,7 @@ function planInsertTable(
     detail: { kind: 'insertTable', tableStart, rows, columns },
     destructive: false,
     units,
-    planChange: { startIndex: tableStart, endIndex: tableStart + units },
+    planChange: { startIndex: tableStart, endIndex: tableStart + width },
   };
 }
 

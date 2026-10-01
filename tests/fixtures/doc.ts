@@ -1,15 +1,15 @@
 /**
  * Фикстурный документ из spec.md («Прогноз на матч») и фейковый DocsClient.
  *
- * Индексы фикстура СЧИТАЕТ по правилам документации Docs API, а не расставляет руками:
+ * Индексы фикстура СЧИТАЕТ по правилам Docs API, а не расставляет руками:
  * - индексы — UTF-16 code units (`.length` JS-строки; эмодзи = 2 юнита);
  * - тело сегмента начинается с 1 (нулевой юнит занят началом сегмента);
  * - абзац занимает `[start, start + text.length + 1)` — плюс завершающий `\n`;
  * - таблица: 1 юнит на вход в таблицу, затем на каждую строку 1 юнит и на каждую
- *   ячейку 1 юнит + её абзацы; после таблицы Docs держит закрывающий абзац.
- *   ⚠ Арифметика внутренностей таблиц в документации описана скупо; здесь — наше
- *   прочтение, и оно СВЕРЯЕТСЯ живым прогоном в слайсе 6 до первой правки таблиц
- *   (названо в verify-report, а не спрятано).
+ *   ячейку 1 юнит + её абзацы, и ещё 1 юнит в КОНЦЕ таблицы.
+ *   Сверено живьём 2026-10-01: пустая 3×3 со стартом 16 — строки [17,24) [24,31)
+ *   [31,38), таблица [16,39); абзацы пустых ячеек начинаются в cellStart + 1. До
+ *   прогона фейк не держал закрывающий юнит — всё после таблиц стояло на 1 левее Google.
  */
 
 import { gcError } from '../../src/core/errors.js';
@@ -20,6 +20,7 @@ import type {
   DocTab,
   DocTable,
   DocTextRun,
+  DocTextStyle,
   DocsClient,
   ParagraphNamedStyle,
 } from '../../src/core/docs/types.js';
@@ -36,8 +37,11 @@ export const p = (text: string, style?: ParagraphNamedStyle): ParagraphSpec =>
 
 export const runs = (...parts: DocTextRun[]): ParagraphSpec => ({ runs: parts });
 
+/** Ячейка в билдере: строка или прогоны (`\n` внутри прогона — новый абзац ячейки). */
+export type CellSpec = string | readonly DocTextRun[];
+
 export interface TableSpec {
-  readonly table: readonly (readonly string[])[];
+  readonly table: readonly (readonly CellSpec[])[];
 }
 
 export interface TabSpec {
@@ -46,6 +50,20 @@ export interface TabSpec {
 }
 
 const isTable = (item: ParagraphSpec | TableSpec): item is TableSpec => 'table' in item;
+
+/** Ячейка → её абзацы (прогоны режутся по `\n`). */
+function cellParagraphs(cell: CellSpec): DocTextRun[][] {
+  if (typeof cell === 'string')
+    return cell.split('\n').map((text) => (text === '' ? [] : [{ text }]));
+  const out: DocTextRun[][] = [[]];
+  for (const run of cell) {
+    run.text.split('\n').forEach((piece, i) => {
+      if (i > 0) out.push([]);
+      if (piece !== '') out[out.length - 1]!.push({ ...run, text: piece });
+    });
+  }
+  return out;
+}
 
 /** Собрать таб: абзацы и таблицы с посчитанными индексами. */
 function buildTab(spec: TabSpec, tabNumber: number): DocTab {
@@ -56,7 +74,7 @@ function buildTab(spec: TabSpec, tabNumber: number): DocTab {
   const pushParagraph = (
     item: ParagraphSpec,
     inTable?: { table: number; row: number; column: number },
-  ): void => {
+  ): string => {
     const text = item.runs.map((r) => r.text).join('');
     paragraphs.push({
       index: paragraphs.length + 1,
@@ -69,6 +87,7 @@ function buildTab(spec: TabSpec, tabNumber: number): DocTab {
       ...(inTable === undefined ? {} : { inTable }),
     });
     cursor += text.length + 1;
+    return text;
   };
 
   for (const item of spec.content) {
@@ -87,20 +106,20 @@ function buildTab(spec: TabSpec, tabNumber: number): DocTab {
       cursor += 1; // вход в строку
       const rowCells: string[] = [];
       const rowCellRanges: { startIndex: number; endIndex: number }[] = [];
-      rowSpec.forEach((cellText, c) => {
+      rowSpec.forEach((cell, c) => {
         const cellStart = cursor;
         cursor += 1; // вход в ячейку
-        pushParagraph(
-          { runs: [{ text: cellText }] },
-          { table: tableNumber, row: r + 1, column: c + 1 },
+        const texts = cellParagraphs(cell).map((cellRuns) =>
+          pushParagraph({ runs: cellRuns }, { table: tableNumber, row: r + 1, column: c + 1 }),
         );
         rowCellRanges.push({ startIndex: cellStart, endIndex: cursor });
-        rowCells.push(cellText);
+        rowCells.push(texts.join('\n'));
       });
       cells.push(rowCells);
       cellRanges.push(rowCellRanges);
       rowRanges.push({ startIndex: rowStart, endIndex: cursor });
     });
+    cursor += 1; // закрывающий юнит таблицы (живое наблюдение 2026-10-01)
     tables.push({
       index: tableNumber,
       startIndex: start,
@@ -185,11 +204,18 @@ export function forecastDoc(): DocSnapshot {
 }
 
 /* ------------------------------------------------------------------------------------ */
-/* Фейк записи: семантика ВЗЯТА ИЗ ДОКУМЕНТАЦИИ Docs API (урок L23 — не предполагать):   */
+/* Фейк записи. Семантика — из документации Docs API, а где она скупа, из ЖИВОГО прогона  */
+/* 2026-10-01 (урок L23: фейк, чья семантика взята предположением, зеленит всё разом):  */
 /* - `writeControl.requiredRevisionId` не совпал → отказ, ни одной правки;               */
 /* - вставка сдвигает все последующие индексы ровно на length текста (UTF-16);           */
-/* - вставленный текст наследует стиль run'а СЛЕВА от точки вставки;                     */
+/* - вставленный текст наследует стиль run'а СЛЕВА от точки вставки, а в пустом абзаце  */
+/*   — стиль его переноса (`mark`);                                                     */
 /* - `\n` внутри вставки создаёт новый абзац со стилем исходного;                        */
+/* - insertTable режет абзац в точке вставки: перед таблицей Google ставит `\n`, хвост  */
+/*   абзаца (у вставки в конец — пустой абзац) остаётся ПОСЛЕ таблицы (живьём);          */
+/* - новая строка/колонка копирует стиль текста строки/колонки-образца по ячейкам        */
+/*   (живьём: под строкой с жирным «Иванов» вставленный «Петров» стал жирным);          */
+/* - удаление абзаца ЦЕЛИКОМ не трогает следующий: его стиль и буллет остаются (живьём); */
 /* - deleteContentRange не может частично пересекать таблицу — отказ;                    */
 /* - завершающий `\n` последнего абзаца сегмента удалить нельзя — отказ.                */
 /* ------------------------------------------------------------------------------------ */
@@ -198,9 +224,12 @@ interface MutableParagraph {
   runs: DocTextRun[];
   style?: ParagraphNamedStyle | undefined;
   bulleted?: boolean | undefined;
+  /** Стиль переноса абзаца: его наследует вставка в ПУСТОЙ абзац. */
+  mark?: DocTextStyle | undefined;
 }
+/** Таблица: `table[row][column]` — абзацы ячейки. */
 interface MutableTable {
-  table: string[][];
+  table: MutableParagraph[][][];
 }
 type MutableBlock = MutableParagraph | MutableTable;
 const isMutableTable = (b: MutableBlock): b is MutableTable => 'table' in b;
@@ -210,15 +239,36 @@ interface MutableTab {
   blocks: MutableBlock[];
 }
 
+/** Located-абзац: мутабельный абзац и его границы в снимке текущего состояния. */
+interface LocatedParagraph {
+  paragraph: MutableParagraph;
+  start: number;
+  end: number;
+}
+
 const toMutable = (spec: DocSpec): MutableTab[] =>
   spec.tabs.map((tab) => ({
     title: tab.title,
     blocks: tab.content.map((item) =>
       isTable(item)
-        ? { table: item.table.map((r) => [...r]) }
+        ? {
+            table: item.table.map((row) =>
+              row.map((cell) => cellParagraphs(cell).map((r) => ({ runs: r }))),
+            ),
+          }
         : { runs: item.runs.map((r) => ({ ...r })), style: item.style, bulleted: item.bulleted },
     ),
   }));
+
+/** Абзацы ячейки → ячейка спеки (абзацы через прогон `\n`). */
+function cellToSpec(cell: readonly MutableParagraph[]): DocTextRun[] {
+  const out: DocTextRun[] = [];
+  cell.forEach((paragraph, i) => {
+    if (i > 0) out.push({ text: '\n' });
+    out.push(...paragraph.runs);
+  });
+  return out;
+}
 
 /** Разрез списка прогонов по смещению в тексте абзаца. */
 function splitRuns(runs: readonly DocTextRun[], offset: number): [DocTextRun[], DocTextRun[]] {
@@ -241,16 +291,39 @@ function splitRuns(runs: readonly DocTextRun[], offset: number): [DocTextRun[], 
 
 /** Прогоны → абзацы по `\n`; стиль абзаца у всех кусков — исходный (по документации). */
 function runsToParagraphs(runs: readonly DocTextRun[], base: MutableParagraph): MutableParagraph[] {
-  const out: MutableParagraph[] = [{ runs: [], style: base.style, bulleted: base.bulleted }];
+  const fresh = (): MutableParagraph => ({
+    runs: [],
+    style: base.style,
+    bulleted: base.bulleted,
+    mark: base.mark,
+  });
+  const out: MutableParagraph[] = [fresh()];
   for (const run of runs) {
     const pieces = run.text.split('\n');
     pieces.forEach((piece, i) => {
-      if (i > 0) out.push({ runs: [], style: base.style, bulleted: base.bulleted });
+      if (i > 0) out.push(fresh());
       if (piece !== '') out[out.length - 1]!.runs.push({ ...run, text: piece });
     });
   }
   return out;
 }
+
+/** Вставка текста в абзац по смещению: стиль — слева, в пустом абзаце — его переноса. */
+function insertIntoParagraph(
+  paragraph: MutableParagraph,
+  offset: number,
+  text: string,
+): MutableParagraph[] {
+  const [left, right] = splitRuns(paragraph.runs, offset);
+  const neighbour = left[left.length - 1] ?? paragraph.runs[0];
+  const inherited = neighbour === undefined ? paragraph.mark : neighbour.style;
+  const inserted: DocTextRun = inherited === undefined ? { text } : { text, style: inherited };
+  return runsToParagraphs([...left, inserted, ...right], paragraph);
+}
+
+/** Стиль, который новая ячейка копирует у образца: стиль его первого прогона. */
+const templateStyle = (cell: readonly MutableParagraph[] | undefined): DocTextStyle | undefined =>
+  cell?.[0]?.runs[0]?.style ?? cell?.[0]?.mark;
 
 /** Фейковый клиент: снимок пересобирается из мутабельных блоков после каждой правки. */
 export class FakeDocsClient implements DocsClient {
@@ -283,7 +356,7 @@ export class FakeDocsClient implements DocsClient {
         title: tab.title,
         content: tab.blocks.map((b) =>
           isMutableTable(b)
-            ? { table: b.table }
+            ? { table: b.table.map((row) => row.map(cellToSpec)) }
             : { runs: b.runs, style: b.style, bulleted: b.bulleted },
         ),
       })),
@@ -320,9 +393,10 @@ export class FakeDocsClient implements DocsClient {
     return { revisionId: this.revision };
   }
 
-  /** Блоки таба с их границами в снимке ТЕКУЩЕГО состояния. */
+  /** Блоки таба с их границами в снимке ТЕКУЩЕГО состояния (и сам снимок таба). */
   private located(tabId: string): {
     tab: MutableTab;
+    built: DocTab;
     blocks: { block: MutableBlock; start: number; end: number }[];
   } {
     const snapshot = buildDoc(this.spec());
@@ -345,79 +419,79 @@ export class FakeDocsClient implements DocsClient {
       paragraphCursor += 1;
       return { block, start: p!.startIndex, end: p!.endIndex };
     });
-    return { tab, blocks };
+    return { tab, built, blocks };
+  }
+
+  /** Абзацы ячеек таблицы с их границами — по построенному снимку. */
+  private cellParagraphsOf(
+    built: DocTab,
+    block: MutableTable,
+    tableStart: number,
+  ): (LocatedParagraph & { cell: MutableParagraph[]; at: number })[] {
+    const table = built.tables.find((t) => t.startIndex === tableStart);
+    if (table === undefined) throw gcError('bad_request', { detail: 'Таблица не найдена.' });
+    const out: (LocatedParagraph & { cell: MutableParagraph[]; at: number })[] = [];
+    block.table.forEach((row, r) =>
+      row.forEach((cell, c) => {
+        const builtCell = built.paragraphs.filter(
+          (x) =>
+            x.inTable?.table === table.index &&
+            x.inTable.row === r + 1 &&
+            x.inTable.column === c + 1,
+        );
+        cell.forEach((paragraph, k) => {
+          const b = builtCell[k]!;
+          out.push({ paragraph, start: b.startIndex, end: b.endIndex, cell, at: k });
+        });
+      }),
+    );
+    return out;
   }
 
   private insertText(request: Extract<DocRequest, { kind: 'insertText' }>): void {
-    const { tab, blocks } = this.located(request.tabId);
-    const hit = blocks.find(
-      (b) => !isMutableTable(b.block) && request.at >= b.start && request.at < b.end,
-    );
-    if (hit === undefined || isMutableTable(hit.block)) {
-      // Вставка внутрь ячейки таблицы — легальна для Google: адресуем по границам ячеек.
-      const inTable = blocks.find(
-        (b) => isMutableTable(b.block) && request.at > b.start && request.at < b.end,
+    const { tab, built, blocks } = this.located(request.tabId);
+    const hit = blocks.find((b) => request.at >= b.start && request.at < b.end);
+    if (hit !== undefined && !isMutableTable(hit.block)) {
+      const paragraph = hit.block;
+      const replacement = insertIntoParagraph(paragraph, request.at - hit.start, request.text);
+      tab.blocks.splice(tab.blocks.indexOf(paragraph), 1, ...replacement);
+      return;
+    }
+    if (hit !== undefined && isMutableTable(hit.block)) {
+      // Вставка внутрь ячейки — легальна для Google: адресуем по границам абзацев ячеек.
+      const target = this.cellParagraphsOf(built, hit.block, hit.start).find(
+        (x) => request.at >= x.start && request.at < x.end,
       );
-      if (inTable !== undefined && isMutableTable(inTable.block)) {
-        this.insertIntoCell(request, inTable.block, inTable.start);
+      if (target !== undefined) {
+        const replacement = insertIntoParagraph(
+          target.paragraph,
+          request.at - target.start,
+          request.text,
+        );
+        target.cell.splice(target.at, 1, ...replacement);
         return;
-      }
-      throw gcError('bad_request', {
-        detail: `Вставка по индексу ${request.at} не попадает в абзац (граница или таблица).`,
-      });
-    }
-    const paragraph = hit.block;
-    const offset = request.at - hit.start;
-    const [left, right] = splitRuns(paragraph.runs, offset);
-    // Стиль вставленного — стиль run'а слева от точки вставки (по документации).
-    const styleSource = left[left.length - 1] ?? paragraph.runs[0];
-    const inserted: DocTextRun =
-      styleSource?.style === undefined
-        ? { text: request.text }
-        : { text: request.text, style: styleSource.style };
-    const merged = [...left, inserted, ...right];
-    const replacement = runsToParagraphs(merged, paragraph);
-    tab.blocks.splice(tab.blocks.indexOf(paragraph), 1, ...replacement);
-  }
-
-  /** Вставка текста в ячейку: ячейка ищется по построенным границам текущего снимка. */
-  private insertIntoCell(
-    request: Extract<DocRequest, { kind: 'insertText' }>,
-    block: MutableTable,
-    blockStart: number,
-  ): void {
-    const snapshot = buildDoc(this.spec());
-    const built = snapshot.tabs.flatMap((t) => t.tables).find((t) => t.startIndex === blockStart);
-    if (built === undefined) {
-      throw gcError('bad_request', { detail: 'Таблица не найдена по границам.' });
-    }
-    for (let r = 0; r < built.cellRanges.length; r += 1) {
-      for (let c = 0; c < built.cellRanges[r]!.length; c += 1) {
-        const cell = built.cellRanges[r]![c]!;
-        // Текст ячейки живёт в [start+1, end): вход в ячейку — 1 юнит.
-        if (request.at >= cell.startIndex + 1 && request.at < cell.endIndex) {
-          const offset = request.at - (cell.startIndex + 1);
-          const current = block.table[r]![c]!;
-          block.table[r]![c] = current.slice(0, offset) + request.text + current.slice(offset);
-          return;
-        }
       }
     }
     throw gcError('bad_request', {
-      detail: `Вставка по индексу ${request.at} попала между ячейками таблицы.`,
+      detail: `Вставка по индексу ${request.at} не попадает в абзац (граница или таблица).`,
     });
   }
 
-  /** Абзацы, пересекающие диапазон, — общий шаг трёх стилевых запросов. */
-  private paragraphsIn(
-    tabId: string,
-    startIndex: number,
-    endIndex: number,
-  ): { paragraph: MutableParagraph; start: number; end: number }[] {
-    const { blocks } = this.located(tabId);
+  /**
+   * Абзацы, пересекающие диапазон, — общий шаг трёх стилевых запросов. Внутри одной
+   * таблицы диапазон легален (стиль текста ячеек); через границу таблицы — отказ.
+   */
+  private paragraphsIn(tabId: string, startIndex: number, endIndex: number): LocatedParagraph[] {
+    const { built, blocks } = this.located(tabId);
     const touched = blocks.filter((b) => startIndex < b.end && endIndex > b.start);
-    if (touched.some((b) => isMutableTable(b.block))) {
-      throw gcError('bad_request', { detail: 'Диапазон стиля пересекает таблицу.' });
+    const table = touched.find((b) => isMutableTable(b.block));
+    if (table !== undefined && isMutableTable(table.block)) {
+      if (touched.length > 1 || startIndex < table.start || endIndex > table.end) {
+        throw gcError('bad_request', { detail: 'Диапазон стиля пересекает границу таблицы.' });
+      }
+      return this.cellParagraphsOf(built, table.block, table.start).filter(
+        (x) => startIndex < x.end && endIndex > x.start,
+      );
     }
     return touched.map((b) => ({
       paragraph: b.block as MutableParagraph,
@@ -427,6 +501,10 @@ export class FakeDocsClient implements DocsClient {
   }
 
   private updateTextStyle(request: Extract<DocRequest, { kind: 'updateTextStyle' }>): void {
+    const restyle = (style: DocTextStyle | undefined): DocTextStyle | undefined => {
+      const next = request.exact === true ? { ...request.style } : { ...style, ...request.style };
+      return Object.keys(next).length === 0 ? undefined : next;
+    };
     for (const { paragraph, start, end } of this.paragraphsIn(
       request.tabId,
       request.startIndex,
@@ -436,11 +514,13 @@ export class FakeDocsClient implements DocsClient {
       const to = Math.min(request.endIndex, end) - start;
       const [left, mid0] = splitRuns(paragraph.runs, from);
       const [mid, right] = splitRuns(mid0, to - from);
-      const styled = mid.map((run) => ({
-        ...run,
-        style: { ...run.style, ...request.style },
-      }));
+      const styled = mid.map((run) => {
+        const style = restyle(run.style);
+        return style === undefined ? { text: run.text } : { text: run.text, style };
+      });
       paragraph.runs = [...left, ...styled, ...right];
+      // Диапазон накрыл перенос абзаца — меняется и стиль, который унаследует вставка.
+      if (request.endIndex >= end) paragraph.mark = restyle(paragraph.mark);
     }
   }
 
@@ -466,7 +546,7 @@ export class FakeDocsClient implements DocsClient {
   private insertObject(
     request: Extract<DocRequest, { kind: 'insertPageBreak' | 'insertInlineImage' }>,
   ): void {
-    const { tab, blocks } = this.located(request.tabId);
+    const { blocks } = this.located(request.tabId);
     const hit = blocks.find(
       (b) => !isMutableTable(b.block) && request.at >= b.start && request.at < b.end,
     );
@@ -480,7 +560,6 @@ export class FakeDocsClient implements DocsClient {
     const [left, right] = splitRuns(paragraph.runs, offset);
     // Один юнит без текста: в домене — прогон нулевой длины с пометкой объекта.
     paragraph.runs = [...left, { text: '\u0001' }, ...right];
-    void tab;
   }
 
   /** Табличные структурные запросы: мутируют блок-таблицу, найденную по startIndex. */
@@ -502,13 +581,29 @@ export class FakeDocsClient implements DocsClient {
       const hit = blocks.find(
         (b) => !isMutableTable(b.block) && request.at >= b.start && request.at < b.end,
       );
-      if (hit === undefined) {
+      if (hit === undefined || isMutableTable(hit.block)) {
         throw gcError('bad_request', { detail: `insertTable: позиция ${request.at} вне абзаца.` });
       }
-      const empty: string[][] = Array.from({ length: request.rows }, () =>
-        Array.from({ length: request.columns }, () => ''),
+      // Живьём: перед таблицей встаёт `\n` в точке вставки — абзац режется, его хвост
+      // (у вставки в конец — пустой абзац с тем же видом) остаётся ПОСЛЕ таблицы.
+      const paragraph = hit.block;
+      const [left, right] = splitRuns(paragraph.runs, request.at - hit.start);
+      const piece = (pieceRuns: DocTextRun[]): MutableParagraph => ({
+        runs: pieceRuns,
+        style: paragraph.style,
+        bulleted: paragraph.bulleted,
+        mark: paragraph.mark,
+      });
+      const empty: MutableParagraph[][][] = Array.from({ length: request.rows }, () =>
+        Array.from({ length: request.columns }, () => [{ runs: [] }]),
       );
-      tab.blocks.splice(tab.blocks.indexOf(hit.block) + 1, 0, { table: empty });
+      tab.blocks.splice(
+        tab.blocks.indexOf(paragraph),
+        1,
+        piece(left),
+        { table: empty },
+        piece(right),
+      );
       return;
     }
     const hit = blocks.find((b) => isMutableTable(b.block) && b.start === request.tableStart);
@@ -519,14 +614,18 @@ export class FakeDocsClient implements DocsClient {
     }
     const grid = hit.block.table;
     if (request.kind === 'insertTableRow') {
-      const width = grid[0]?.length ?? 0;
+      // Новая строка копирует стиль строки-образца по колонкам (живое наблюдение).
+      const template = grid[request.rowIndex];
       grid.splice(
         request.rowIndex + (request.below ? 1 : 0),
         0,
-        Array.from({ length: width }, () => ''),
+        (template ?? []).map((cell) => [{ runs: [], mark: templateStyle(cell) }]),
       );
     } else if (request.kind === 'insertTableColumn') {
-      for (const row of grid) row.splice(request.columnIndex + (request.right ? 1 : 0), 0, '');
+      for (const row of grid) {
+        const mark = templateStyle(row[request.columnIndex]);
+        row.splice(request.columnIndex + (request.right ? 1 : 0), 0, [{ runs: [], mark }]);
+      }
     } else if (request.kind === 'deleteTableRow') {
       if (grid.length === 1) {
         // По документации удаление единственной строки удаляет таблицу целиком.
@@ -576,15 +675,25 @@ export class FakeDocsClient implements DocsClient {
     const firstParagraph = first.block as MutableParagraph;
     const [keepLeft] = splitRuns(firstParagraph.runs, Math.max(0, s - first.start));
     const tailSource = e >= last.end ? blocks[blocks.indexOf(last) + 1] : last;
-    const tailParagraph = tailSource!.block as MutableParagraph;
-    const [, keepRight] = splitRuns(tailParagraph.runs, Math.max(0, e - tailSource!.start));
+    if (tailSource === undefined || isMutableTable(tailSource.block)) {
+      // Документация: перенос ПЕРЕД таблицей удалить нельзя, не удалив саму таблицу.
+      throw gcError('bad_request', {
+        detail: 'Перенос перед таблицей удалить нельзя — Google отклоняет такое удаление.',
+      });
+    }
+    const tailParagraph = tailSource.block;
+    const [, keepRight] = splitRuns(tailParagraph.runs, Math.max(0, e - tailSource.start));
+    // Первый абзац удалён ЦЕЛИКОМ — следующий остаётся собой: стиль и буллет его
+    // (живьём 2026-10-01). Частичный захват первого — вид первого (прочтение, не замер).
+    const keeper = s <= first.start ? tailParagraph : firstParagraph;
     const merged: MutableParagraph = {
       runs: [...keepLeft, ...keepRight],
-      style: firstParagraph.style,
-      bulleted: firstParagraph.bulleted,
+      style: keeper.style,
+      bulleted: keeper.bulleted,
+      mark: tailParagraph.mark,
     };
     const from = tab.blocks.indexOf(first.block);
-    const to = tab.blocks.indexOf(tailSource!.block);
+    const to = tab.blocks.indexOf(tailSource.block);
     tab.blocks.splice(from, to - from + 1, merged);
   }
 }
@@ -599,15 +708,29 @@ function snapshotToSpec(snapshot: DocSnapshot): DocSpec {
     footerCount: snapshot.footerCount,
     tabs: snapshot.tabs.map((tab) => {
       const content: (ParagraphSpec | TableSpec)[] = [];
-      let tableCursor = 0;
       let lastTableIndex = -1;
       for (const p of tab.paragraphs) {
         if (p.inTable !== undefined) {
           if (p.inTable.table !== lastTableIndex) {
             lastTableIndex = p.inTable.table;
-            const t = tab.tables[tableCursor];
-            tableCursor += 1;
-            content.push({ table: t!.cells.map((r) => [...r]) });
+            const t = tab.tables.find((x) => x.index === p.inTable!.table)!;
+            // Ячейки — прогонами своих абзацев: стили ячеек не теряются при переходе.
+            content.push({
+              table: t.cells.map((row, r) =>
+                row.map((_, c) =>
+                  cellToSpec(
+                    tab.paragraphs
+                      .filter(
+                        (x) =>
+                          x.inTable?.table === t.index &&
+                          x.inTable.row === r + 1 &&
+                          x.inTable.column === c + 1,
+                      )
+                      .map((x) => ({ runs: [...x.runs] })),
+                  ),
+                ),
+              ),
+            });
           }
           continue;
         }

@@ -157,6 +157,12 @@ export type DocRequest =
       readonly startIndex: number;
       readonly endIndex: number;
       readonly style: DocTextStyle;
+      /**
+       * Стиль ТОЧНЫЙ: управляемые поля, которых нет в `style`, сбрасываются (маска
+       * `fields` перечисляет все — так Google велит сбрасывать). Нужен восстановлению:
+       * вставленный текст наследует стиль соседа, а «не задано» ≠ явный `false`.
+       */
+      readonly exact?: true;
     }
   | {
       readonly kind: 'updateParagraphStyle';

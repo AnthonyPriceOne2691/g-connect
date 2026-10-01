@@ -39,7 +39,7 @@ const TRANSLATORS: Readonly<Record<DocRequest['kind'], Translator>> = {
         tabId: request.tabId,
       },
       textStyle: toGoogleTextStyle(request.style),
-      fields: styleFields(request.style),
+      fields: request.exact === true ? ALL_STYLE_FIELDS : styleFields(request.style),
     },
   }),
   updateParagraphStyle: (request: Extract<DocRequest, { kind: 'updateParagraphStyle' }>) => ({
@@ -162,6 +162,9 @@ const STYLE_FIELD_NAMES: Readonly<Record<string, string>> = {
   fontSize: 'fontSize',
   color: 'foregroundColor',
 };
+
+/** Маска точного стиля: каждое управляемое поле — отсутствующее в стиле сбросится. */
+const ALL_STYLE_FIELDS = Object.values(STYLE_FIELD_NAMES).join(',');
 
 function styleFields(style: DocTextStyle): string {
   return Object.keys(style)

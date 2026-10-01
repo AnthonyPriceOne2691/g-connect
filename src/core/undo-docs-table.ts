@@ -6,7 +6,9 @@
 
 import { gcError } from './errors.js';
 import type { WriteRecord } from './journal.js';
+import { exactStyleRequests } from './docs/style-restore.js';
 import {
+  emptyTableWidth,
   newColumnCellInsertionPoints,
   newRowCellInsertionPoints,
   newTableCellInsertionPoints,
@@ -32,9 +34,9 @@ function tableOf(
 }
 
 /**
- * Тексты в вычисленные точки — с конца, чтобы сдвиги не портили адреса. Стили шлются
- * только для прогонов, у которых они БЫЛИ: вставка в пустую ячейку не наследует ничего
- * (слева пусто), и явный сброс, нужный откату абзацев, здесь был бы лишним запросом.
+ * Тексты в вычисленные точки — с конца, чтобы сдвиги не портили адреса. Стиль — у
+ * КАЖДОГО прогона и точный: живьём (2026-10-01, LR3-2) новая строка или колонка копирует
+ * стиль ячейки-образца, и без сброса обычный текст под жирной шапкой вернулся жирным.
  */
 function fillCells(
   tabId: string,
@@ -47,19 +49,7 @@ function fillCells(
     const text = runs.map((r) => r.text).join('');
     if (text === '') continue;
     requests.push({ kind: 'insertText', tabId, at: points[i]!, text });
-    let cursor = 0;
-    for (const run of runs) {
-      if (run.style !== undefined && run.text !== '') {
-        requests.push({
-          kind: 'updateTextStyle',
-          tabId,
-          startIndex: points[i]! + cursor,
-          endIndex: points[i]! + cursor + run.text.length,
-          style: run.style,
-        });
-      }
-      cursor += run.text.length;
-    }
+    requests.push(...exactStyleRequests(tabId, points[i]!, runs));
   }
   return requests;
 }
@@ -97,6 +87,14 @@ function undoInsertTable(snapshot: DocSnapshot, tabTitle: string, detail: TableD
         tabId: tab.tabId,
         startIndex: table.startIndex,
         endIndex: table.endIndex,
+      },
+      // Перед таблицей Google ставил `\n` (живьём 2026-10-01): без него абзац-якорь
+      // снова один, а не «якорь + пустой хвост».
+      {
+        kind: 'deleteRange',
+        tabId: tab.tabId,
+        startIndex: table.startIndex - 1,
+        endIndex: table.startIndex,
       },
     ],
     undone: `Вставленная пустая таблица ${table.rows}×${table.columns} удалена.`,
@@ -197,9 +195,14 @@ function undoDeleteTable(snapshot: DocSnapshot, tabTitle: string, detail: TableD
   for (let r = rows - 1; r >= 0; r -= 1) {
     fills.push(...fillCells(tab.tabId, gridPoints[r]!, grid[r] ?? []));
   }
+  // Вставка в перенос предыдущего абзаца режет его: перед таблицей встаёт новый `\n`,
+  // а прежний остаётся ПОСЛЕ неё пустым абзацем (живьём 2026-10-01, LR3-3). Удаляем его:
+  // удаление переноса пустого абзаца не трогает следующий — стиль и буллет его (живьём).
+  const tableEnd = detail.tableStart + emptyTableWidth(rows, columns);
   return {
     requests: [
       { kind: 'insertTable', tabId: tab.tabId, at: detail.tableStart - 1, rows, columns },
+      { kind: 'deleteRange', tabId: tab.tabId, startIndex: tableEnd, endIndex: tableEnd + 1 },
       ...fills,
     ],
     undone: `Удалённая таблица ${rows}×${columns} восстановлена с содержимым и стилями.`,

@@ -13,12 +13,12 @@ import type { JournalSource, WriteRecord } from './journal.js';
 import { assertRecent, isUndoOutcome, pickUndoRecord } from './undo-shared.js';
 import type { UndoOptions, UndoOutcome } from './undo-types.js';
 import { tableUndoRequests } from './undo-docs-table.js';
+import { exactStyleRequests } from './docs/style-restore.js';
 import type {
   DocRangeSnapshot,
   DocRequest,
   DocSnapshot,
   DocTab,
-  DocTextRun,
   DocsClient,
 } from './docs/types.js';
 
@@ -96,63 +96,25 @@ function undoDocRecord(
 }
 
 /**
- * Запросы восстановления снимка: текст одной вставкой, затем стили прогонов и вид
- * абзацев. Базовые флаги (bold/italic/underline/strikethrough) выставляются ЯВНО у
- * каждого прогона — вставленный текст наследует стиль точки вставки, и без явного
- * сброса кусок, бывший обычным, вернулся бы жирным, если жирный сосед слева.
- * Явный false и «поле не задано» — разные состояния модели при одинаковом виде;
- * это названная цена восстановления, а не молчаливое допущение.
+ * Запросы восстановления снимка: текст одной вставкой, затем точные стили прогонов и вид
+ * абзацев. Вставка наследует стиль точки вставки и вид абзаца, в который легла, — поэтому
+ * и то и другое задаётся явно у КАЖДОГО прогона и абзаца (см. `exactStyleRequests`).
  */
 export function restoreRequests(tabId: string, snapshot: DocRangeSnapshot): DocRequest[] {
   const text = snapshot.runs.map((r) => r.text).join('');
   return [
     { kind: 'insertText', tabId, at: snapshot.startIndex, text },
-    ...runStyleRequests(tabId, snapshot),
+    ...exactStyleRequests(tabId, snapshot.startIndex, snapshot.runs),
     ...paragraphViewRequests(tabId, snapshot),
   ];
 }
 
-/** Явные стили каждого прогона — включая сброс базовых флагов (см. док выше). */
-function runStyleRequests(tabId: string, snapshot: DocRangeSnapshot): DocRequest[] {
-  const requests: DocRequest[] = [];
-  let cursor = 0;
-  for (const run of snapshot.runs) {
-    if (run.text !== '\n' && run.text !== '') {
-      requests.push({
-        kind: 'updateTextStyle',
-        tabId,
-        startIndex: snapshot.startIndex + cursor,
-        endIndex: snapshot.startIndex + cursor + run.text.length,
-        style: explicitStyle(run.style),
-      });
-    }
-    cursor += run.text.length;
-  }
-  return requests;
-}
-
-/** Стиль с явными базовыми флагами: отсутствие поля стало бы наследованием точки вставки. */
-function explicitStyle(style: DocTextRun['style']): NonNullable<DocTextRun['style']> {
-  const FLAGS = ['bold', 'italic', 'underline', 'strikethrough'] as const;
-  const OPTIONAL = ['link', 'fontSize', 'color'] as const;
-  const out: {
-    bold?: boolean;
-    italic?: boolean;
-    underline?: boolean;
-    strikethrough?: boolean;
-    link?: string;
-    fontSize?: number;
-    color?: string;
-  } = {};
-  for (const flag of FLAGS) out[flag] = style?.[flag] ?? false;
-  for (const field of OPTIONAL) {
-    const value = style?.[field];
-    if (value !== undefined) out[field] = value as never;
-  }
-  return out;
-}
-
-/** Вид абзацев снимка: заголовки и списки. */
+/**
+ * Вид абзацев снимка — БЕЗУСЛОВНО, в том числе NORMAL_TEXT и «без списка». Восстановленный
+ * абзац ложится в начало следующего и наследует ЕГО вид: обычный абзац перед заголовком
+ * вернулся бы заголовком. Одна функция на откат удаления и откат стилей — две копии этой
+ * мысли уже разошлись однажды (найдено чтением 2026-10-01, класс L21).
+ */
 function paragraphViewRequests(tabId: string, snapshot: DocRangeSnapshot): DocRequest[] {
   const requests: DocRequest[] = [];
   for (const paragraph of snapshot.paragraphs ?? []) {
@@ -161,12 +123,8 @@ function paragraphViewRequests(tabId: string, snapshot: DocRangeSnapshot): DocRe
       startIndex: snapshot.startIndex + paragraph.offset,
       endIndex: snapshot.startIndex + paragraph.offset + 1,
     };
-    if (paragraph.namedStyle !== 'NORMAL_TEXT') {
-      requests.push({ kind: 'updateParagraphStyle', namedStyle: paragraph.namedStyle, ...range });
-    }
-    if (paragraph.bulleted === true) {
-      requests.push({ kind: 'setBullets', bulleted: true, ...range });
-    }
+    requests.push({ kind: 'updateParagraphStyle', namedStyle: paragraph.namedStyle, ...range });
+    requests.push({ kind: 'setBullets', bulleted: paragraph.bulleted === true, ...range });
   }
   return requests;
 }
@@ -319,16 +277,10 @@ async function undoStyles(
 ): Promise<UndoOutcome> {
   const { tab, stored } = storedAndTab(record, snapshot);
   assertNotMoved(record, snapshot, options, 'doc_moved_after_style', 'правки стилей');
-  const requests: DocRequest[] = [...runStyleRequests(tab.tabId, stored)];
-  for (const paragraph of stored.paragraphs ?? []) {
-    const range = {
-      tabId: tab.tabId,
-      startIndex: stored.startIndex + paragraph.offset,
-      endIndex: stored.startIndex + paragraph.offset + 1,
-    };
-    requests.push({ kind: 'updateParagraphStyle', namedStyle: paragraph.namedStyle, ...range });
-    requests.push({ kind: 'setBullets', bulleted: paragraph.bulleted === true, ...range });
-  }
+  const requests: DocRequest[] = [
+    ...exactStyleRequests(tab.tabId, stored.startIndex, stored.runs),
+    ...paragraphViewRequests(tab.tabId, stored),
+  ];
   return finishDocUndo(
     client,
     targetId,
