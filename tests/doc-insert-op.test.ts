@@ -58,15 +58,22 @@ describe('P1, P2 — appendText в конец раздела: план с яко
     expect(written.revisionAfter).toBe('rev-forecast-1+1');
 
     const after = await client.getDocument();
-    const texts = after.tabs[0]!.paragraphs.map((p) => p.text);
-    expect(texts).toContain('Судья: Раморенко');
-    // Новый абзац встал ПЕРЕД заголовком «Прогноз» — в конец раздела, а не в конец таба.
-    expect(texts.indexOf('Судья: Раморенко')).toBeLessThan(texts.indexOf('Прогноз'));
+    const paragraphs = after.tabs[0]!.paragraphs;
+    const added = paragraphs.find((p) => p.text === 'Судья: Раморенко')!;
+    const heading = paragraphs.find((p) => p.text === 'Прогноз')!;
+    const table = after.tabs[0]!.tables[0]!;
+    // Раздел «Составы» кончается таблицей: «в конец раздела» — ПОСЛЕ таблицы и перед
+    // «Прогнозом» (находка читателя 2026-10-01: раньше абзац вставал ПЕРЕД таблицей, а
+    // оракул проверял только «раньше следующего заголовка»).
+    expect(added.startIndex).toBe(table.endIndex);
+    expect(added.endIndex).toBe(heading.startIndex);
+    expect(added.namedStyle).toBe('NORMAL_TEXT');
+    expect(heading.namedStyle).toBe('HEADING_2');
 
     expect(journalled).toHaveLength(1);
     const record = journalled[0]!;
     expect(record.op).toBe('appendText');
-    expect(record.doc?.inserted).toBe('\nСудья: Раморенко');
+    expect(record.doc?.inserted).toBe('Судья: Раморенко\n');
     expect(record.revisionBefore).toBe('rev-forecast-1');
     expect(record.revisionAfter).toBe('rev-forecast-1+1');
   });
@@ -174,6 +181,7 @@ describe('insertText — вставка после абзаца-якоря', () 
 describe('P3, P4 — откат вставки', () => {
   it('P3: откат удаляет вставленное, соседний текст и стили целы', async () => {
     const client = freshClient();
+    const original = await client.getDocument();
     await confirmed(client, {
       op: 'appendText',
       text: 'Судья: Раморенко',
@@ -193,6 +201,10 @@ describe('P3, P4 — откат вставки', () => {
     expect(texts).toContain('Основа выйдет без ротации, Fluminense FC подтвердил заявку.');
     // Жирный прогон второго абзаца пережил цикл вставка→откат.
     expect(after.tabs[0]!.paragraphs[1]!.runs.some((r) => r.style?.bold === true)).toBe(true);
+    // Документ после отката РАВЕН документу до вставки — абзацы, их вид, границы и
+    // таблицы: сдвиг начала удаления на +1 оставлял лишний пустой абзац при зелёном тесте
+    // (находка читателя 2026-10-01).
+    expect(after.tabs).toEqual(original.tabs);
   });
 
   it('P4: вставленное правили — отказ revision_conflict, ни одной правки', async () => {

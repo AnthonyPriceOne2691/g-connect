@@ -11,6 +11,7 @@
  * требует `writeControl` — межвызовный дрейф ловит подпись, гонку внутри вызова — сервер.
  */
 
+import { exactStyleRequests } from './style-restore.js';
 import { gcError } from '../errors.js';
 import type { Question } from '../sheets/write-types.js';
 import { docPlanId, type DocPlanChange, type DocPlanShape } from './plan.js';
@@ -21,6 +22,7 @@ import {
   type DocRequest,
   type DocSnapshot,
   type DocTab,
+  type DocTable,
   type DocsClient,
 } from './types.js';
 import {
@@ -48,7 +50,13 @@ export interface DocInsertRequest {
   readonly where?: DocWhere | undefined;
 }
 
-type Anchor = { paragraph: DocParagraph; label: string } | { question: Question };
+/**
+ * Куда вставлять. `afterTable` — раздел кончается таблицей вплотную к следующему
+ * заголовку: «в конец раздела» значит ПОСЛЕ таблицы, а не после последнего абзаца перед
+ * ней (находка читателя 2026-10-01: P1 ставил абзац перед таблицей «Составов»).
+ */
+type Anchor =
+  { paragraph: DocParagraph; label: string; afterTable?: DocTable } | { question: Question };
 
 /** Куда вставлять и как назвать это человеку — разводка по виду якоря. */
 function anchorOf(tab: DocTab, request: DocInsertRequest): Anchor {
@@ -89,6 +97,18 @@ function sectionAnchor(tab: DocTab, heading: string): Anchor {
   if (section.status === 'question') return { question: section.question };
   const body = section.value.paragraphs.filter((p) => p.inTable === undefined);
   const last = body[body.length - 1] ?? section.value.heading;
+  const tail = section.value.paragraphs[section.value.paragraphs.length - 1];
+  const trailing =
+    tail?.inTable === undefined
+      ? undefined
+      : tab.tables.find((t) => t.index === tail.inTable!.table);
+  if (trailing !== undefined) {
+    return {
+      paragraph: last,
+      label: `в конец раздела «${section.value.heading.text}» (после таблицы № ${trailing.index})`,
+      afterTable: trailing,
+    };
+  }
   return {
     paragraph: last,
     label: `в конец раздела «${section.value.heading.text}» (${paragraphLabel(last)})`,
@@ -122,17 +142,9 @@ export async function runDocInsert(
   const anchor = anchorOf(tab, request);
   if ('question' in anchor) return clarify([anchor.question]);
 
-  const at = anchor.paragraph.endIndex - 1;
   const object = OBJECT_OPS.has(request.op);
   if (request.op === 'insertInlineImage') assertImageSource(request.uri);
-  // Объект занимает юниты без текста — в снимке он знак OBJECT_MARK. Разрыв страницы
-  // Google вставляет С переводом строки (живьём 2026-10-01: «Разрыв тут» и «конец» стали
-  // двумя абзацами), поэтому его след — знак плюс перенос, 2 юнита; картинка — 1.
-  const inserted = !object
-    ? `\n${request.text ?? ''}`
-    : request.op === 'insertPageBreak'
-      ? `${OBJECT_MARK}\n`
-      : OBJECT_MARK;
+  const { at, inserted, afterTable } = placement(anchor, request, object);
   const shown = shownContent(request, object);
   const plan: DocPlanShape = {
     targetId: snapshot.docId,
@@ -167,7 +179,7 @@ export async function runDocInsert(
     client,
     snapshot,
     tab.tabId,
-    { plan: plan.changes[0]!, code, changes, notes, inserted, uri: request.uri },
+    { plan: plan.changes[0]!, code, changes, notes, inserted, uri: request.uri, afterTable },
     options,
     request.op,
   );
@@ -199,10 +211,52 @@ export function assertImageSource(uri: string | undefined): void {
 interface InsertCommit {
   readonly plan: DocPlanChange;
   readonly inserted: string;
+  /** Новый абзац встаёт в начало следующего (после таблицы) — его вид задаётся явно. */
+  readonly afterTable?: boolean;
   readonly uri?: string | undefined;
   readonly code: string;
   readonly changes: readonly DocChangePreview[];
   readonly notes: readonly string[];
+}
+
+/**
+ * Точка и след вставки. Объект занимает юниты без текста — в снимке он знак OBJECT_MARK;
+ * разрыв страницы Google вставляет С переводом строки (живьём 2026-10-01: «Разрыв тут» и
+ * «конец» стали двумя абзацами), поэтому его след — знак плюс перенос, 2 юнита.
+ * Текст после таблицы встаёт в НАЧАЛО следующего абзаца — «текст\n», а не «\nтекст».
+ */
+function placement(
+  anchor: { paragraph: DocParagraph; afterTable?: DocTable },
+  request: DocInsertRequest,
+  object: boolean,
+): { at: number; inserted: string; afterTable: boolean } {
+  if (anchor.afterTable !== undefined && !object) {
+    return {
+      at: anchor.afterTable.endIndex,
+      inserted: `${request.text ?? ''}\n`,
+      afterTable: true,
+    };
+  }
+  const at = anchor.paragraph.endIndex - 1;
+  if (!object) return { at, inserted: `\n${request.text ?? ''}`, afterTable: false };
+  return {
+    at,
+    inserted: request.op === 'insertPageBreak' ? `${OBJECT_MARK}\n` : OBJECT_MARK,
+    afterTable: false,
+  };
+}
+
+/**
+ * Вид абзаца, вставленного в начало следующего: он наследует ВСЁ у того абзаца (а там
+ * заголовок следующего раздела), поэтому — обычный текст, без списка, без явных стилей.
+ */
+function plainParagraphView(tabId: string, at: number, inserted: string): DocRequest[] {
+  const range = { tabId, startIndex: at, endIndex: at + inserted.length };
+  return [
+    { kind: 'updateParagraphStyle', namedStyle: 'NORMAL_TEXT', ...range },
+    { kind: 'setBullets', bulleted: false, ...range },
+    ...exactStyleRequests(tabId, at, [{ text: inserted.replace(/\n$/, '') }]),
+  ];
 }
 
 /** Что человек читает в плане: текст вставки или название объекта. */
@@ -252,7 +306,10 @@ async function performInsert(
       code,
       changes,
       notes,
-      requests: [objectOrTextRequest(op, tabId, plan.startIndex, inserted, commit.uri)],
+      requests: [
+        objectOrTextRequest(op, tabId, plan.startIndex, inserted, commit.uri),
+        ...(commit.afterTable === true ? plainParagraphView(tabId, plan.startIndex, inserted) : []),
+      ],
       doc: { tab: plan.tab, startIndex: plan.startIndex, endIndex: plan.endIndex, inserted },
     },
     options,
