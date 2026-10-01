@@ -9,7 +9,7 @@
  */
 
 import { gcError, newCorrelationId } from './errors.js';
-import type { JournalSource, WriteRecord } from './journal.js';
+import type { DocReplacement, JournalSource, WriteRecord } from './journal.js';
 import { assertRecent, isUndoOutcome, pickUndoRecord } from './undo-shared.js';
 import type { UndoOptions, UndoOutcome } from './undo-types.js';
 import { tableUndoRequests } from './undo-docs-table.js';
@@ -154,6 +154,24 @@ async function restoreSnapshot(
 }
 
 /** Откат массовой замены: по снимку позиций, с конца, чтобы сдвиги не портили адреса. */
+/**
+ * Вхождение стоит там, где его записали, — проверка и ПОД force: force значит «документ
+ * правили в другом месте, я понимаю», а не «пиши не глядя». Без неё откат по сдвинутым
+ * позициям стирал чужой текст и объявлял «вернулось» (находка читателя 2026-10-01).
+ */
+function assertReplacementInPlace(tab: DocTab, item: DocReplacement): void {
+  if (item.written === undefined) return;
+  const current = textInRange(tab, item.startIndex, item.endIndex);
+  if (current === item.written) return;
+  throw gcError('revision_conflict', {
+    detail:
+      `В табе «${item.tab}» на месте замены (${item.startIndex}–${item.endIndex}) уже не ` +
+      `«${item.written}», а «${current ?? '—'}»: документ сдвинули, и откат по позициям лёг бы ` +
+      'не туда. force тут не поможет — перечитай документ и верни текст руками.',
+    cause: 'replacement_moved',
+  });
+}
+
 async function undoReplacements(
   client: DocsClient,
   targetId: string,
@@ -172,6 +190,7 @@ async function undoReplacements(
         detail: `Таба «${item.tab}» больше нет — откат замены не знает, куда возвращать.`,
       });
     }
+    assertReplacementInPlace(tab, item);
     requests.push({
       kind: 'deleteRange',
       tabId: tab.tabId,

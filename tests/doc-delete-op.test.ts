@@ -11,6 +11,7 @@ import { limitOf } from '../src/core/policy.js';
 import { undoDocLast } from '../src/core/undo-docs.js';
 import type { DocRunOptions } from '../src/core/docs/insert-op.js';
 import type { JournalSource, WriteRecord } from '../src/core/journal.js';
+import type { DocParagraph } from '../src/core/docs/types.js';
 import { FakeDocsClient, buildDoc, forecastDoc, p, runs } from './fixtures/doc.js';
 import { named } from './fixtures/named.js';
 
@@ -45,6 +46,10 @@ const fresh = (doc = forecastDoc()) => {
   journalled.length = 0;
   return new FakeDocsClient(doc);
 };
+
+/** Вид абзацев таба: стиль, буллет, текст — то, что видит человек. */
+const viewOf = (tab: { paragraphs: readonly DocParagraph[] }): string[] =>
+  tab.paragraphs.map((x) => `${x.namedStyle}${x.bulleted === true ? ' •' : ''} ${x.text}`);
 
 describe('P8 — план удаления: текст целиком, подтверждение названием', () => {
   it('превью показывает текст абзаца и фразу; голое «да» не проходит; фраза с предметом пишет', async () => {
@@ -142,10 +147,14 @@ describe('P9 — откат возвращает текст СО СТИЛЯМИ 
     expect(outcome.status).toBe('ok');
     expect(outcome.docUndone).toContain('со стилями');
     const restored = await client.getDocument();
-    const texts = restored.tabs[0]!.paragraphs.map((x) => x.text);
-    expect(texts).toEqual(['Шапка', 'Обычный жирный хвост', 'пункт списка', 'последний']);
-    expect(restored.tabs[0]!.paragraphs[0]!.namedStyle).toBe('HEADING_2');
-    expect(restored.tabs[0]!.paragraphs[2]!.bulleted).toBe(true);
+    // Вид КАЖДОГО абзаца, а не трёх избранных: на прежнем фейке «обычный» и «последний»
+    // возвращались HEADING_2 при зелёном тесте (находка читателя 2026-10-01).
+    expect(viewOf(restored.tabs[0]!)).toEqual([
+      'HEADING_2 Шапка',
+      'NORMAL_TEXT Обычный жирный хвост',
+      'NORMAL_TEXT • пункт списка',
+      'NORMAL_TEXT последний',
+    ]);
     const midRuns = restored.tabs[0]!.paragraphs[1]!.runs;
     expect(
       midRuns
@@ -357,6 +366,35 @@ describe('бюджет снимка у правки стилей (находка
       ),
     ).rejects.toMatchObject({ payload: { cause: 'write.snapshot-max-chars' } });
     expect(journalled).toHaveLength(0);
+  });
+});
+
+describe('последний абзац после пункта списка (находка читателя 2026-10-01)', () => {
+  it('удалён и откачен — возвращается обычным абзацем, а не пунктом списка', async () => {
+    const client = fresh(
+      buildDoc({
+        tabs: [
+          {
+            title: 'Т',
+            content: [
+              p('Шапка', 'HEADING_2'),
+              { runs: [{ text: 'пункт' }], bulleted: true },
+              p('последний'),
+            ],
+          },
+        ],
+      }),
+    );
+    const original = viewOf((await client.getDocument()).tabs[0]!);
+    await named(
+      runDocDelete,
+      client,
+      { op: 'deleteParagraph', where: { textStartsWith: 'последний' } },
+      'удаляю абзац последний',
+      options,
+    );
+    await undoDocLast(client, 'doc-fixture', source(), {});
+    expect(viewOf((await client.getDocument()).tabs[0]!)).toEqual(original);
   });
 });
 

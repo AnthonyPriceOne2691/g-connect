@@ -155,3 +155,28 @@ describe('P12 — список из нескольких абзацев', () => 
     });
   });
 });
+
+describe('откат возвращает стиль ПОЛЕ В ПОЛЕ (находки читателя 2026-10-01)', () => {
+  it('ссылка, цвет и кегль, поставленные правкой, откатом снимаются', async () => {
+    // Раньше откат слал явными только 4 флага: ссылка и цвет оставались, а ответ говорил
+    // «стили возвращены».
+    const client = fresh();
+    const where = { textStartsWith: 'Ставим на победу' } as const;
+    await runDocStyle(
+      client,
+      await client.getDocument(),
+      {
+        op: 'updateTextStyle',
+        tab: 'Прогноз',
+        where,
+        style: { link: 'https://example.com', color: '#ff0000', fontSize: 18 },
+      },
+      options({ dryRun: false }),
+    );
+    await undoDocLast(client, 'doc-fixture', source(), {});
+    const restored = (await client.getDocument()).tabs[0]!.paragraphs.find((x) =>
+      x.text.startsWith('Ставим'),
+    )!;
+    expect(restored.runs.map((r) => r.style ?? null)).toEqual([null]);
+  });
+});

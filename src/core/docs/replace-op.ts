@@ -141,6 +141,7 @@ function replacementsAfter(
       startIndex: start,
       endIndex: start + replace.length,
       runs: sliceParagraphRuns(hit.paragraph, hit.at, hit.at + find.length),
+      written: replace,
     };
   });
 }

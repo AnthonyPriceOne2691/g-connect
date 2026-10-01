@@ -136,9 +136,16 @@ describe('поправка D-20 (2026-10-01): фраза пишет только
   });
 });
 
+/** Весь текст документа — все табы, все абзацы. */
+const everything = async (client: FakeDocsClient): Promise<string> =>
+  (await client.getDocument()).tabs
+    .map((t) => t.paragraphs.map((x) => x.text).join('\n'))
+    .join('\n');
+
 describe('P6, P7 — запись названием и откат по снимку позиций', () => {
   it('замена пишется фразой; откат возвращает исходные вхождения, не тронув старый «Fluminense FC»', async () => {
     const client = fresh();
+    const original = await everything(client);
     const written = await named(
       runDocReplace,
       client,
@@ -166,6 +173,9 @@ describe('P6, P7 — запись названием и откат по сним
     expect(restoredText).toContain('матч Fluminense — Palmeiras');
     expect(restoredText).toContain('Fluminense FC подтвердил заявку');
     expect(restoredText).not.toContain('FC FC');
+    // Полный текст ОБОИХ табов — не два вхождения из пяти: сдвиг позиций во втором табе
+    // портил «Fluminense FFluminenseл вничью» при зелёных утверждениях (находка читателя).
+    expect(await everything(client)).toBe(original);
   });
 
   it('жирный кусок внутри заменённого вхождения возвращается жирным', async () => {
@@ -189,7 +199,7 @@ describe('P6, P7 — запись названием и откат по сним
     ).toBe('Fluminense');
   });
 
-  it('документ правили после замены — откат отказывает, force открывает', async () => {
+  it('правка ПЕРЕД вхождениями — откат отказывает, и force не пишет по сдвинутым позициям', async () => {
     const client = fresh();
     const written = await named(
       runDocReplace,
@@ -200,12 +210,40 @@ describe('P6, P7 — запись названием и откат по сним
     );
     await client.batchUpdate(
       'd',
-      [{ kind: 'insertText', tabId: 't1', at: 1, text: 'сдвиг ' }],
+      // Строчное «прогноз» живёт только в табе «Черновики» — сдвигаем ЕГО.
+      [{ kind: 'insertText', tabId: 't2', at: 1, text: 'сдвиг ' }],
       written.revisionAfter!,
     );
     await expect(undoDocLast(client, 'doc-fixture', source(), {})).rejects.toMatchObject({
       payload: { cause: 'doc_moved_after_replace' },
     });
+    const before = await everything(client);
+    // Раньше force писал по позициям «до сдвига» и стирал чужой текст.
+    await expect(
+      undoDocLast(client, 'doc-fixture', source(), { force: true }),
+    ).rejects.toMatchObject({ payload: { cause: 'replacement_moved' } });
+    expect(await everything(client)).toBe(before);
+  });
+
+  it('правка ПОСЛЕ всех вхождений — force возвращает замену точно', async () => {
+    const client = fresh();
+    const original = await everything(client);
+    const written = await named(
+      runDocReplace,
+      client,
+      { op: 'replaceAllText', find: 'прогноз', replace: 'разбор' },
+      'заменяю прогноз',
+      options,
+    );
+    const tail = (await client.getDocument()).tabs[1]!;
+    await client.batchUpdate(
+      'd',
+      [{ kind: 'insertText', tabId: 't2', at: tail.endIndex - 1, text: ' хвост' }],
+      written.revisionAfter!,
+    );
+    const undone = await undoDocLast(client, 'doc-fixture', source(), { force: true });
+    expect(undone.status).toBe('ok');
+    expect(await everything(client)).toBe(`${original} хвост`);
   });
 });
 

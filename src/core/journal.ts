@@ -133,6 +133,11 @@ export interface DocReplacement {
   readonly startIndex: number;
   readonly endIndex: number;
   readonly runs: readonly DocTextRun[];
+  /**
+   * Что записано на место вхождения. Откат сверяет его ДАЖЕ под force: позиции чужой
+   * правкой сдвигаются, и слепой откат стёр бы чужой текст. Нет у записей до 2026-10-01.
+   */
+  readonly written?: string;
 }
 
 export interface RangeSnapshot {
