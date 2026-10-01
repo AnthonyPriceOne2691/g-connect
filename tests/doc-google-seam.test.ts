@@ -68,3 +68,53 @@ describe('GoogleDocsClient.batchUpdate: отказы в живой форме Go
     });
   });
 });
+
+describe('GoogleDocsClient.batchUpdate: предусловие уходит и исход называется честно', () => {
+  it('в запрос уходит writeControl с ревизией плана; ревизия «после» — из ответа', async () => {
+    const seen: unknown[] = [];
+    const api = {
+      documents: {
+        batchUpdate: (params: unknown) => {
+          seen.push(params);
+          return Promise.resolve({ data: { writeControl: { requiredRevisionId: 'rev-после' } } });
+        },
+      },
+    };
+    const client = new GoogleDocsClient({ accessToken: 't', api: api as never });
+    const written = await client.batchUpdate(
+      'd',
+      [{ kind: 'insertText', tabId: 't1', at: 1, text: 'х' }],
+      'rev-плана',
+    );
+    // Находка читателя: заглушка, не глядящая в аргументы, оставалась зелёной и без
+    // writeControl — а предусловие держит именно оно.
+    expect(seen).toMatchObject([
+      { documentId: 'd', requestBody: { writeControl: { requiredRevisionId: 'rev-плана' } } },
+    ]);
+    expect(written.revisionId).toBe('rev-после');
+  });
+
+  it('обрыв → повтор → ушедшая ревизия: «исход неизвестен», а не «ни одной правки»', async () => {
+    // Первая попытка могла дойти до Google и записать; повтор видит уже её ревизию.
+    let calls = 0;
+    const api = {
+      documents: {
+        batchUpdate: () => {
+          calls += 1;
+          return Promise.reject(
+            calls === 1
+              ? Object.assign(new Error('connect ETIMEDOUT 142.250.74.10:443'), {
+                  code: 'ETIMEDOUT',
+                })
+              : liveStaleRevision(),
+          );
+        },
+      },
+    };
+    const client = new GoogleDocsClient({ accessToken: 't', api: api as never });
+    await expect(client.batchUpdate('d', [], 'rev-плана')).rejects.toMatchObject({
+      payload: { code: 'write_outcome_unknown' },
+    });
+    expect(calls).toBe(2);
+  });
+});

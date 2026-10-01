@@ -360,8 +360,10 @@ export class GoogleDocsClient implements DocsClient {
     requests: readonly DocRequest[],
     requiredRevisionId: string,
   ): Promise<{ revisionId: string }> {
+    let attempts = 0;
     try {
       const { data } = await this.retry(async () => {
+        attempts += 1;
         try {
           return await this.docs.documents.batchUpdate({
             documentId: id,
@@ -374,7 +376,10 @@ export class GoogleDocsClient implements DocsClient {
         } catch (error) {
           // Распознаём ДО ретрая: он переводит сырую ошибку в bad_request, и текст Google
           // про ревизию после этого уже не прочитать (живой прогон 2026-10-01, LR3-1).
-          throw staleRevision(error) ?? error;
+          const stale = staleRevision(error);
+          // Повтор после обрыва упёрся в ушедшую ревизию: первая попытка могла дойти до
+          // Google и записать — «ни одной правки» здесь было бы неправдой.
+          throw stale !== undefined && attempts > 1 ? outcomeUnknown(id) : (stale ?? error);
         }
       });
       // Сверено живьём 2026-10-01: ответ несёт writeControl с ревизией ПОСЛЕ записи, и
@@ -384,6 +389,16 @@ export class GoogleDocsClient implements DocsClient {
       throw fromGoogleError(error, `Не удалось записать в документ ${id}.`);
     }
   }
+}
+
+/** Исход записи неизвестен: повтор после обрыва встретил ушедшую ревизию. */
+function outcomeUnknown(id: string): GcError {
+  return gcError('write_outcome_unknown', {
+    detail:
+      `Запись в документ ${id} оборвалась, а повтор встретил уже другую ревизию: первая попытка ` +
+      'могла дойти до Google. Перечитай документ — если правка видна, журнала у неё нет и ' +
+      'откат ядром невозможен: возвращай историей версий Google.',
+  });
 }
 
 /**

@@ -11,12 +11,20 @@
  * расширять ли (арифметика внутренностей таблиц — наше прочтение документации).
  */
 
+import { exactStyleRequests } from './style-restore.js';
 import { gcError } from '../errors.js';
 import type { DocReplacement } from '../journal.js';
 import { docPlanId, type DocPlanChange, type DocPlanShape } from './plan.js';
 import { paragraphLabel, pickTab } from './selectors.js';
 import { sliceParagraphRuns } from './delete-op.js';
-import type { DocParagraph, DocRequest, DocSnapshot, DocTab, DocsClient } from './types.js';
+import type {
+  DocParagraph,
+  DocRequest,
+  DocSnapshot,
+  DocTab,
+  DocTextStyle,
+  DocsClient,
+} from './types.js';
 import {
   assertDocPlanNotApplied,
   commitDocWrite,
@@ -44,6 +52,18 @@ interface Occurrence {
   readonly paragraph: DocParagraph;
   /** Позиция вхождения ДО правки, в юнитах тела таба. */
   readonly at: number;
+  /** Стиль первого заменяемого знака — его получит замена (так ведёт себя и Google). */
+  readonly style?: DocTextStyle | undefined;
+}
+
+/** Стиль прогона, в который попадает смещение абзаца. */
+function styleAt(paragraph: DocParagraph, offset: number): DocTextStyle | undefined {
+  let cursor = 0;
+  for (const run of paragraph.runs) {
+    if (offset < cursor + run.text.length) return run.style;
+    cursor += run.text.length;
+  }
+  return undefined;
 }
 
 /** Вхождения в body-абзацах (порядок документа); в ячейках таблиц — только счёт. */
@@ -62,7 +82,12 @@ function findOccurrences(
         const found = paragraph.text.indexOf(find, from);
         if (found === -1) break;
         if (paragraph.inTable === undefined) {
-          hits.push({ tab, paragraph, at: paragraph.startIndex + found });
+          hits.push({
+            tab,
+            paragraph,
+            at: paragraph.startIndex + found,
+            style: styleAt(paragraph, found),
+          });
         } else {
           inTables += 1;
         }
@@ -84,6 +109,14 @@ function replaceRequests(hits: readonly Occurrence[], find: string, replace: str
       endIndex: hit.at + find.length,
     });
     requests.push({ kind: 'insertText', tabId: hit.tab.tabId, at: hit.at, text: replace });
+    // Вставка наследует стиль соседа СЛЕВА: жирное «Fluminense» становилось обычным
+    // «Fluminense FC» (находка читателя 2026-10-01). Замена получает точный стиль первого
+    // заменённого знака.
+    requests.push(
+      ...exactStyleRequests(hit.tab.tabId, hit.at, [
+        hit.style === undefined ? { text: replace } : { text: replace, style: hit.style },
+      ]),
+    );
   }
   return requests;
 }

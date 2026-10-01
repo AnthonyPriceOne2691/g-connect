@@ -209,6 +209,47 @@ describe('P6, P7 — запись названием и откат по сним
   });
 });
 
+describe('замена получает стиль заменённого (находка читателя 2026-10-01)', () => {
+  // «Изучаем форму **Fluminense** перед дерби»: вставка наследует стиль соседа слева, и
+  // без явного стиля жирное вхождение становилось обычным «Fluminense FC».
+  const boldParts = async (client: FakeDocsClient) =>
+    (await client.getDocument()).tabs[0]!.paragraphs[1]!.runs.filter((r) => r.style?.bold === true)
+      .map((r) => r.text)
+      .join('');
+
+  it('replaceText: жирное вхождение остаётся жирным, соседи — обычными', async () => {
+    const client = fresh();
+    const request = {
+      op: 'replaceText',
+      tab: 'Прогноз',
+      where: { textStartsWith: 'Изучаем форму' },
+      find: 'Fluminense',
+      replace: 'Fluminense FC',
+    } as const;
+    const preview = await runDocReplace(client, await client.getDocument(), request, options());
+    const written = await runDocReplace(
+      client,
+      await client.getDocument(),
+      request,
+      options({ dryRun: false, confirm: preview.planId! }),
+    );
+    expect(written.status).toBe('ok');
+    expect(await boldParts(client)).toBe('Fluminense FC');
+  });
+
+  it('replaceAllText: то же у каждого вхождения', async () => {
+    const client = fresh();
+    await named(
+      runDocReplace,
+      client,
+      { op: 'replaceAllText', find: 'Fluminense', replace: 'Fluminense FC' },
+      'да, заменяю Fluminense',
+      options,
+    );
+    expect(await boldParts(client)).toBe('Fluminense FC');
+  });
+});
+
 describe('replaceText — точечная замена в пределах абзаца', () => {
   it('конвертная: в пределах маленького конверта пишет с первой фразы, вне абзаца не трогает', async () => {
     const client = fresh();

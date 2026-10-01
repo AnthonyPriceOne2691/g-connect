@@ -10,6 +10,7 @@ export type ErrorCode =
   | 'no_profile'
   | 'no_credentials'
   | 'auth_expired'
+  | 'write_outcome_unknown'
   | 'scope_missing'
   | 'offline'
   | 'google_unavailable'
@@ -178,6 +179,15 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, CatalogEntry>> = {
     retryable: false,
     action: 'reread_and_preview',
     actionLabel: 'Перечитать документ и показать план заново',
+  },
+  write_outcome_unknown: {
+    // Запись повторялась после обрыва, и повтор упёрся в ушедшую ревизию: первая попытка
+    // могла дойти до Google и записать. «Ни одной правки» здесь было бы неправдой
+    // (находка читателя 2026-10-01: ретрай неидемпотентного batchUpdate).
+    title: 'Неизвестно, прошла ли запись',
+    retryable: false,
+    action: 'reread_and_preview',
+    actionLabel: 'Перечитать документ и проверить, легла ли правка',
   },
   ambiguous_target: {
     title: 'Непонятно, какой файл имеется в виду',
