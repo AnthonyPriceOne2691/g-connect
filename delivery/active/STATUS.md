@@ -12,14 +12,14 @@
 - **human_ok_spec:** yes (by=human:anton, at=2026-09-08) reason=подписана с пятью ответами: бюджет снимка 20000 юнитов, конверт doc maxChars=1000, табы с первого слайса, insertInlineImage остаётся с ограничением «URL, доступный Google» (upload локальных скриншотов — отдельной поставкой следом; сценарий владельца — комбайн SEO-ТЗ), replaceAllText — подтверждение названием всегда
 - **human_ok_plan:** deferred (reason=боевой контур владельца: одна фраза = действие, а не подпись на каждом шаге; plan.md выведен из подписанной спеки и решений сверх неё не вносит — отклонённые альтернативы перечислены там же. Подпись закрывается на верификации вместе с живым прогоном, как в уровне 2)
 - **shape-oracles:** cqg-deployed
-- **behavior-oracles:** planned reason=фаза specify: примеры P1–P22 в спеке, тесты появятся с первым слайсом
+- **behavior-oracles:** tests-present (573 теста; живая сверка шва 2026-10-01 кодом продукта на черновиках: арифметика таблиц 57/57, объекты 13/13, раздел после таблицы 4/4)
 - **artifact_oracle:** scripts/probe_mcp.mjs reason=судит схему СОБРАННОГО сервера против ядра (39/39, 18 doc-операций, mode=text) — единственный, кто видит транспорт (L21); в живом режиме читает документ, судит превью вставки, отказ названием и локальную картинку, ничего не записывая
 - **ci-oracles:** tooling
 - **worktree:** ветка feat/docs-coverage reason=урок L2; мерж только через merge_guard.sh, сразу за ним contour_doctor
 - **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
-- **blockers:** живой прогон не выполнен ни разу — доступ к Google needs_reauth (hasToken: false), вход восстанавливает владелец; чек-лист и его блок «сверка арифметики ДО первой правки» — delivery/active/live-run.md
+- **blockers:** чек-лист через протокол (gc_apply/gc_undo своим процессом) не прогнан — в реестре нет цели doc-test, реестр в ~/.gconnect правит только владелец (строка для вставки отдана); шов и операции сверены живьём 2026-10-01 кодом продукта на черновиках — verify-report.md
 - **waivers:** none
-- **runtime_paths:** src/core/google/docs.ts,src/core/google/doc-requests.ts reason=новый шов documents.get/batchUpdate целиком — форма ответа, семантика writeControl и арифметика внутренностей таблиц видны только живым ответом (урок L3); НЕ ПРОГНАНО: доступ needs_reauth, см. verify-report
+- **runtime_paths:** src/core/google/docs.ts,src/core/google/doc-requests.ts reason=новый шов documents.get/batchUpdate целиком — форма ответа, семантика writeControl и арифметика внутренностей таблиц видны только живым ответом (урок L3); ПРОГНАНО 2026-10-01 кодом продукта на черновиках (арифметика таблиц, объекты, writeControl, ревизия после записи); через протокол на doc-цели — нет, см. verify-report
 - **model_surface:** src/policy/rules.md,src/policy/rules.json reason=агенту уйдёт, какие doc-операции существуют, какие кладутся в конверт, и что разрушающие требуют названия предмета
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
