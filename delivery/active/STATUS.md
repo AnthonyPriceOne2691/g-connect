@@ -6,7 +6,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=kind=feature
 - **diagnosis:** n/a reason=kind=feature
-- **phase:** verify
+- **phase:** converge
 - **builder:** agent:claude-fable-5
 - **verifier:** human:anton
 - **human_ok_spec:** yes (by=human:anton, at=2026-09-08) reason=подписана с пятью ответами: бюджет снимка 20000 юнитов, конверт doc maxChars=1000, табы с первого слайса, insertInlineImage остаётся с ограничением «URL, доступный Google» (upload локальных скриншотов — отдельной поставкой следом; сценарий владельца — комбайн SEO-ТЗ), replaceAllText — подтверждение названием всегда
@@ -17,7 +17,7 @@
 - **ci-oracles:** tooling
 - **worktree:** ветка feat/docs-coverage reason=урок L2; мерж только через merge_guard.sh, сразу за ним contour_doctor
 - **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
-- **blockers:** чек-лист пар 1–17 через протокол (scripts/gc_call.mjs, свой процесс сервера) не прогнан — цель doc-test в реестре с 2026-10-02 (слово владельца), A1 пройден; разрушающие пары подтверждает фразой владелец (L15); шов и операции сверены живьём 2026-10-01 — verify-report.md
+- **blockers:** раунд converge T37–T46 (plan.md, раздел Converge; слово владельца 2026-10-02): первой — тесты инструментов через настоящий протокол; затем чек-лист пар 3–15 через протокол (вне конверта код называет владелец, разрушающие — его фразой, L15), waiver объёма, две подписи
 - **waivers:** none
 - **runtime_paths:** src/core/google/docs.ts,src/core/google/doc-requests.ts reason=новый шов documents.get/batchUpdate целиком — форма ответа, семантика writeControl и арифметика внутренностей таблиц видны только живым ответом (урок L3); ПРОГНАНО 2026-10-01 кодом продукта на черновиках (арифметика таблиц, объекты, writeControl, ревизия после записи); через протокол на doc-цели — нет, см. verify-report
 - **model_surface:** src/policy/rules.md,src/policy/rules.json reason=агенту уйдёт, какие doc-операции существуют, какие кладутся в конверт, и что разрушающие требуют названия предмета
