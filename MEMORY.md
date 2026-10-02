@@ -4,7 +4,7 @@
 > Обновлено: **2026-10-01** (вечер). Фазы 1, 2, 2.6, 2.5a, боевой режим (D-18) и **уровень 2
 > (структурные операции Sheets)** закрыты и слиты в main. **Уровень 3 (Google Docs) сверен
 > ЖИВЬЁМ и ждёт владельца** — активная поставка `delivery/active/`, ветка
-> `feat/docs-coverage`, 35 коммитов, 573 теста, правил 42, smoke 11/11, probe зелёный.
+> `feat/docs-coverage`, 37 коммитов, 574 теста, правил 42, smoke 11/11, probe зелёный.
 >
 > ## ПЕРВОЕ, ЧТО НАДО ЗНАТЬ НОВОЙ СЕССИИ
 >
@@ -15,14 +15,22 @@
 > и закрыто с оракулами — LR3-1…4 и 26+26 пунктов роли «читатель без прогона» (подагент):
 > разбор в `delivery/active/verify-report.md`, раздел «Живая сверка шва».
 >
-> **Мерж ждёт владельца — четыре вещи:**
-> 1. **Строка цели `doc-test` в `~/.gconnect/default/targets.json`** (текст — в
->    `delivery/active/live-run.md`; тестовый документ создан, id
->    `1-QD1iDb8VJdgyvLWapX4VsCtPjJcud6F0tXQXtEnflc`). После неё — чек-лист пар 1–17 через
->    ПРОТОКОЛ своим процессом сервера: транспорт MCP, реестр и конверт на doc-цели живьём
->    ещё не виделись. Подтверждения — по поправке D-20 (фраза + `planId`).
-> 2. **Waiver объёма** — 72 файла / 10 505 строк против 25 / 800.
-> 3. **Две подписи** — `human_ok_plan`, `asserts_reviewed_by`.
+> **Идём «по порядку» (слово владельца 2026-10-02), шаг 1 сделан:**
+> 1. ✅ **Цель `doc-test` в реестре** — вписана агентом по прямому слову владельца
+>    («разрешаю, сделай»), резервная копия рядом, права 600. Тестовый документ —
+>    `1-QD1iDb8VJdgyvLWapX4VsCtPjJcud6F0tXQXtEnflc`. Через протокол A1 пройден; найден и
+>    починен показ конверта doc-цели мерой ячеек (f4c6077).
+> 2. **СЛЕДУЮЩИЙ: чек-лист пар 1–17** (`delivery/active/live-run.md`) через ПРОТОКОЛ —
+>    `npm run build`, затем `node scripts/gc_call.mjs <инструмент> '<json>'` (свой процесс
+>    сервера; соединение сессии старше правок). Разрушающие пары (6–7, 9–10, 13–14)
+>    подтверждает ВЛАДЕЛЕЦ своей фразой в чате — так прогон закрывает и подпись (L15); его
+>    фраза — в `confirm`, код плана из превью — в `planId` (поправка D-20).
+> 3. **Waiver объёма** — 72 файла / 10 505 строк против 25 / 800 (его слово; форма строки —
+>    как в уровне 2: `waivers: max_files_touched=… max_loc_diff=… reason=… by=human:anton at=…`).
+> 4. **Две подписи** — `human_ok_plan`, `asserts_reviewed_by` (его слово, форма — как в
+>    уровне 2: `yes (by=human:anton, at=…) reason=…` и `human:anton at=… (…)`).
+> 5. Мерж: `bash scripts/merge_guard.sh feat/docs-coverage main` → `contour_doctor.py` →
+>    архив поставки со строкой уроков в `archive/INDEX.md`.
 >
 > **После этого:** `bash scripts/merge_guard.sh feat/docs-coverage main`, сразу за ним
 > `python3 scripts/lint/contour_doctor.py`, затем перенос поставки в
@@ -375,12 +383,13 @@ pre-push, `quality.yml` из 8 шагов, `contour_doctor` DEAD 0, мутаци
 
 ```bash
 npm run build            # tsc + копирование policy в dist (нужно перед запуском сервера)
-npm test                 # 573 теста
+npm test                 # 574 теста
 npm run gc -- status     # состояние профиля, возраст входа, предупреждения
 npm run gc -- login      # вход в Google (откроет браузер, покажет выбор аккаунта)
 npm run gc -- map <ссылка|alias> [лист]
 npm run mcp              # сервер на stdio (клиенты запускают его сами по .mcp.json)
 
+node scripts/gc_call.mjs gc_targets '{}'  # вызов инструмента СВОИМ процессом сервера (живой прогон)
 bash delivery/evals/smoke/run.sh    # продуктовые оракулы S1–S10
 python3 scripts/delivery_check.py   # контур поставки
 npx stryker run                     # мутационный гейт (~18 мин — только в фон;

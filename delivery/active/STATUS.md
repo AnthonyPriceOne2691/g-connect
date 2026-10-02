@@ -17,7 +17,7 @@
 - **ci-oracles:** tooling
 - **worktree:** ветка feat/docs-coverage reason=урок L2; мерж только через merge_guard.sh, сразу за ним contour_doctor
 - **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
-- **blockers:** чек-лист через протокол (gc_apply/gc_undo своим процессом) не прогнан — в реестре нет цели doc-test, реестр в ~/.gconnect правит только владелец (строка для вставки отдана); шов и операции сверены живьём 2026-10-01 кодом продукта на черновиках — verify-report.md
+- **blockers:** чек-лист пар 1–17 через протокол (scripts/gc_call.mjs, свой процесс сервера) не прогнан — цель doc-test в реестре с 2026-10-02 (слово владельца), A1 пройден; разрушающие пары подтверждает фразой владелец (L15); шов и операции сверены живьём 2026-10-01 — verify-report.md
 - **waivers:** none
 - **runtime_paths:** src/core/google/docs.ts,src/core/google/doc-requests.ts reason=новый шов documents.get/batchUpdate целиком — форма ответа, семантика writeControl и арифметика внутренностей таблиц видны только живым ответом (урок L3); ПРОГНАНО 2026-10-01 кодом продукта на черновиках (арифметика таблиц, объекты, writeControl, ревизия после записи); через протокол на doc-цели — нет, см. verify-report
 - **model_surface:** src/policy/rules.md,src/policy/rules.json reason=агенту уйдёт, какие doc-операции существуют, какие кладутся в конверт, и что разрушающие требуют названия предмета
