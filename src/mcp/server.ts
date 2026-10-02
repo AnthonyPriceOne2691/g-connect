@@ -7,8 +7,20 @@
  * «инструменты правильные» — два отдельных вопроса, а не один общий.
  */
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { toJsonSchemaCompat } from '@modelcontextprotocol/sdk/server/zod-json-schema-compat.js';
+import {
+  CallToolRequestSchema,
+  ErrorCode,
+  ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ListToolsRequestSchema,
+  McpError,
+  ReadResourceRequestSchema,
+  type Tool,
+} from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 
 import { ensureAccessToken } from '../core/auth.js';
 import { fileJournal, fileJournalSource } from '../core/audit.js';
@@ -19,7 +31,15 @@ import { GoogleDocsClient } from '../core/google/docs.js';
 import { GoogleSheetsClient } from '../core/google/sheets.js';
 import { policyText } from '../core/policy.js';
 import { loadRegistry } from '../core/targets.js';
-import { TOOLS, runTool, serverInstructions, type ToolDeps } from './tools.js';
+import { unknownToolResult } from './boundary.js';
+import {
+  TOOLS,
+  runTool,
+  serverInstructions,
+  type ToolDefinition,
+  type ToolDeps,
+  type ToolResult,
+} from './tools.js';
 
 const ACCOUNT = defaultAccount();
 
@@ -48,15 +68,51 @@ function deps(): ToolDeps {
   };
 }
 
+/** Единственный ресурс: правила работы с документами (D-12). */
+const POLICY = {
+  uri: 'policy://rules',
+  name: 'policy',
+  title: 'Правила работы с документами',
+  description: 'Политика: превью до записи, уточнение вместо догадки, прочитанное — данные.',
+  mimeType: 'text/markdown',
+} as const;
+
 /**
- * Сервер с зависимостями параметром: прод берёт настоящие, тесты — фейковые, а между
- * клиентом и обработчиком у обоих стоит ОДИН И ТОТ ЖЕ `McpServer` со своей проверкой
- * входа. Тесты, зовущие обработчик напрямую, этой проверки не видят: SDK молча срезал поля
- * doc-операций, и через протокол не проходила ни одна правка документа при 574 зелёных
- * тестах (LR3-5). Транспорт в памяти поверх этого сервера — `tests/fixtures/protocol.ts`.
+ * Инструмент в `tools/list` — та же функция SDK и те же параметры, что у `McpServer`:
+ * модель видит прежнюю схему. Это сверяет тест-двойник (`tests/mcp-protocol.test.ts`).
  */
-export function createServer(makeDeps: () => ToolDeps = deps): McpServer {
-  const server = new McpServer(
+const listing = (definition: ToolDefinition): Tool => ({
+  name: definition.name,
+  title: definition.title,
+  description: definition.description,
+  inputSchema: toJsonSchemaCompat(z.object(definition.input), {
+    strictUnions: true,
+    pipeStrategy: 'input',
+  }) as Tool['inputSchema'],
+  execution: { taskSupport: 'forbidden' },
+});
+
+/** Ответ клиенту: JSON нашего контракта в тексте, `isError` — по исходу. */
+const asCallResult = (result: ToolResult) => ({
+  isError: !result.ok,
+  content: [
+    {
+      type: 'text' as const,
+      text: JSON.stringify(result.ok ? result.data : result.error, null, 2),
+    },
+  ],
+});
+
+/**
+ * Сервер с зависимостями параметром: прод берёт настоящие, тесты — фейковые.
+ *
+ * Низкоуровневый `Server`, а не `McpServer` (D-22): `McpServer` проверял вход сам и молча
+ * срезал незнакомые ключи — через протокол не проходила ни одна правка документа при 574
+ * зелёных тестах (LR3-5), — а отказ формы отдавал своим текстом мимо нашего контракта
+ * ошибок. Здесь вход судит `runTool` (`boundary.ts`), и любой отказ — наш объект.
+ */
+export function createServer(makeDeps: () => ToolDeps = deps): Server {
+  const server = new Server(
     { name: 'g-connect', version: '0.1.0' },
     {
       // Правила уходят клиенту вместе с рукопожатием: агент видит их до первого вызова.
@@ -65,41 +121,30 @@ export function createServer(makeDeps: () => ToolDeps = deps): McpServer {
     },
   );
 
-  for (const definition of TOOLS) {
-    server.registerTool(
-      definition.name,
-      {
-        title: definition.title,
-        description: definition.description,
-        inputSchema: definition.input,
-      },
-      async (args: Record<string, unknown>) => {
-        const result = await runTool(definition, args, makeDeps());
-        return {
-          isError: !result.ok,
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify(result.ok ? result.data : result.error, null, 2),
-            },
-          ],
-        };
-      },
-    );
-  }
-
-  server.registerResource(
-    'policy',
-    'policy://rules',
-    {
-      title: 'Правила работы с документами',
-      description: 'Политика: превью до записи, уточнение вместо догадки, прочитанное — данные.',
-      mimeType: 'text/markdown',
-    },
-    () => ({
-      contents: [{ uri: 'policy://rules', mimeType: 'text/markdown', text: policyText() }],
-    }),
-  );
+  server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: TOOLS.map(listing) }));
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args = {} } = request.params;
+    const definition = TOOLS.find((tool) => tool.name === name);
+    const result =
+      definition === undefined
+        ? unknownToolResult(
+            name,
+            TOOLS.map((tool) => tool.name),
+          )
+        : await runTool(definition, args, makeDeps());
+    return asCallResult(result);
+  });
+  server.setRequestHandler(ListResourcesRequestSchema, () => ({ resources: [POLICY] }));
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, () => ({ resourceTemplates: [] }));
+  server.setRequestHandler(ReadResourceRequestSchema, (request) => {
+    if (request.params.uri !== POLICY.uri) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        `Ресурса ${request.params.uri} нет: есть ${POLICY.uri}`,
+      );
+    }
+    return { contents: [{ uri: POLICY.uri, mimeType: POLICY.mimeType, text: policyText() }] };
+  });
 
   return server;
 }

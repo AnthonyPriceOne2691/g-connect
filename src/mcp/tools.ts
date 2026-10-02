@@ -31,6 +31,7 @@ export type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
 import type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
 import { applyHint, applyOptions, maybeReport } from './apply-support.js';
 import { applyInput, operationOf } from './apply-schema.js';
+import { parseToolInput } from './boundary.js';
 import { targetArg } from './target-arg.js';
 
 /** Общий разбор цели: реестр + ссылка. Здесь же решается, можно ли писать. */
@@ -287,6 +288,9 @@ export const gcApply: ToolDefinition = {
     'dryRun=false. Неизвестная колонка или значение вне списка допустимых дают ' +
     'status=needs_clarification с вариантами: спроси, не угадывай.',
   input: applyInput,
+  // Вход судит ядро (`operationOf`): неизвестная операция, поля НАЗВАННОЙ операции, типы.
+  // Общая схема `applyInput` — для `tools/list`, чтобы модель видела поля, а не для суда.
+  parseInput: (args) => args,
   async handle(args, deps) {
     const operation = operationOf(args);
 
@@ -452,7 +456,7 @@ export async function runTool(
   deps: ToolDeps,
 ): Promise<ToolResult> {
   try {
-    return { ok: true, data: await definition.handle(args, deps) };
+    return { ok: true, data: await definition.handle(parseToolInput(definition, args), deps) };
   } catch (error) {
     const gc = isGcError(error)
       ? error
