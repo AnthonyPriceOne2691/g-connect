@@ -45,6 +45,9 @@ describe('P11 — заголовок ↔ обычный текст', () => {
     expect(preview.status).toBe('preview');
     expect(preview.changes[0]!.before).toContain('HEADING_2');
     expect(preview.changes[0]!.after).toBe('NORMAL_TEXT');
+    // Живой прогон 2026-10-02: якорь был «абзац № 3» — человек подтверждал план, не видя,
+    // какой абзац станет обычным текстом. Предмет называется текстом, как у вставки.
+    expect(preview.changes[0]!.anchor).toContain('Составы');
 
     const written = await runDocStyle(
       client,

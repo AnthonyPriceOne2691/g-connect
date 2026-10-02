@@ -11,7 +11,7 @@ import { limitOf } from '../policy.js';
 import { gcError } from '../errors.js';
 import { snapshotRange } from './delete-op.js';
 import { docPlanId, type DocPlanShape } from './plan.js';
-import { pickTab } from './selectors.js';
+import { paragraphLabel, pickTab } from './selectors.js';
 import type {
   DocParagraph,
   DocRequest,
@@ -157,7 +157,7 @@ export async function runDocStyle(
   const changes: DocChangePreview[] = paragraphs.map((paragraph) => ({
     kind: request.op,
     tab: tab.title,
-    anchor: `абзац № ${paragraph.index}`,
+    anchor: `абзац ${paragraphLabel(paragraph)}`,
     before: `${paragraph.namedStyle}${paragraph.bulleted === true ? ' + список' : ''}`,
     after: described.after,
   }));
