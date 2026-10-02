@@ -95,7 +95,12 @@ describe('сквозной путь: превью → запись → отка�
 
     const undone = await call(gcUndo, { target: 'forecast' }, deps);
     expect(undone.ok).toBe(true);
-    expect((undone.data as { status: string; docUndone: string }).docUndone).toContain('Погода');
+    const report = undone.data as { status: string; docUndone: string; hint: string };
+    expect(report.docUndone).toContain('Погода');
+    // LR3-6: подсказку читает МОДЕЛЬ и пересказывает человеку. Она велела сказать
+    // «вернулось — ничего», потому что считала только ячейки таблиц.
+    expect(report.hint).toContain('Погода');
+    expect(report.hint).not.toContain('ничего');
     expect((await docs.getDocument()).tabs[0]!.paragraphs.map((p) => p.text)).not.toContain(
       'Погода: дождь',
     );

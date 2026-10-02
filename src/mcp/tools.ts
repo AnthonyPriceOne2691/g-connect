@@ -375,6 +375,9 @@ function undoHint(outcome: Awaited<ReturnType<typeof undoLast>>): string | undef
     ...(values === 0 ? [] : [`значения в ${values} ячейк(ах)`]),
     ...(formats === 0 ? [] : [`вид ${formats} ячейк(и)`]),
     ...(outcome.structureUndone === undefined ? [] : [outcome.structureUndone]),
+    // У отката документа ячеек нет: без этого поля подсказка велела агенту сказать
+    // «вернулось — ничего» сразу после удалённой вставки (живой прогон 2026-10-02, LR3-6).
+    ...(outcome.docUndone === undefined ? [] : [outcome.docUndone.replace(/\.$/, '')]),
   ];
   const what = parts.length === 0 ? 'ничего: список возвращённого пуст' : parts.join('; ');
   const not =
