@@ -76,3 +76,14 @@ export async function viaProtocol(
     await session.close();
   }
 }
+
+/**
+ * Вызов ОПРЕДЕЛЕНИЯ инструмента через протокол — замена `runTool` в тестах (T41): форма
+ * ответа та же, но запрос проходит сервер, границу входа и круг JSON, как у клиента.
+ * Имя той же длины, что `runTool`, — перевод файлов не меняет их вёрстку.
+ */
+export const callMcp = (
+  definition: { readonly name: string },
+  args: Record<string, unknown>,
+  deps: ToolDeps | (() => ToolDeps),
+): Promise<ToolResult> => viaProtocol(definition.name, args, deps);

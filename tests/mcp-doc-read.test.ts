@@ -11,6 +11,7 @@ import type { GcErrorPayload } from '../src/core/errors.js';
 import { isGcError } from '../src/core/errors.js';
 import { FakeDocsClient, buildDoc, forecastDoc, p } from './fixtures/doc.js';
 import { FakeSheetsClient, reportSheet } from './fixtures/sheet.js';
+import { callMcp } from './fixtures/protocol.js';
 
 const DOC_ID = 'DOC0000000000000000001';
 const SHEET_ID = 'SHEET00000000000000001';
@@ -43,7 +44,7 @@ const deps = (docsClient: FakeDocsClient): ToolDeps => ({
 
 const read = async (args: Record<string, unknown>, d: ToolDeps): Promise<ToolResult> => {
   try {
-    return { ok: true, data: await gcRead.handle(args, d) };
+    return await callMcp(gcRead, args, d);
   } catch (error) {
     if (isGcError(error)) return { ok: false, error: error.payload };
     throw error;

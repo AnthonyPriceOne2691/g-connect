@@ -10,6 +10,11 @@ import { gcApply, type ToolDeps } from '../src/mcp/tools.js';
 import type { Registry } from '../src/core/targets.js';
 import type { WriteRecord } from '../src/core/journal.js';
 import { FakeDocsClient, forecastDoc } from './fixtures/doc.js';
+import { callMcp } from './fixtures/protocol.js';
+
+/** Данные ответа `gc_apply` через протокол — так, как их видит клиент (T41). */
+const applyData = async (args: Record<string, unknown>, deps: ToolDeps): Promise<unknown> =>
+  (await callMcp(gcApply, args, deps)).data;
 
 const DOC_ID = 'DOC0000000000000000001';
 
@@ -37,7 +42,7 @@ function harness(auto: unknown) {
 describe('P20 — конверт doc-цели', () => {
   it('appendText в конверте и в пределах maxChars — пишется с первой фразы, без кода', async () => {
     const { deps, docs, journalled } = harness({ ops: ['appendText'], maxChars: 1000 });
-    const outcome = (await gcApply.handle(
+    const outcome = (await applyData(
       {
         op: 'appendText',
         target: 'forecast',
@@ -56,7 +61,7 @@ describe('P20 — конверт doc-цели', () => {
 
   it('вставка больше maxChars — вытолкнута в план с кодом, причина названа', async () => {
     const { deps, journalled } = harness({ ops: ['appendText'], maxChars: 20 });
-    const outcome = (await gcApply.handle(
+    const outcome = (await applyData(
       {
         op: 'appendText',
         target: 'forecast',
@@ -75,7 +80,7 @@ describe('P20 — конверт doc-цели', () => {
     // Обратный прогон нашёл слепоту: пороги мер совпадали, и подмена меры была невидима.
     // Здесь maxCells=1 задушил бы вставку, если бы судил её; судить обязан maxChars.
     const { deps, journalled } = harness({ ops: ['appendText'], maxCells: 1, maxChars: 1000 });
-    const outcome = (await gcApply.handle(
+    const outcome = (await applyData(
       {
         op: 'appendText',
         target: 'forecast',
@@ -91,7 +96,7 @@ describe('P20 — конверт doc-цели', () => {
 
   it('insertText вне списка ops конверта — план с кодом, причина называет состав', async () => {
     const { deps } = harness({ ops: ['appendText'] });
-    const outcome = (await gcApply.handle(
+    const outcome = (await applyData(
       {
         op: 'insertText',
         target: 'forecast',

@@ -11,6 +11,7 @@ import type { WriteRecord } from '../src/core/journal.js';
 import { isGcError } from '../src/core/errors.js';
 import { FakeDocsClient, forecastDoc } from './fixtures/doc.js';
 import { FakeSheetsClient, reportSheet } from './fixtures/sheet.js';
+import { callMcp } from './fixtures/protocol.js';
 
 const DOC_ID = 'DOC0000000000000000001';
 const SHEET_ID = 'SHEET00000000000000001';
@@ -49,7 +50,7 @@ const call = async (
   deps: ToolDeps,
 ): Promise<ToolResult> => {
   try {
-    return { ok: true, data: await tool.handle(args, deps) };
+    return await callMcp(tool, args, deps);
   } catch (error) {
     if (isGcError(error)) return { ok: false, error: error.payload };
     throw error;
@@ -206,7 +207,7 @@ describe('gc_targets: конверт doc-цели — в юнитах текст
           ],
         }),
     };
-    const listed = (await gcTargets.handle({}, withEnvelope)) as {
+    const listed = (await callMcp(gcTargets, {}, withEnvelope)).data as {
       targets: { alias: string; auto: unknown }[];
     };
     expect(listed.targets[0]!.auto).toEqual({ ops: ['appendText'], maxChars: 300 });
