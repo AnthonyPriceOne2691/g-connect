@@ -7,7 +7,7 @@
       "title": "Записывающая операция по умолчанию возвращает план, а не пишет",
       "kind": "default",
       "value": true,
-      "enforced_in": "src/core/ops.ts (commonFields, dryRun) + src/core/sheets/commit.ts (finishWrite)",
+      "enforced_in": "src/core/op-fields.ts (commonFields, dryRun) + src/core/sheets/commit.ts (finishWrite)",
       "probe": "операция без dryRun не пишет ни одной ячейки"
     },
     {

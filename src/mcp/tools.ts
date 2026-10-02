@@ -15,7 +15,6 @@ import { z } from 'zod';
 import { envelopeSummary } from './envelope-view.js';
 import { gcError, isGcError } from '../core/errors.js';
 import type { SearchQuery } from '../core/google/drive.js';
-import { operationJsonSchema } from '../core/ops.js';
 import { runOperation } from './run-operation.js';
 import { runCreate } from './run-create.js';
 import { assertTargetKind, isDocOperation, runDocApply, runDocUndo } from './run-doc-operation.js';
@@ -477,7 +476,5 @@ export function serverInstructions(): string {
     '---',
     `Машинная часть правил: ${String(rules.length)} шт., исполняется ядром независимо от того,`,
     'прочитаны ли они. Полный список — ресурс policy://rules.',
-    '',
-    `Схема операции gc_apply: ${JSON.stringify(operationJsonSchema().required)}.`,
   ].join('\n');
 }
