@@ -66,6 +66,9 @@ describe('P13 — вставка строки по якорю ячейки и е
       options({ dryRun: false, authorize: () => ({ authorized: true }) }),
     );
     expect(outcome.status).toBe('ok');
+    // Живой прогон 2026-10-02: план говорил «ниже строки № 2» — человек просил «после
+    // строки с Иванов» и не мог сверить одно с другим без карты (тот же класс, что LR3-7).
+    expect(outcome.changes[0]!.anchor).toContain('Иванов');
     const grid = await cells(client);
     expect(grid).toHaveLength(5);
     expect(grid[2]).toEqual(['', '', '']); // ниже строки с Ивановым (№2)

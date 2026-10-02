@@ -204,6 +204,18 @@ function insertLineDetail(isRow: boolean, tableStart: number, newIndex: number):
     : { kind: 'insertColumn', tableStart, columnIndex: newIndex };
 }
 
+/**
+ * Чем назвать строку или колонку-якорь человеку: содержимым, а не только номером. Он
+ * просил «после строки с Иванов», и «ниже строки № 2» ему не с чем сверить (живой прогон
+ * 2026-10-02, LR3-8).
+ */
+function lineContent(table: DocTable, isRow: boolean, index: number): string {
+  const text = isRow
+    ? (table.cells[index] ?? []).filter((x) => x !== '').join(' | ')
+    : (table.cells[0]?.[index] ?? '');
+  return text === '' ? '' : `: ${text}`;
+}
+
 /** Вставка строки или колонки — одна форма, оси различаются словарём. */
 function planInsertLine(
   tab: DocTab,
@@ -221,7 +233,9 @@ function planInsertLine(
     preview: {
       kind: request.op,
       tab: tab.title,
-      anchor: `таблица № ${table.index}, ${forward ? axis.fwd : axis.back} ${axis.gen} № ${anchor.value + 1}`,
+      anchor:
+        `таблица № ${table.index}, ${forward ? axis.fwd : axis.back} ${axis.gen} ` +
+        `№ ${anchor.value + 1}${lineContent(table, isRow, anchor.value)}`,
       before: null,
       after: `пустая ${axis.noun} на месте № ${newIndex + 1}`,
     },
