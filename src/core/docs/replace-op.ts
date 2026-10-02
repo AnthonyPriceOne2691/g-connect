@@ -234,7 +234,7 @@ function replaceRefusal(
   built: BuiltReplacePlan,
 ): DocApplyOutcome | null {
   if (request.op === 'replaceAllText') {
-    return namedConfirmRefusal(options, `заменяю ${request.find}`, built);
+    return namedConfirmRefusal(options, `заменяю ${request.find}`, request.find, built);
   }
   const touched = hitCount * Math.max(request.find.length, request.replace.length);
   return permissionRefusal(options, 'replaceText', touched, built);

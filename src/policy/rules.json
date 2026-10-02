@@ -260,8 +260,8 @@
       "title": "Разрушающая правка подтверждается названием предмета, а не «да»",
       "kind": "default",
       "value": true,
-      "enforced_in": "src/core/envelope.ts (NAMED_CONFIRM_OPS) + src/core/sheets/write-guards.ts (namedConfirmOutcome)",
-      "probe": "удаление с подтверждением «да» не пишет; с названием предмета — пишет"
+      "enforced_in": "src/core/envelope.ts (NAMED_CONFIRM_OPS) + src/core/sheets/write-guards.ts (namedConfirmOutcome, namesSubject) + src/core/docs/write-support.ts (namedSubject, namedConfirmRefusal)",
+      "probe": "удаление с подтверждением «да» не пишет; с названием предмета — пишет, и глагол, регистр и знаки препинания не считаются"
     },
     {
       "id": "write.named-confirm-bound-to-plan",

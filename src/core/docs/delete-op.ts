@@ -31,6 +31,7 @@ import {
   type DocRunOptions,
   type DocWhere,
   namedConfirmRefusal,
+  namedSubject,
   resolveBodyParagraph,
 } from './write-support.js';
 
@@ -92,7 +93,16 @@ export function snapshotRange(tab: DocTab, start: number, end: number): DocRange
 
 /** Какой диапазон удаляется и как назвать предмет человеку. */
 type RangeChoice =
-  | { start: number; end: number; subject: string; shownText: string; caveat?: string }
+  | {
+      start: number;
+      end: number;
+      /** Что показывают: «абзац Устаревший прогноз». */
+      subject: string;
+      /** Что фраза человека обязана назвать (D-20, поправка 2026-10-02): «Устаревший прогноз». */
+      named: string;
+      shownText: string;
+      caveat?: string;
+    }
   | { outcome: DocApplyOutcome };
 
 function explicitRange(request: DocDeleteRequest): RangeChoice {
@@ -106,6 +116,7 @@ function explicitRange(request: DocDeleteRequest): RangeChoice {
     start: startIndex,
     end: endIndex,
     subject: `диапазон ${startIndex}–${endIndex}`,
+    named: `${startIndex}–${endIndex}`,
     shownText: '',
   };
 }
@@ -150,16 +161,15 @@ function paragraphRange(tab: DocTab, request: DocDeleteRequest): RangeChoice {
         'удалить не даёт, а текста в нём нет — удалять нечего.',
     });
   }
-  const words = visibleText(paragraph.text)
-    .split(/\s+/)
-    .filter((w) => w !== '');
+  // Первые два слова; пустой или слишком короткий абзац называется номером: иначе предметом
+  // стало бы «абзац » или «Да», и его «называло» бы любое «да, удаляю абзац» (находка
+  // читателя 2026-10-01; поправка D-20 2026-10-02).
+  const named = namedSubject(visibleText(paragraph.text).split(/\s+/), 2, `№ ${paragraph.index}`);
   return {
     start,
     end,
-    // Абзац без слов (пустой) называется номером: иначе предметом стало бы «абзац », и его
-    // «называло» бы любое «да, удаляю абзац» (находка читателя 2026-10-01).
-    subject:
-      words.length === 0 ? `абзац № ${paragraph.index}` : `абзац ${words.slice(0, 4).join(' ')}`,
+    subject: `абзац ${named}`,
+    named,
     shownText: shownText(paragraph.runs),
     ...(caveat === undefined ? {} : { caveat }),
   };
@@ -219,7 +229,7 @@ export async function runDocDelete(
   const tab = pickTab(snapshot, request.tab);
   const range = rangeOf(tab, request);
   if ('outcome' in range) return range.outcome;
-  const { start, end, subject, shownText, caveat } = range;
+  const { start, end, subject, named, shownText, caveat } = range;
 
   const rangeSnapshot = budgetedSnapshot(tab, start, end);
 
@@ -267,7 +277,7 @@ export async function runDocDelete(
     };
   }
   await assertDocPlanNotApplied(options, code, snapshot.docId);
-  const refusal = namedConfirmRefusal(options, `удаляю ${confirmToken}`, {
+  const refusal = namedConfirmRefusal(options, `удаляю ${confirmToken}`, named, {
     code,
     changes,
     notes,

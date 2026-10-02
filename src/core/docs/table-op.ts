@@ -34,6 +34,7 @@ import {
   type DocRunOptions,
   type DocWhere,
   namedConfirmRefusal,
+  namedSubject,
   permissionRefusal,
   resolveBodyParagraph,
 } from './write-support.js';
@@ -86,7 +87,10 @@ const cellsText = (cells: readonly (readonly DocTextRun[])[]): string =>
   cells.map((runs) => runs.map((r) => r.text).join('')).join(' | ');
 
 interface TablePlan {
+  /** Что показывают в фразе: «строку Иванов». */
   readonly subject: string;
+  /** Что фраза человека обязана назвать — только у разрушающих (D-20, поправка 2026-10-02). */
+  readonly named?: string;
   readonly preview: DocChangePreview;
   readonly requests: Parameters<typeof commitDocWrite>[2]['requests'];
   readonly detail: DocTableDetail;
@@ -257,12 +261,10 @@ function planDeleteRow(
   const r = anchor.value;
   const range = table.rowRanges[r]!;
   const cells = table.cells[r]!.map((_, c) => cellRuns(tab, table, r, c));
+  const named = namedSubject(table.cells[r]!, 1, `№ ${r + 1}`);
   return {
-    subject: `строку ${
-      table.cells[r]!.filter((x) => x !== '')
-        .slice(0, 3)
-        .join(' ') || `№ ${r + 1}`
-    }`,
+    subject: `строку ${named}`,
+    named,
     preview: {
       kind: 'deleteTableRow',
       tab: tab.title,
@@ -293,8 +295,10 @@ function planDeleteColumn(
     (sum, row) => sum + (row[c]!.endIndex - row[c]!.startIndex),
     0,
   );
+  const named = namedSubject([table.cells[0]?.[c] ?? ''], 1, `№ ${c + 1}`);
   return {
-    subject: `колонку ${table.cells[0]?.[c] ?? `№ ${c + 1}`}`,
+    subject: `колонку ${named}`,
+    named,
     preview: {
       kind: 'deleteTableColumn',
       tab: tab.title,
@@ -314,8 +318,10 @@ function planDeleteColumn(
 
 function planDeleteTable(tab: DocTab, table: DocTable): TablePlan {
   const grid = table.cells.map((row, r) => row.map((_, c) => cellRuns(tab, table, r, c)));
+  const named = namedSubject(table.cells[0] ?? [], 1, `№ ${table.index}`);
   return {
-    subject: `таблицу ${table.cells[0]?.join(' ') ?? `№ ${table.index}`}`,
+    subject: `таблицу ${named}`,
+    named,
     preview: {
       kind: 'deleteTable',
       tab: tab.title,
@@ -441,6 +447,11 @@ function tableRefusal(
 ): DocApplyOutcome | null {
   const preview = { code, changes, notes };
   return planned.destructive
-    ? namedConfirmRefusal(options, `удаляю ${planned.subject}`, preview)
+    ? namedConfirmRefusal(
+        options,
+        `удаляю ${planned.subject}`,
+        planned.named ?? planned.subject,
+        preview,
+      )
     : permissionRefusal(options, request.op, planned.units, preview);
 }

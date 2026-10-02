@@ -240,9 +240,8 @@ export type NamedVerdict =
  * («Fluminense FC FC», находка читателя 2026-10-01): предмет называет правку, а не план.
  * Код плана один по-прежнему подтверждает сам — у вызовов без превью названия нет.
  *
- * Нормализация перечислена, а не «умная»: регистр, кавычки любых видов, повторные
- * пробелы. Совпадением считается ВХОЖДЕНИЕ имени — «да, удаляю „AutoLink Platform“»
- * проходит, «да» нет.
+ * Фраза НАЗЫВАЕТ ПРЕДМЕТ (`namesSubject`) — одно правило для таблиц и документов (поправка
+ * 2026-10-02, решение владельца): «да, удаляю „AutoLink Platform“» проходит, «да» нет.
  */
 export function namedConfirmVerdict(
   given: string | undefined,
@@ -251,22 +250,45 @@ export function namedConfirmVerdict(
   code: string | null,
 ): NamedVerdict {
   if (given === undefined) return 'none';
-  const normalized = normalizeConfirm(given);
   const same = (value: string) =>
     code !== null && normalizeConfirm(value) === normalizeConfirm(code);
   if (same(given)) return 'confirmed';
   if (looksLikePlanCode(given)) return 'foreign_code';
-  if (!normalized.includes(normalizeConfirm(token))) return 'not_named';
+  if (!namesSubject(given, token)) return 'not_named';
   if (planId === undefined) return 'plan_missing';
   return same(planId) ? 'confirmed' : 'plan_stale';
 }
 
-function normalizeConfirm(value: string): string {
+/**
+ * Нормализация перечислена, а не «умная»: регистр, «ё» как «е», знаки препинания и кавычки
+ * любых видов — пробел, повторные пробелы — один. До 2026-10-02 знаки препинания считались,
+ * и человек обязан был повторить двоеточие из текста абзаца буквально.
+ */
+export function normalizeConfirm(value: string): string {
   return value
     .toLowerCase()
-    .replace(/[«»"'`„“”]/g, '')
-    .replace(/\s+/g, ' ')
+    .replace(/ё/g, 'е')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
+}
+
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Фраза человека называет предмет правки (D-20, поправка 2026-10-02): предмет входит во
+ * фразу с НАЧАЛА слова — «Иванов» называется и «Ивановым», но не «заИванов». Число и короткий
+ * предмет — целым словом: строку «1» не называет «удаляю 12». Глагол не нужен: экземпляр
+ * правки держит код плана.
+ */
+export function namesSubject(phrase: string, subject: string): boolean {
+  const wanted = normalizeConfirm(subject);
+  if (wanted === '') return false;
+  // Короткий предмет — целым словом: колонку «C» называет «удаляю колонку C», но не
+  // «да, confirm». Число — тоже целиком.
+  const short = wanted.replace(/ /g, '').length < 3;
+  const tail = short || /\p{N}$/u.test(wanted) ? '(?![\\p{L}\\p{N}])' : '';
+  const pattern = `(?<![\\p{L}\\p{N}])${escapeRegExp(wanted)}${tail}`;
+  return new RegExp(pattern, 'u').test(normalizeConfirm(phrase));
 }
 
 /**

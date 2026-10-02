@@ -11,6 +11,7 @@ import {
   assertPlanNotApplied,
   namedConfirmNote,
   namedConfirmVerdict,
+  normalizeConfirm,
 } from '../sheets/write-guards.js';
 import type { DocWriteDetail, JournalSink, JournalSource } from '../journal.js';
 import type { EnvelopeDecision, OperationKind, Question } from '../sheets/write-types.js';
@@ -190,17 +191,53 @@ export const destructiveNote = (phrase: string, code: string): string =>
   `Правка разрушающая: запись — фразой человека «${phrase}» в confirm и кодом плана ${code} ` +
   'из этого превью в planId (код прикладываешь ты, человеку его называть не нужно).';
 
+const signal = (text: string): number => text.replace(/[^\p{L}\p{N}]/gu, '').length;
+
+/** Слова согласия: предмет из них подтвердило бы голое «да». */
+const CONSENT = new Set([
+  'да',
+  'ок',
+  'ok',
+  'okay',
+  'yes',
+  'ага',
+  'угу',
+  'конечно',
+  'хорошо',
+  'давай',
+  'верно',
+]);
+
 /**
- * Подтверждение названием (D-20 с поправкой 2026-10-01) — общий вердикт с листами:
- * фраза человека пишет только вместе с кодом плана из превью; голое «да», чужой код,
+ * Предмет для фразы подтверждения (D-20, поправка 2026-10-02): первые `want` частей — слов
+ * абзаца или ячеек строки; короткий предмет добирается следующими частями. Номер — только
+ * если частей нет вовсе (пустой абзац, пустая шапка) или предмет — слово согласия: абзац
+ * «Да.» иначе подтвердило бы голое «да».
+ */
+export function namedSubject(parts: readonly string[], want: number, fallback: string): string {
+  const meaningful = parts.filter((part) => signal(part) > 0);
+  const taken = meaningful.slice(0, want);
+  for (const part of meaningful.slice(want)) {
+    if (signal(taken.join('')) >= 3) break;
+    taken.push(part);
+  }
+  const subject = taken.join(' ').replace(/[^\p{L}\p{N}]+$/u, '');
+  return subject === '' || CONSENT.has(normalizeConfirm(subject)) ? fallback : subject;
+}
+
+/**
+ * Подтверждение названием (D-20 с поправками 2026-10-01 и 2026-10-02) — общий вердикт с
+ * листами: фраза человека должна НАЗЫВАТЬ предмет (`subject`), а `phrase` — то, что ей
+ * показывают; пишет она только вместе с кодом плана из превью. Голое «да», чужой код,
  * устаревший план и молчание различены. `null` — подтверждено, запись разрешена.
  */
 export function namedConfirmRefusal(
   options: Pick<DocRunOptions, 'confirm' | 'planId'>,
   phrase: string,
+  subject: string,
   planned: PlannedPreview,
 ): DocApplyOutcome | null {
-  const verdict = namedConfirmVerdict(options.confirm, options.planId, phrase, planned.code);
+  const verdict = namedConfirmVerdict(options.confirm, options.planId, subject, planned.code);
   if (verdict === 'confirmed') return null;
   return {
     status: 'confirm_required',
