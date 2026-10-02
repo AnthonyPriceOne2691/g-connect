@@ -18,7 +18,7 @@ import {
   parseOperation,
   type OperationName,
 } from '../src/core/ops.js';
-import { applyInput } from '../src/mcp/apply-schema.js';
+import { applyInput, operationOf } from '../src/mcp/apply-schema.js';
 
 /** Транспорт ровно так, как его применяет `McpServer.validateToolInput`. */
 const transport = z.object(applyInput);
@@ -122,7 +122,8 @@ describe('схема транспорта gc_apply против ядра — п�
       expect(carried.success, `${op}: транспорт отклонил — ${carried.error?.message ?? ''}`).toBe(
         true,
       );
-      expect(parseOperation(carried.data), op).toEqual(parseOperation(sample));
+      // Тем же путём, что обработчик: поля транспорта сняты, ядро разбирает строго.
+      expect(operationOf(carried.data!), op).toEqual(parseOperation(sample));
     }
   });
 

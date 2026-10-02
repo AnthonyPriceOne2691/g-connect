@@ -62,6 +62,20 @@ const client = () => new FakeSheetsClient();
 /** Проба на правило: должна ЗАВЕРШИТЬСЯ УСПЕШНО ровно тогда, когда правило работает. */
 const probes: Record<string, () => Promise<void>> = {
   ...docProbes,
+  // D-22: опечатка в НЕОБЯЗАТЕЛЬНОМ поле раньше исчезала молча — вставка уходила в конец
+  // таба вместо раздела. Теперь отказ с названием поля и подсказкой, до всякой правки.
+  'input.no-silent-drop': async () => {
+    const typo = { op: 'appendText', target: 'forecast', text: 'Судья', afterHeding: 'Составы' };
+    let payload: { code?: string; cause?: string; detail?: string } | undefined;
+    try {
+      parseOperation(typo);
+    } catch (error) {
+      payload = (error as { payload?: typeof payload }).payload;
+    }
+    expect(payload).toMatchObject({ code: 'bad_request', cause: 'unknown_field' });
+    expect(payload?.detail).toContain('«afterHeding» (возможно, «afterHeading»)');
+    await Promise.resolve();
+  },
   'write.dry-run-default': async () => {
     const c = client();
     const outcome = await upsertRow(c, data(), { Проект: 'G connect' }, { Часы: 42 });
@@ -748,8 +762,8 @@ describe('правила как механизм (D-12)', () => {
       expect(rule.enforced_in).toMatch(/src\//);
     }
     // 40-е — write.named-confirm-bound-to-plan (поправка D-20), 41-е — docs.objects-not-destroyed,
-    // 42-е — docs.suggestions-not-edited.
-    expect(policyRules()).toHaveLength(42);
+    // 42-е — docs.suggestions-not-edited, 43-е — input.no-silent-drop (D-22).
+    expect(policyRules()).toHaveLength(43);
   });
 
   it('rules.md называет ровно списки ядра: конверт и подтверждение названием', () => {

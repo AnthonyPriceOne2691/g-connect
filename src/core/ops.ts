@@ -10,6 +10,7 @@
 import { z } from 'zod';
 
 import { gcError } from './errors.js';
+import { issuesDetail, unknownFields, unknownFieldsDetail } from './field-check.js';
 import { commonFields } from './op-fields.js';
 import {
   appendTextOp,
@@ -380,45 +381,57 @@ function assertUsableRegex(operation: Operation): void {
   }
 }
 
-/** Путь ошибки zod в читаемый вид: `values.Часы`, а не `[object Object]`. */
-const pathOf = (issue: z.ZodIssue): string =>
-  issue.path.length === 0 ? 'корень запроса' : issue.path.join('.');
+/** Поля операции по её имени — из схемы ядра, а не вторым списком (урок L21). */
+export function fieldsOfOperation(op: OperationName): readonly string[] {
+  return Object.keys(operationSchema.optionsMap.get(op)?.shape ?? {});
+}
+
+const unknownOperation = (named: unknown) =>
+  gcError('bad_request', {
+    detail:
+      (typeof named === 'string' && named !== ''
+        ? `Операции «${named}» нет. `
+        : 'Не указана операция. ') + `Допустимы: ${OPERATION_NAMES.join(', ')}.`,
+    cause: 'unknown_operation',
+  });
 
 /**
- * Разбор операции. Ошибка — `bad_request` с перечислением допустимых операций:
- * агент, назвавший операцию неверно, должен узнать список, а не получить «invalid union».
+ * Незнакомое поле операции — отказ с названием (`input.no-silent-drop`, D-22). `z.object`
+ * срезал бы его молча, и опечатка в необязательном поле меняла бы правку без следа.
+ */
+function assertKnownFields(input: unknown, op: OperationName): void {
+  const known = fieldsOfOperation(op);
+  const unknown = unknownFields(input, known);
+  if (unknown.length === 0) return;
+  throw gcError('bad_request', {
+    detail: unknownFieldsDetail(unknown, known, `операции ${op}`),
+    cause: 'unknown_field',
+  });
+}
+
+/**
+ * Разбор операции. Ошибка — `bad_request` с перечислением допустимого: агент, назвавший
+ * операцию или поле неверно, должен узнать список, а не получить «invalid union».
  */
 export function parseOperation(input: unknown): Operation {
+  const named = (input as { op?: unknown } | null)?.op;
+  if (typeof named !== 'string' || !OPERATION_NAMES.includes(named as OperationName)) {
+    throw unknownOperation(named);
+  }
+  assertKnownFields(input, named as OperationName);
+
   const parsed = operationSchema.safeParse(input);
   if (parsed.success) {
     assertUsableRegex(parsed.data);
     return parsed.data;
   }
-
-  const named = (input as { op?: unknown } | null)?.op;
-  const unknownOp = typeof named !== 'string' || !OPERATION_NAMES.includes(named as OperationName);
-
-  if (unknownOp) {
-    throw gcError('bad_request', {
-      detail:
-        (typeof named === 'string' && named !== ''
-          ? `Операции «${named}» нет. `
-          : 'Не указана операция. ') + `Допустимы: ${OPERATION_NAMES.join(', ')}.`,
-      cause: 'unknown_operation',
-    });
-  }
-
-  const problems = parsed.error.issues
-    .slice(0, 5)
-    .map((issue) => `${pathOf(issue)}: ${issue.message}`)
-    .join('; ');
   // «Unrecognized key fontSize» говорит, чего НЕЛЬЗЯ, и молчит о том, что можно — агент
   // после такого ответа угадывает. Список допустимых полей вида дописывается явно
   // (пример V11): узнать его иначе неоткуда, схема вида в `tools/list` вложенная.
   const aboutFormat = parsed.error.issues.some((issue) => issue.path[0] === 'format');
   throw gcError('bad_request', {
     detail:
-      `Запрос операции «${named}» не проходит проверку — ${problems}.` +
+      `Запрос операции «${named}» не проходит проверку — ${issuesDetail(parsed.error.issues)}.` +
       (aboutFormat ? ` Допустимые поля вида: ${FORMAT_FIELDS.join(', ')}.` : ''),
     cause: 'schema_violation',
   });

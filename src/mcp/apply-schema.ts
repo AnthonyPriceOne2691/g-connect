@@ -8,7 +8,13 @@
 
 import { z } from 'zod';
 
-import { OPERATION_NAMES, setParagraphStyleOp, type OperationName } from '../core/ops.js';
+import {
+  OPERATION_NAMES,
+  parseOperation,
+  setParagraphStyleOp,
+  type Operation,
+  type OperationName,
+} from '../core/ops.js';
 import { targetArg } from './target-arg.js';
 
 /**
@@ -241,3 +247,20 @@ export const applyInput = {
     .describe('Ревизия для вызовов БЕЗ превью (CLI, раннер): у превью её несёт код плана'),
   ...docFields,
 };
+
+/**
+ * Поля, которые знает только транспорт: ядру их не передают. Ядро отклоняет незнакомое
+ * поле с названием (D-22), поэтому всё, что принадлежит инструменту, а не операции,
+ * снимается здесь, в одном месте.
+ */
+export const TRANSPORT_ONLY_FIELDS = ['report'] as const;
+
+/** Запрос `gc_apply` → операция ядра: без полей транспорта, со строгим разбором ядра. */
+export function operationOf(args: Record<string, unknown>): Operation {
+  const own = Object.fromEntries(
+    Object.entries(args).filter(
+      ([key]) => !(TRANSPORT_ONLY_FIELDS as readonly string[]).includes(key),
+    ),
+  );
+  return parseOperation(own);
+}

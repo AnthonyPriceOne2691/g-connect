@@ -314,6 +314,13 @@
       "kind": "deny",
       "enforced_in": "src/core/docs/write-support.ts (assertNoSuggestions) + src/core/docs/replace-op.ts (findOccurrences) + src/core/google/docs.ts (paragraphHasSuggestions)",
       "probe": "удаление абзаца с предложением — policy_denied docs.suggestions-not-edited до подписи; массовая замена обходит его и называет числом"
+    },
+    {
+      "id": "input.no-silent-drop",
+      "title": "Незнакомое поле запроса — отказ с названием и подсказкой, а не молчаливый пропуск",
+      "kind": "deny",
+      "enforced_in": "src/core/ops.ts (parseOperation, assertKnownFields) + src/core/field-check.ts (unknownFieldsDetail, closestField)",
+      "probe": "appendText с опечаткой afterHeding даёт bad_request unknown_field с названием поля и подсказкой afterHeading, и ни одной правки"
     }
   ]
 }

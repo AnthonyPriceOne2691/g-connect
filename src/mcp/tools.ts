@@ -15,7 +15,7 @@ import { z } from 'zod';
 import { envelopeSummary } from './envelope-view.js';
 import { gcError, isGcError } from '../core/errors.js';
 import type { SearchQuery } from '../core/google/drive.js';
-import { operationJsonSchema, parseOperation } from '../core/ops.js';
+import { operationJsonSchema } from '../core/ops.js';
 import { runOperation } from './run-operation.js';
 import { runCreate } from './run-create.js';
 import { assertTargetKind, isDocOperation, runDocApply, runDocUndo } from './run-doc-operation.js';
@@ -30,7 +30,7 @@ import { undoLast } from '../core/undo.js';
 export type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
 import type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
 import { applyHint, applyOptions, maybeReport } from './apply-support.js';
-import { applyInput } from './apply-schema.js';
+import { applyInput, operationOf } from './apply-schema.js';
 import { targetArg } from './target-arg.js';
 
 /** Общий разбор цели: реестр + ссылка. Здесь же решается, можно ли писать. */
@@ -288,7 +288,7 @@ export const gcApply: ToolDefinition = {
     'status=needs_clarification с вариантами: спроси, не угадывай.',
   input: applyInput,
   async handle(args, deps) {
-    const operation = parseOperation(args);
+    const operation = operationOf(args);
 
     // Право проверяется ДО любого обращения к Google. Порядок не косметика: при
     // обратном порядке запрос на запись в чужой файл сначала лез в сеть, и человек
