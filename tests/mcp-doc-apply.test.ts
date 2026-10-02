@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { gcApply, gcUndo, type ToolDeps, type ToolResult } from '../src/mcp/tools.js';
+import { gcApply, gcTargets, gcUndo, type ToolDeps, type ToolResult } from '../src/mcp/tools.js';
 import type { Registry } from '../src/core/targets.js';
 import type { WriteRecord } from '../src/core/journal.js';
 import { isGcError } from '../src/core/errors.js';
@@ -180,5 +180,30 @@ describe('находки читателя 2026-10-01: до Google — значи
     expect(result.ok ? null : result.error?.cause).toBe('expect_revision');
     expect(docs.applied).toHaveLength(0);
     expect(journalled).toHaveLength(0);
+  });
+});
+
+describe('gc_targets: конверт doc-цели — в юнитах текста (живьём через протокол 2026-10-02)', () => {
+  it('у документа граница maxChars, а не maxCells', async () => {
+    const { deps } = harness();
+    const withEnvelope: ToolDeps = {
+      ...deps,
+      registry: () =>
+        Promise.resolve({
+          targets: [
+            {
+              alias: 'forecast',
+              id: DOC_ID,
+              type: 'doc',
+              allow: 'write',
+              auto: { ops: ['appendText'], maxChars: 300 },
+            },
+          ],
+        }),
+    };
+    const listed = (await gcTargets.handle({}, withEnvelope)) as {
+      targets: { alias: string; auto: unknown }[];
+    };
+    expect(listed.targets[0]!.auto).toEqual({ ops: ['appendText'], maxChars: 300 });
   });
 });

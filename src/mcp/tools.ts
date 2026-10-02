@@ -12,7 +12,7 @@
 
 import { z } from 'zod';
 
-import { parseEnvelope } from '../core/envelope.js';
+import { envelopeSummary } from './envelope-view.js';
 import { gcError, isGcError } from '../core/errors.js';
 import type { SearchQuery } from '../core/google/drive.js';
 import { operationJsonSchema, parseOperation } from '../core/ops.js';
@@ -69,24 +69,6 @@ const readSheet = async (deps: ToolDeps, target: string, sheet?: string, headerR
   return { resolved, client, data };
 };
 
-/**
- * Конверт для ответа `gc_targets`: что разрешено с первой фразы. Битый конверт не роняет
- * список целей — он назван строкой, потому что «почему по этой цели опять просят код»
- * человек должен читать здесь, а не выяснять записью.
- */
-function envelopeSummary(
-  raw: unknown,
-  alias: string,
-): { readonly ops: readonly string[]; readonly maxCells: number } | string | null {
-  try {
-    const envelope = parseEnvelope(raw, alias);
-    return envelope === null ? null : { ops: envelope.ops, maxCells: envelope.maxCells };
-  } catch (error) {
-    const detail = (error as { payload?: { detail?: string } }).payload?.detail;
-    return detail ?? 'Конверт написан неверно: запись идёт через план и код.';
-  }
-}
-
 export const gcTargets: ToolDefinition = {
   name: 'gc_targets',
   title: 'Доступные цели',
@@ -109,7 +91,7 @@ export const gcTargets: ToolDefinition = {
         // Конверт цели (D-18) виден там же, где права: иначе агент узнавал бы о нём
         // только по факту записи, а человек — никогда. Битый конверт называется здесь
         // же — это ответ на «почему по этой цели просят код».
-        auto: envelopeSummary(t.auto, t.alias),
+        auto: envelopeSummary(t.auto, t.alias, t.type),
       })),
       accounts: accounts.map((a) => ({
         account: a.account,
