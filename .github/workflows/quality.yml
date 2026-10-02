@@ -40,6 +40,13 @@ jobs:
         if: always()
         run: npx vitest run --coverage --reporter=dot
 
+      # Проба СОБРАННОГО сервера по протоколу (smoke S11), без Google. Тесты видят сервер в
+      # процессе, но не сборку: `dist` без папки `policy` отдавал 14 правил из 17 при
+      # «успешной» сборке. До 2026-10-02 проба жила только в ручном smoke.
+      - name: Сервер из dist говорит по протоколу (probe)
+        if: always()
+        run: npm run build && node scripts/probe_mcp.mjs
+
       - name: Gates (pre-commit, все хуки)
         if: always()
         run: |
