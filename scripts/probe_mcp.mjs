@@ -125,6 +125,22 @@ try {
     `doc-операций ${DOC_OPERATION_NAMES.length}` +
       `${missingDocs.length === 0 ? '' : `, нет в схеме: ${missingDocs.join(', ')}`}`,
   );
+  // Поля, а не только имена (живой прогон 2026-10-02): схема объявляла все 18 doc-операций,
+  // но ни одного их поля — SDK срезал `tab`, `text`, `uri` до ядра, и через протокол не
+  // проходила ни одна правка документа, пока имена сходились 39/39.
+  const { operationSchema } = await import('../dist/core/ops.js');
+  const properties = Object.keys(applySchema?.properties ?? {});
+  const missingFields = operationSchema.options.flatMap((o) =>
+    Object.keys(o.shape)
+      .filter((field) => !properties.includes(field))
+      .map((field) => `${o.shape.op.value}.${field}`),
+  );
+  check(
+    'протокол объявляет каждое поле операций ядра',
+    missingFields.length === 0,
+    `полей в схеме ${properties.length}` +
+      `${missingFields.length === 0 ? '' : `, нет: ${missingFields.slice(0, 6).join(', ')} …`}`,
+  );
   // Схема gc_read обязана знать mode=text: без него агент не прочитает абзацы документа.
   const readSchema = (tools.result?.tools ?? []).find((t) => t.name === 'gc_read')?.inputSchema;
   const modes = readSchema?.properties?.mode?.enum ?? [];

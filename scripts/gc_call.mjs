@@ -49,9 +49,14 @@ server.stdout.on('data', (chunk) => {
 const send = (method, params) =>
   new Promise((resolve, reject) => {
     const id = nextId++;
-    pending.set(id, resolve);
+    // Таймер снимается ответом: висящий таймер держал процесс живым до конца минуты, и
+    // каждый вызов выглядел 60-секундным — настоящая задержка вызова была не видна.
+    const timer = setTimeout(() => reject(new Error(`таймаут на ${method}`)), 60_000);
+    pending.set(id, (message) => {
+      clearTimeout(timer);
+      resolve(message);
+    });
     server.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
-    setTimeout(() => reject(new Error(`таймаут на ${method}`)), 60_000);
   });
 
 try {
@@ -61,7 +66,9 @@ try {
     clientInfo: { name: 'gc-call', version: '0' },
   });
   server.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
+  const startedAt = Date.now();
   const message = await send('tools/call', { name: tool, arguments: args });
+  process.stderr.write(`${tool}: ${Date.now() - startedAt} мс\n`);
   const text = message.result?.content?.[0]?.text ?? JSON.stringify(message.error ?? message);
   let result;
   try {
