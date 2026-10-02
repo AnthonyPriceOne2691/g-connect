@@ -30,6 +30,7 @@ const ACCOUNT = defaultAccount();
 const token = (): Promise<string> =>
   ensureAccessToken({ account: ACCOUNT, exchanger: googleExchanger });
 
+/** Настоящие зависимости: Google, реестр и журнал профиля. Собираются на каждый вызов. */
 function deps(): ToolDeps {
   return {
     account: ACCOUNT,
@@ -47,7 +48,14 @@ function deps(): ToolDeps {
   };
 }
 
-export function createServer(): McpServer {
+/**
+ * Сервер с зависимостями параметром: прод берёт настоящие, тесты — фейковые, а между
+ * клиентом и обработчиком у обоих стоит ОДИН И ТОТ ЖЕ `McpServer` со своей проверкой
+ * входа. Тесты, зовущие обработчик напрямую, этой проверки не видят: SDK молча срезал поля
+ * doc-операций, и через протокол не проходила ни одна правка документа при 574 зелёных
+ * тестах (LR3-5). Транспорт в памяти поверх этого сервера — `tests/fixtures/protocol.ts`.
+ */
+export function createServer(makeDeps: () => ToolDeps = deps): McpServer {
   const server = new McpServer(
     { name: 'g-connect', version: '0.1.0' },
     {
@@ -66,7 +74,7 @@ export function createServer(): McpServer {
         inputSchema: definition.input,
       },
       async (args: Record<string, unknown>) => {
-        const result = await runTool(definition, args, deps());
+        const result = await runTool(definition, args, makeDeps());
         return {
           isError: !result.ok,
           content: [
