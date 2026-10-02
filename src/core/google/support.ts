@@ -17,7 +17,12 @@ export function authorizedClient(accessToken: string): InstanceType<typeof googl
 }
 
 /** Сообщает о повторе, чтобы наверху можно было показать «попытка 2 из 3». */
-export type RetryReporter = (attempt: number, total: number, delayMs: number) => void;
+export type RetryReporter = (
+  attempt: number,
+  total: number,
+  delayMs: number,
+  reason: string,
+) => void;
 
 /** `{red: 1, green: 0.5}` (доли) → `#ff8000`. Google отдаёт доли, человек вводит hex. */
 export function rgbToHex(rgb: {

@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { WriteRecord } from '../src/core/journal.js';
 import type { Registry } from '../src/core/targets.js';
+import { retryReporter } from '../src/mcp/server.js';
 import { TOOLS, type ToolDeps } from '../src/mcp/tools.js';
 import { FakeDocsClient, forecastDoc } from './fixtures/doc.js';
 import { protocolSession, viaProtocol } from './fixtures/protocol.js';
@@ -207,5 +208,21 @@ describe('ресурс правил через протокол', () => {
     } finally {
       await session.close();
     }
+  });
+});
+
+describe('повторы запросов к Google видны (T44)', () => {
+  it('строка в stderr называет инструмент, попытку, паузу и причину', () => {
+    const lines: string[] = [];
+    retryReporter('gc_read', (line) => lines.push(line))(
+      2,
+      4,
+      1000,
+      'google_unavailable: HTTP 503',
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(
+      /gc_read: повтор 2\/4 через 1000 мс — google_unavailable: HTTP 503\n$/,
+    );
   });
 });

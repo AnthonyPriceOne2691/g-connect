@@ -66,7 +66,9 @@ const send = (method, params) =>
     const id = nextId++;
     pending.set(id, resolve);
     server.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
-    setTimeout(() => reject(new Error(`таймаут на ${method}`)), 30_000);
+    // Не меньше худшей цепочки повторов: 4 попытки и 1+2+4 с пауз, а одна попытка Google
+    // живьём шла 20,7 с. При 30 с проба однажды покраснела от задержки Google, а не продукта.
+    setTimeout(() => reject(new Error(`таймаут на ${method}`)), 120_000);
   });
 
 const callTool = async (name, args) => {
@@ -417,6 +419,13 @@ try {
   check(`проба упала: ${error.message}`, false, stderr.slice(0, 300));
 } finally {
   server.kill();
+}
+
+// Повторы запросов к Google за прогон (T44): медленная проба без них — медленный Google,
+// с ними — видно, какой вызов и почему повторял.
+const retries = stderr.split('\n').filter((line) => line.includes(': повтор '));
+if (retries.length > 0) {
+  process.stdout.write(`  повторы Google за прогон: ${retries.length}\n${retries.map((l) => `    ${l}`).join('\n')}\n`);
 }
 
 if (failures.length > 0) {

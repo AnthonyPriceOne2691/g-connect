@@ -79,6 +79,9 @@ try {
   process.stdout.write(
     `${JSON.stringify({ isError: message.result?.isError === true, result }, null, 2)}\n`,
   );
+  // stderr сервера — всегда: там строки о повторах запросов к Google (T44). Раньше он
+  // печатался только при отказе, и медленный вызов нечем было объяснить.
+  if (stderr !== '') process.stderr.write(stderr);
 } catch (error) {
   process.stdout.write(`ОШИБКА: ${error.message}\n${stderr.slice(0, 500)}\n`);
   process.exitCode = 1;

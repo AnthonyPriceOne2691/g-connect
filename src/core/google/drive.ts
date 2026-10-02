@@ -11,6 +11,7 @@ import { google, type drive_v3 } from 'googleapis';
 import { fromGoogleError, gcError } from '../errors.js';
 import { limitOf } from '../policy.js';
 import { withRetry } from '../retry.js';
+import type { RetryReporter } from './support.js';
 
 export type SearchScope = 'myDrive' | 'sharedWithMe' | 'sharedDrives' | 'folder';
 
@@ -177,7 +178,11 @@ export const CREATE_MIME: Record<CreateKind, string> = {
 export class GoogleDriveClient implements DriveClient {
   private readonly drive: drive_v3.Drive;
 
-  constructor(accessToken: string) {
+  /** Повторы — только у поиска: создание и корзина не идемпотентны, их не повторяют. */
+  constructor(
+    accessToken: string,
+    private readonly onRetry?: RetryReporter,
+  ) {
     const auth = new google.auth.OAuth2();
     auth.setCredentials({ access_token: accessToken });
     this.drive = google.drive({ version: 'v3', auth });
@@ -225,7 +230,10 @@ export class GoogleDriveClient implements DriveClient {
   async search(query: SearchQuery): Promise<SearchResult> {
     const limit = clampLimit(query.limit);
     try {
-      const response = await withRetry(() => this.drive.files.list(listParams(query, limit)));
+      const response = await withRetry(
+        () => this.drive.files.list(listParams(query, limit)),
+        this.onRetry === undefined ? {} : { onRetry: this.onRetry },
+      );
 
       const all = (response.data.files ?? []).map(toFoundFile);
       // «Общие диски» означает именно их: файл без driveId живёт на личном Диске,

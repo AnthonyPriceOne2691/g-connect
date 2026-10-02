@@ -8,7 +8,7 @@
 import { google, type sheets_v4 } from 'googleapis';
 
 import { fromGoogleError, gcError } from '../errors.js';
-import { authorizedClient, makeRetry, rgbToHex } from './support.js';
+import { authorizedClient, makeRetry, rgbToHex, type RetryReporter } from './support.js';
 import { toRequest } from './requests.js';
 import { limitOf } from '../policy.js';
 import type {
@@ -262,7 +262,7 @@ export interface GoogleSheetsClientOptions {
   readonly accessToken: string;
   readonly maxRows?: number;
   /** Сообщает о повторе, чтобы наверху можно было показать «попытка 2 из 3». */
-  readonly onRetry?: (attempt: number, total: number, delayMs: number) => void;
+  readonly onRetry?: RetryReporter;
 }
 
 export class GoogleSheetsClient implements SheetsClient {

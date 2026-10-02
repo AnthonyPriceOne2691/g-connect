@@ -29,6 +29,7 @@ import { googleExchanger } from '../core/google/exchanger.js';
 import { GoogleDriveClient } from '../core/google/drive.js';
 import { GoogleDocsClient } from '../core/google/docs.js';
 import { GoogleSheetsClient } from '../core/google/sheets.js';
+import type { RetryReporter } from '../core/google/support.js';
 import { policyText } from '../core/policy.js';
 import { loadRegistry } from '../core/targets.js';
 import { unknownToolResult } from './boundary.js';
@@ -50,18 +51,41 @@ const ACCOUNT = defaultAccount();
 const token = (): Promise<string> =>
   ensureAccessToken({ account: ACCOUNT, exchanger: googleExchanger });
 
+/** Чей вызов собирает зависимости: имя инструмента уходит в строки о повторах. */
+export interface CallContext {
+  readonly tool: string;
+}
+
+/**
+ * Строка в stderr о повторе запроса к Google: инструмент, попытка, пауза и ПРИЧИНА.
+ * Всплески задержки живьём (30 с, 20,7 с) объяснить было нечем — сервер повторов не
+ * печатал. stderr, а не stdout: stdout занят протоколом.
+ */
+export function retryReporter(
+  tool: string,
+  write: (line: string) => void = (line) => process.stderr.write(line),
+): RetryReporter {
+  return (attempt, total, delayMs, reason) => {
+    write(
+      `g-connect ${new Date().toISOString()} ${tool}: повтор ${attempt}/${total} ` +
+        `через ${delayMs} мс — ${reason}\n`,
+    );
+  };
+}
+
 /** Настоящие зависимости: Google, реестр и журнал профиля. Собираются на каждый вызов. */
-function deps(): ToolDeps {
+function deps(call?: CallContext): ToolDeps {
+  const onRetry = retryReporter(call?.tool ?? 'вызов');
   return {
     account: ACCOUNT,
-    sheets: async () => new GoogleSheetsClient({ accessToken: await token() }),
-    docs: async () => new GoogleDocsClient({ accessToken: await token() }),
-    drive: async () => new GoogleDriveClient(await token()),
+    sheets: async () => new GoogleSheetsClient({ accessToken: await token(), onRetry }),
+    docs: async () => new GoogleDocsClient({ accessToken: await token(), onRetry }),
+    drive: async () => new GoogleDriveClient(await token(), onRetry),
     registry: () => loadRegistry(ACCOUNT),
     journal: fileJournal,
     journalSource: fileJournalSource,
     revision: async (targetId) => {
-      const client = new GoogleSheetsClient({ accessToken: await token() });
+      const client = new GoogleSheetsClient({ accessToken: await token(), onRetry });
       const snapshot = await client.getSpreadsheet(targetId);
       return snapshot.revisionId ?? null;
     },
@@ -111,7 +135,7 @@ const asCallResult = (result: ToolResult) => ({
  * зелёных тестах (LR3-5), — а отказ формы отдавал своим текстом мимо нашего контракта
  * ошибок. Здесь вход судит `runTool` (`boundary.ts`), и любой отказ — наш объект.
  */
-export function createServer(makeDeps: () => ToolDeps = deps): Server {
+export function createServer(makeDeps: (call?: CallContext) => ToolDeps = deps): Server {
   const server = new Server(
     { name: 'g-connect', version: '0.1.0' },
     {
@@ -131,7 +155,7 @@ export function createServer(makeDeps: () => ToolDeps = deps): Server {
             name,
             TOOLS.map((tool) => tool.name),
           )
-        : await runTool(definition, args, makeDeps());
+        : await runTool(definition, args, makeDeps({ tool: name }));
     return asCallResult(result);
   });
   server.setRequestHandler(ListResourcesRequestSchema, () => ({ resources: [POLICY] }));
