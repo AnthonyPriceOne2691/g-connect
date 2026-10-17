@@ -6,7 +6,7 @@
   },
   ".github/workflows/quality.yml": {
     "reason": "TS-проект без backend/frontend: одна джоба на Node, шаги зовут npm/npx, а не venv и pip; свои шаги — проба собранного сервера по протоколу",
-    "changed": "джобы gates/delivery канона сведены в quality; установка — npm ci; Typecheck, Tests, Coverage — npx tsc/vitest; шаг probe (npm run build && node scripts/probe_mcp.mjs); delivery_check без --require-ci; шагов Canon payload selftest, OKF и smoke evals нет (вариант D, OKF не развёрнут). С канона 2.55 перенесён шаг «Diff base» (одна база на джобу, отказ вслух). Своё ускорение 2026-10-17: concurrency с cancel-in-progress; мутации — отдельная джоба mutation на PR, четыре доли параллельно (MUTATION_SHARD), check_mutation_gate.sh с BUDGET_SEC=600 вместо npx stryker run по всему ядру (59 мин на PR #2)"
+    "changed": "джобы gates/delivery канона сведены в quality; установка — npm ci; Typecheck, Tests, Coverage — npx tsc/vitest; шаг probe (npm run build && node scripts/probe_mcp.mjs); delivery_check без --require-ci; шагов Canon payload selftest, OKF и smoke evals нет (вариант D, OKF не развёрнут). С канона 2.55 перенесён шаг «Diff base» (одна база на джобу, отказ вслух). Своё ускорение 2026-10-17: concurrency с cancel-in-progress; мутации — отдельная джоба mutation на PR, четыре доли параллельно (MUTATION_SHARD), check_mutation_gate.sh с BUDGET_SEC=600 вместо npx stryker run по всему ядру (59 мин на PR #2). Поставка token-touch 2026-10-17: шаг «age для тестов шва токена» (apt) в quality и в долях мутаций — тесты шва на настоящем age"
   },
   ".pre-commit-config.yaml": {
     "reason": "транспорт local и TS-гейты: значения LINT_* в entry каждого хука, python-хуки канона (ruff, mypy, AST-правила) не применимы — python-кода продукта нет",
