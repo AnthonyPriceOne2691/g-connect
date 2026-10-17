@@ -51,7 +51,9 @@ export function applyOptions(
     journalSource: deps.journalSource,
     account: deps.account,
     alias: resolved.alias,
-    readRevision: () => deps.revision(resolved.id),
+    // У папки ревизии таблицы нет: чтение её как таблицы — 404 уже ПОСЛЕ создания файла
+    // (живой прогон 2026-10-17: таблица в «Моём диске» создана, а строка журнала — нет).
+    ...(resolved.type === 'folder' ? {} : { readRevision: () => deps.revision(resolved.id) }),
     // Конверт цели (D-18): разбирается здесь, где решается запись, а не при чтении
     // реестра — битый конверт не должен ронять чтение. Судит по числу ячеек, которое
     // известно только после построения плана, поэтому колбэком.

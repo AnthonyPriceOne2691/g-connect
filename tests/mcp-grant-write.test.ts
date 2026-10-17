@@ -258,6 +258,37 @@ describe('таблица со шапкой и строкой текстом (X7,
     expect(journalled).toHaveLength(0);
   });
 
+  it('живой прогон 2026-10-17: у папки нет ревизии таблицы — создание не теряет строку журнала', async () => {
+    const { deps, drive, journalled } = harness(granted());
+    // Google на чтении «Моего диска» как таблицы отвечает 404 — так упал живой прогон X7.
+    let asked = 0;
+    const notASheet = {
+      ...deps,
+      revision: () => {
+        asked += 1;
+        return Promise.reject(new Error('404: not a spreadsheet'));
+      },
+    };
+    const result = await callMcp(gcApply, { ...X7, dryRun: false }, notASheet);
+    expect((result.data as { status: string }).status).toBe('ok');
+    expect(drive.created).toHaveLength(1);
+    expect(journalled).toHaveLength(1);
+    expect(journalled[0]?.structure).toMatchObject({ kind: 'createFile', fileId: 'FILE1' });
+    // Первый слой: у папки ревизию не спрашивают вовсе; второй (сбой не теряет журнал) —
+    // соседний тест. Без этой строки второй слой молча прятал бы потерю первого.
+    expect(asked).toBe(0);
+  });
+
+  it('сбой чтения ревизии ПОСЛЕ записи таблицы — запись в журнале остаётся, ревизии нет', async () => {
+    const { deps, client, journalled } = harness(granted());
+    const flaky = { ...deps, revision: () => Promise.reject(new Error('сеть оборвалась')) };
+    const result = await callMcp(gcApply, upsert(UNLISTED), flaky);
+    expect((result.data as { status: string }).status).toBe('ok');
+    expect(client.writes.length).toBeGreaterThan(0);
+    expect(journalled).toHaveLength(1);
+    expect(journalled[0]?.revisionAfter).toBeNull();
+  });
+
   it('строка длиннее шапки — вопрос, а не догадка; файл не создаётся', async () => {
     const { deps, drive } = harness(granted());
     const result = await callMcp(

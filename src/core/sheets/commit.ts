@@ -219,7 +219,7 @@ async function commit(
   }
   if (shape.precondition !== undefined) await shape.precondition(client, map);
   const facts = (await shape.apply(client, map)) ?? {};
-  const revisionAfter = (await options.readRevision?.()) ?? null;
+  const revisionAfter = await revisionAfterWrite(options);
   const correlationId = newCorrelationId();
 
   // Журнал пишется ПОСЛЕ успешной записи и до возврата: если журналирование упало,
@@ -229,6 +229,20 @@ async function commit(
   );
 
   return { status: 'ok', ...base, revisionAfter, correlationId };
+}
+
+/**
+ * Ревизия после записи. Сбой её чтения запись не отменяет — она уже в Google, — и строку
+ * журнала терять нельзя: без неё откат не нашёл бы правку. Живой прогон 2026-10-17:
+ * `createSheet` создал таблицу и упал на чтении ревизии папки — файл остался без журнала.
+ * Без ревизии откат судит по ячейкам, как и задуман (§10.3).
+ */
+async function revisionAfterWrite(options: RowOptions): Promise<string | null> {
+  try {
+    return (await options.readRevision?.()) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function finishWrite(
