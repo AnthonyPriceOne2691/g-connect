@@ -27,6 +27,9 @@ export type ErrorCode =
   | 'doc_changed'
   | 'confirm_required'
   | 'plan_already_applied'
+  | 'needs_grant'
+  | 'grant_declined'
+  | 'grant_key_missing'
   | 'ambiguous_target'
   | 'bad_request'
   | 'internal';
@@ -45,6 +48,8 @@ export type ActionKind =
   | 'confirm_explicitly'
   | 'reread_and_preview'
   | 'clarify_target'
+  | 'open_grant'
+  | 'setup_grant_key'
   | null;
 
 export interface CatalogEntry {
@@ -159,6 +164,28 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, CatalogEntry>> = {
     retryable: false,
     action: 'confirm_explicitly',
     actionLabel: 'Показать план и подтвердить',
+  },
+  /**
+   * Запись из проекта, которому владелец не открыл G connect касанием (D-23). Действие —
+   * у человека: агент не подпишет разрешение сам, подпись держит ключ Secure Enclave.
+   */
+  needs_grant: {
+    title: 'Запись из этого проекта не разрешена',
+    retryable: false,
+    action: 'open_grant',
+    actionLabel: 'Попросить владельца открыть G connect касанием',
+  },
+  grant_declined: {
+    title: 'Разрешение не выдано: касания не было',
+    retryable: true,
+    action: 'open_grant',
+    actionLabel: 'Открыть G connect ещё раз',
+  },
+  grant_key_missing: {
+    title: 'Нет ключа для подписи разрешения',
+    retryable: false,
+    action: 'setup_grant_key',
+    actionLabel: 'Создать ключ «G connect» в Secretive',
   },
   plan_already_applied: {
     title: 'Этот план уже записан',
