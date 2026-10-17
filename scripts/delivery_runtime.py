@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import fnmatch
 import re
+from pathlib import Path
 
-from delivery_base import DEFAULT_BREAKERS, field, is_placeholder
+from delivery_base import (BREAKER_EXCLUDE, DEFAULT_BREAKERS, ROOT, field, git,
+                           is_placeholder)
 
 # --- §12.6: путь, который проверяется только исполнением ---------------------
 # Есть класс отказов, невидимый ВСЕМ статическим оракулам и необрабатываемый в
@@ -31,8 +33,9 @@ from delivery_base import DEFAULT_BREAKERS, field, is_placeholder
 def declared_surfaces(status: str, key: str) -> tuple[set[str], bool]:
     """(объявленные пути, объявлено ли осознанно) из поля-объявления поверхности.
 
-    Один разбор на два поля — `runtime_paths` (§12.6) и `model_surface` (§14.1).
-    Форма у них одна по построению: список глобов либо отказ с причиной. Второй
+    Один разбор на все поля-объявления — `runtime_paths` (§12.6), `model_surface`
+    (§14.1), `irreversible_surfaces` (§3.4a), `parallel_sessions` (§5.1a). Форма
+    у них одна по построению: список через запятую либо отказ с причиной. Второй
     парсер той же формы разъехался бы на первой правке — `one-notion-one-place`,
     класс, который в этом каноне уже стоил ревизии.
 
@@ -53,7 +56,10 @@ def declared_surfaces(status: str, key: str) -> tuple[set[str], bool]:
         # Слово отказа без причины — то же, что его отсутствие: см. `n/a reason=`
         # у `diagnosis:`. Само по себе оно ничего не сообщает.
         return set(), bool(re.search(r"(?i)reason\s*=\s*\S", raw))
-    return {p.strip() for p in raw.split(",") if p.strip()}, True
+    # Бэктик — разметка, а не часть пути: `a/b/` в STATUS пишут естественно, а с
+    # бэктиком элемент не совпадал ни с одним путём диффа (`delivery@2.00`).
+    items = (p.strip().strip("`").strip() for p in raw.split(","))
+    return {p for p in items if p}, True
 
 
 def breaker_value(status: str, name: str) -> int:
@@ -92,6 +98,40 @@ def runtime_touched(paths: list[str], surfaces: set[str]) -> set[str]:
                 hit.add(s)
                 break
     return hit
+
+
+def dead_surfaces(surfaces: set[str]) -> set[str]:
+    """Объявленные элементы, которые не совпадают ни с одним файлом дерева.
+
+    Такой элемент проверка не увидит никогда: `runtime_touched` сверяет пути диффа
+    с элементом как с префиксом или глобом. Проза, бэктик или имя переменной
+    вместо пути — зелёное без взгляда на правку (`green-without-the-thing`). Поле
+    `outreach-donors` 07.10: строка `model_surface` прозой резалась по запятым на
+    одиннадцать обрывков, и правка промпта продаж прошла без вопроса.
+    Нет git — пустое множество: молчать честнее, чем назвать мёртвым всё.
+    """
+    files = git("ls-files").splitlines()
+    if not files:
+        return set()
+    return {s for s in surfaces if not runtime_touched(files, {s})}
+
+
+def report_dead_surfaces(key: str, surfaces: set[str], sink: list[str],
+                         warnings: list[str]) -> None:
+    """Мёртвые элементы поля называются вслух — одна формулировка на все поля.
+
+    Мертвы ВСЕ — это то же, что поля нет, и сообщение идёт по лестнице §12.6
+    (`sink`). Мертва часть — среди них бывает ключ, а не файл: предупреждение
+    с именами, не отказ.
+    """
+    dead = dead_surfaces(surfaces)
+    if not dead:
+        return
+    (sink if dead == surfaces else warnings).append(
+        f"`{key}`: {len(dead)} из {len(surfaces)} элемент(ов) не совпадают ни с одним "
+        f"файлом дерева — правку по ним проверка не увидит: {', '.join(sorted(dead))}. "
+        "Форма поля — пути от корня и глобы через запятую, без бэктиков и прозы; "
+        "пояснения — в <!-- … --> на той же строке или строкой ниже")
 
 
 def surface_named(surface: str, low: str) -> bool:
@@ -218,5 +258,220 @@ def model_surface_gaps(report: str, touched: set[str]) -> list[str]:
             "даты неотличима от записи, сделанной до правки"
         )
     return gaps
+
+
+# --- §14.2a: двойник ниже модели ---------------------------------------------
+# Поведенческое правило промпта держится либо исполнителем НИЖЕ модели (валидатор
+# выхода, контрактная проверка, фильтр инструментов), либо самой моделью — то
+# есть ничем проверяемым. Проба оси 5 назвала цену числом: инструкция «никогда
+# не вводи пароль» нарушалась 6 из 6 и с правилом, и без него; безопасность
+# держала механика, а правило в промпте было мёртвым с видом наличия. Обратный
+# случай — правило без двойника — не виден вовсе и работает ровно до смены пина.
+# Отсюда вопрос контура: где реестр «правило → двойник | advisory». Содержание
+# реестра НЕ судится — та же граница, что у §14.4, и по той же причине.
+def rule_enforcer_gaps(status: str, surfaces: set[str], root: Path = ROOT) -> list[str]:
+    """Чего не хватает в объявлении двойников ниже модели (§14.2a).
+
+    Вопрос задаётся только проекту, объявившему поверхность модели СПИСКОМ: без
+    модели правил промпта нет, и строка там была бы ритуалом, который снимут
+    вместе с правилом (§4.3b). Судится ФОРМА ответа: реестр назван и лежит
+    файлом, либо отказ с причиной. Что каждое правило в реестре действительно
+    несёт исполнителя — содержание, и раньше работающей порчи промпта судить его
+    нечем (§14.4).
+    """
+    if not surfaces:
+        return []
+    raw = field(status, "rule_enforcers")
+    if is_placeholder(raw):
+        return ["поле `rule_enforcers:` в STATUS не заполнено (§14.2a) — назови реестр "
+                "«правило промпта → исполнитель ниже модели | advisory» либо "
+                "`n/a reason=…`. Правило, которое держит только модель, живёт пока "
+                "модель его читает: проба дала 6 нарушений из 6 и с правилом, и без него"]
+    if re.match(r"(?i)^\s*(?:none|n/a)\b", raw):
+        if not re.search(r"(?i)reason\s*=\s*\S", raw):
+            return ["`rule_enforcers: n/a` без reason= (§14.2a) — «правил в промпте нет» "
+                    "и «не смотрели» обязаны различаться в тексте, а не в тишине"]
+        return []
+    path = raw.split()[0].strip("`\"',").split("#")[0]
+    if not (root / path).exists():
+        return [f"`rule_enforcers: {path}` — файла нет. Объявленный реестр без файла "
+                "это снятая проверка с видом усиления (§4.6)"]
+    return []
+
+
+# --- §5.1a: несколько сессий на одном репозитории ----------------------------
+# Worktree изолирует рабочий каталог, индекс и HEAD — и не изолирует
+# интегрирующую ветку, состав выката, общие счётчики и ресурсы прогона. Очередь
+# на интеграцию — гейт мержа CQG §8.5, и контур СПРАШИВАЕТ, чем она принуждается.
+# Судится форма ответа и одно опровержимое утверждение: `merge-guard` лежит файлом.
+#
+# ⚠ Значения `hook` в наборе НЕТ, и это замер, а не вкус. В проекте с CQG pre-push
+# стоит всегда (на нём живут гейты поставки, §8.5.1 ③): флот 2026-10-17 — восемь
+# проектов из девяти, и ни один хук не отбивает зелёный прямой пуш в `main`.
+# «Хук есть по факту» было бы зелёным у всех — `green-without-the-thing`.
+QUEUE_GUARDS = {"merge-guard", "server", "manual-deploy"}
+
+
+def parallel_session_gaps(status: str, root: Path = ROOT) -> tuple[list[str], list[str]]:
+    """(молчание, неверное утверждение) про очередь на интегрирующую ветку (§5.1a).
+
+    Половины разведены, потому что у них разная лестница. Молчание — «ещё не
+    дошли»: предупреждение на verify, отказ на handoff. Опечатка в значении или
+    `merge-guard` без скрипта — неверное утверждение о защите, и оно опаснее
+    молчания (§4.6): отказ уже на verify.
+
+    Диффом НЕ ограждается, в отличие от соседей: число сессий — свойство
+    репозитория, а не поставки. `server` и `manual-deploy` живут вне репозитория
+    (CQG §8.5.3) и проверки не рождают — предупреждение, срабатывающее всегда,
+    снимут вместе с правилом (§4.3b).
+    """
+    guards, declared = declared_surfaces(status, "parallel_sessions")
+    if not declared:
+        return ["нет строки `parallel_sessions:` в STATUS (§5.1a) — назови, чем "
+                "принуждается очередь на интегрирующую ветку (`merge-guard`, "
+                "`server`, `manual-deploy`), либо `n/a reason=…`. Молчание "
+                "читается как «сессия одна», а от двух проверка, интеграция и "
+                "выкат идут вперемешку"], []
+    wrong: list[str] = []
+    unknown = sorted(guards - QUEUE_GUARDS)
+    if unknown:
+        wrong.append(f"`parallel_sessions`: неизвестные значения {', '.join(unknown)} — "
+                     f"допустимы {', '.join(sorted(QUEUE_GUARDS))} (§5.1a). Опечатка "
+                     "здесь читается как объявленная защита")
+    if "merge-guard" in guards and not (root / "scripts" / "merge_guard.sh").is_file():
+        wrong.append("`parallel_sessions: merge-guard` объявлен, а `scripts/merge_guard.sh` "
+                     "нет — объявленная очередь без гейта это снятая проверка с видом "
+                     "усиления (§4.6). Разверни гейт мержа (CQG §8.5.2) или убери значение")
+    return [], wrong
+
+
+# --- §3.4a: красная черта, а не переключатель --------------------------------
+# Все остальные breaker'ы считают накопление: файлы, строки, попытки, минуты.
+# Этот срабатывает на ПЕРЕХОД состояния — проект стал таким, где агент дотягивается
+# до необратимого, а человека в цепочке нет. Это случается один раз и мгновенно.
+#
+# Почему не опция с переключателем. Выключенная по умолчанию опция — это тот же
+# класс, ради которого всё затевалось: механизм есть, подключён, зелёный,
+# потребителя нет; про него просто забудут, и отсутствие подписи будет
+# неотличимо от решения её не ставить. Включённая всегда — мешает там, где не
+# нужна, и её снимут на третьем проекте (§4.3b). Поэтому ни того, ни другого:
+# пока черта не перейдена, механизма как бы не существует.
+
+#: Поверхности, которые видны по СОДЕРЖИМОМУ репозитория. Список по именам, а не
+#: «любой вызов» — тот же выбор и та же цена, что у рецепта §2.7a CQG: recall это
+#: список имён, он расширяется по мере встреч и обязан быть виден в диффе.
+_OUTWARD_MARKERS = ("sendgrid", "mailgun", "postmark", "smtplib", "aiosmtplib",
+                    "boto3.client(\"ses\"", "twilio", "telegram.bot")
+_DEPLOY_MARKERS = ("deploy:prod", "environment:\n      name: production",
+                   "stage: deploy")
+
+
+def _deploy_surface(root: Path) -> set[str]:
+    """Выкатка ищется в конфигах CI — и только там.
+
+    ⚠ Исключение `BREAKER_EXCLUDE` сюда НЕ применяется, хотя конфиги CI в нём
+    есть: джоба деплоя живёт ровно там, куда запрещено смотреть детектору
+    отправки. Общее исключение ослепило бы эту половину полностью.
+    """
+    for rel in (".gitlab-ci.yml", ".github/workflows"):
+        target = root / rel
+        files = sorted(target.rglob("*.yml")) if target.is_dir() else [target]
+        for f in files:
+            if f.is_file() and any(m in f.read_text(encoding="utf-8", errors="ignore")
+                                   for m in _DEPLOY_MARKERS):
+                return {"прод"}
+    return set()
+
+
+def _outward_surface(root: Path) -> set[str]:
+    """Отправка ищется в ПРОДУКТОВОМ коде, механика контура исключена.
+
+    ⚠ Население сужено не вкусом, а первым же прогоном: первая редакция краснела
+    НА САМОЙ СЕБЕ — список имён отправителей лежит строками в этом же файле, и
+    детектор честно находил в нём `sendgrid`. Ложное красное на механике контура
+    это случай, после которого проверку снимают целиком (§4.3b), и он же уже
+    стоил ревизии breaker'ам объёма. Исключение то же самое и по той же причине:
+    механика контура — не blast radius продукта.
+    """
+    for f in root.rglob("*.py"):
+        if f.relative_to(root).as_posix().startswith(BREAKER_EXCLUDE):
+            continue
+        if any(part in {".venv", "node_modules", "__pycache__"} for part in f.parts):
+            continue
+        low = f.read_text(encoding="utf-8", errors="ignore").lower()
+        if any(m in low for m in _OUTWARD_MARKERS):
+            return {"отправка наружу"}
+    return set()
+
+
+def _detected_surfaces(root: Path) -> set[str]:
+    """Что видно, не спрашивая человека. Остальное обязан назвать он сам.
+
+    Две половины разнесены не по длине, а потому что у них РАЗНОЕ население —
+    см. предупреждения в каждой.
+    """
+    return _deploy_surface(root) | _outward_surface(root)
+
+
+def _signature_is_valid(status: str, root: Path) -> bool:
+    """Подпись проверяется ИСПОЛНЕНИЕМ `ssh-keygen -Y verify`, а не наличием файла.
+
+    Файл рядом — это снова «объявленный реестр без файла» наоборот: подпись,
+    которую никто не проверил, неотличима от подделанной. Ключ обязан жить там,
+    куда агент не дотягивается (анклав, аппаратный токен): подпись из файла в
+    `~/.ssh` — это та же строка текста, только длиннее.
+    """
+    sig = root / "delivery" / "active" / "irreversible.sig"
+    signers = root / ".github" / "allowed_signers"
+    if not (sig.is_file() and signers.is_file()):
+        return False
+    import subprocess
+    declared = field(status, "irreversible_surfaces")
+    who = signers.read_text(encoding="utf-8").split()[0] if signers.read_text().split() else ""
+    proc = subprocess.run(
+        ["ssh-keygen", "-Y", "verify", "-f", str(signers), "-I", who,
+         "-n", "irreversible", "-s", str(sig)],
+        input=declared.encode("utf-8"), capture_output=True, check=False,
+    )
+    return proc.returncode == 0
+
+
+def unsigned_irreversible_gaps(status: str, root: Path = ROOT) -> list[str]:
+    """§3.4a: необратимое, до которого агент дотягивается без человека.
+
+    Три состояния, и они обязаны различаться. Поверхность видна детектором, но
+    не объявлена — молчание, и оно дороже ответа. Объявлена и не подписана —
+    остановка. Объявлена и подписана — тихо.
+    """
+    declared, answered = declared_surfaces(status, "irreversible_surfaces")
+    detected = _detected_surfaces(root)
+
+    silent = detected - declared
+    if silent and not answered:
+        return [f"поле `irreversible_surfaces:` в STATUS не отвечает про "
+                f"{', '.join(sorted(silent))} (§3.4a) — поверхность видно по коду, "
+                "а в объявлении её нет. «Не думали» и «подумали и нет» обязаны "
+                "различаться в тексте, а не в тишине"]
+    if silent:
+        return [f"`irreversible_surfaces:` не называет {', '.join(sorted(silent))} "
+                "(§3.4a) — детектор видит это в коде. Либо назови, либо объясни "
+                "в той же строке, почему это не необратимо"]
+    if not declared:
+        return []
+
+    low = status.lower()
+    if "max_unsigned_irreversible" in low:
+        return ["порог `max_unsigned_irreversible` поднят строкой (§3.4a) — "
+                "единственный breaker, у которого этого нельзя: он охраняет ровно "
+                "класс «письменное разрешение подделывается агентом». Здесь waiver "
+                "принимается только подписью"]
+    if not _signature_is_valid(status, root):
+        return [f"объявлено необратимое без человека в цепочке "
+                f"({', '.join(sorted(declared))}), подписи нет или она не сходится "
+                "(§3.4a). Это остановка, а не повод просить waiver: сначала "
+                "`escalation.md` с двумя вариантами и ценой — поставить человека "
+                "в цепочку или подписать. Подпись: `ssh-keygen -Y sign -f <ключ> "
+                "-n irreversible` над строкой объявления"]
+    return []
 
 

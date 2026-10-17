@@ -64,11 +64,16 @@ server.stdout.on('data', (chunk) => {
 const send = (method, params) =>
   new Promise((resolve, reject) => {
     const id = nextId++;
-    pending.set(id, resolve);
-    server.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
     // Не меньше худшей цепочки повторов: 4 попытки и 1+2+4 с пауз, а одна попытка Google
     // живьём шла 20,7 с. При 30 с проба однажды покраснела от задержки Google, а не продукта.
-    setTimeout(() => reject(new Error(`таймаут на ${method}`)), 120_000);
+    // Таймер снимается ответом: висящий держал процесс живым 120 с после зелёного — проба
+    // работала полсекунды, а шаг CI шёл 129 с (замер 2026-10-17, тот же дефект, что у gc_call).
+    const timer = setTimeout(() => reject(new Error(`таймаут на ${method}`)), 120_000);
+    pending.set(id, (message) => {
+      clearTimeout(timer);
+      resolve(message);
+    });
+    server.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
   });
 
 const callTool = async (name, args) => {

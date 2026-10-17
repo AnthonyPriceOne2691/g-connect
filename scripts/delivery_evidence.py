@@ -12,7 +12,7 @@ import re
 
 from delivery_base import (ACTIVE, ActiveCtx, field, is_placeholder,
                            read)
-from delivery_base import SKIP_DIR_PARTS, TEST_TEXT_SUFFIXES
+from delivery_base import SKIP_DIR_PARTS, TEST_TEXT_SUFFIXES, example_ref_pattern
 from delivery_decisions import signature_verdict
 from delivery_history import debt_is_not_frozen, expectation_predates_tests
 
@@ -138,7 +138,8 @@ def check_assert_review(status: str, ctx: ActiveCtx, klass: str, phase: str,
 
 def check_expectation_and_oracle(status: str, ctx: ActiveCtx, klass: str,
                                  phase: str, errors: list[str],
-                                 warnings: list[str]) -> None:
+                                 warnings: list[str],
+                                 base: str | None = None) -> None:
     """Ожидание раньше кода (§3.1d ур. 1) и реляционный оракул (§6.5 ур. 2).
 
     Два раздела в одной функции, хотя комментарии обещают два шва: последний
@@ -208,7 +209,7 @@ def check_expectation_and_oracle(status: str, ctx: ActiveCtx, klass: str,
 
         check_examples_and_ids(spec_text, ex_ids,
                                tests_text + read(eval_smoke), klass, phase,
-                               errors, warnings)
+                               errors, warnings, base)
 
         check_relational_oracle(tests_text, klass, warnings)
 
@@ -255,7 +256,7 @@ def check_relational_oracle(tests_text: str, klass: str,
 
 def check_examples_and_ids(spec_text: str, ex_ids: list[str], refs_text: str,
                            klass: str, phase: str, errors: list[str],
-                           warnings: list[str]) -> None:
+                           warnings: list[str], base: str | None = None) -> None:
     """Блок примеров есть, id проставлены, id встречаются в тестах.
 
     Шестой шов (`delivery@1.57`): цепочка `if/elif/else` — это три ответа на
@@ -282,11 +283,18 @@ def check_examples_and_ids(spec_text: str, ex_ids: list[str], refs_text: str,
     else:
         # id должны встречаться в тестах или eval-smoke: связь примера с
         # проверкой — то, что отличает обещание от отчёта о реализации.
-        missing = [i for i in dict.fromkeys(ex_ids) if i not in refs_text]
+        # ⚠ Здесь стояла ПОДСТРОКА (`i not in refs_text`), хотя соседняя
+        # проверка истории ещё с lab-12 искала токен: `A6` внутри `%D0%A6`
+        # засчитывался ссылкой, и пример числился покрытым без единого теста.
+        # Понятие теперь одно на обе проверки — `example_ref_pattern`.
+        missing = [i for i in dict.fromkeys(ex_ids)
+                   if not re.search(example_ref_pattern(i), refs_text, re.M)]
         if missing:
             warnings.append(
                 "acceptance-примеры без ссылки в тестах/eval-smoke: "
-                f"{', '.join(missing)} (§3.1d) — пометь тест id примера"
+                f"{', '.join(missing)} (§3.1d) — пометь тест id примера в "
+                "комментарии или в начале докстринга; строка, целиком равная "
+                "id, и %-код ссылкой не считаются"
             )
 
         # Порядок «пример раньше теста» — на verify и дальше: раньше
@@ -295,7 +303,9 @@ def check_examples_and_ids(spec_text: str, ex_ids: list[str], refs_text: str,
         if phase in {"verify", "converge", "handoff"}:
             test_dirs = [d for d in ("tests", "backend/tests", "src/tests")
                          if (ACTIVE.parent.parent / d).is_dir()]
-            warnings += expectation_predates_tests(ex_ids, test_dirs)
+            # База — та же, что у breakers: порядок судится в окне ветки, иначе
+            # переиспользованный id датируется чужой поставкой (`delivery@1.97`).
+            warnings += expectation_predates_tests(ex_ids, test_dirs, base)
 
 
 def check_observability_ladder(status: str, sig: str, errors: list[str]) -> None:
@@ -342,5 +352,6 @@ def check_evidence(status: str, args, errors: list[str], warnings: list[str], ct
 
     check_assert_review(status, ctx, klass, phase, errors, warnings)
 
-    check_expectation_and_oracle(status, ctx, klass, phase, errors, warnings)
+    check_expectation_and_oracle(status, ctx, klass, phase, errors, warnings,
+                                 base=getattr(args, "diff_base", None))
 

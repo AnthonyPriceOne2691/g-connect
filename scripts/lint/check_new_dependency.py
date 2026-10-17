@@ -53,6 +53,16 @@ def git(*args: str) -> str:
 
 
 
+#: Отказ от объявления — значение НАЧИНАЕТСЯ словом отказа, а хвост `reason=…` —
+#: его причина, как `n/a reason=…` у остальных полей канона (`cqg@2.54`). Прежде
+#: сверялось значение целиком, и `none reason=пакетов нет` читалось как пакет «none»
+#: без `by=` — красное на честном отказе (поле `ahrefs-cases` #53: архивная поставка
+#: того же окна с `no reason=…`). Молча пропустить пакет так нельзя: настоящий пакет,
+#: принятый за отказ, остаётся необъявленным, и гейт краснеет на нём. Пакет с именем
+#: слова отказа объявляется в бэктиках: `` `no` reason=… by=… ``.
+REFUSAL = re.compile(r"(?i)^(?:none|n/a|no|-|…)(?:\s|$)")
+
+
 def declared(status: str) -> tuple[set[str], list[str]]:
     """(корректно объявленные имена, строки без reason=/by=)."""
     ok: set[str] = set()
@@ -65,7 +75,7 @@ def declared(status: str) -> tuple[set[str], list[str]]:
     pattern = r"(?im)^[ \t]*[-*]?[ \t]*\**new_dependency\**[ \t]*:\**[ \t]*(.+)$"
     for m in re.finditer(pattern, status):
         val = re.sub(r"<!--.*?-->", "", m.group(1)).strip()
-        if not val or val.startswith("<") or val.lower() in {"none", "n/a", "-", "…"}:
+        if not val or val.startswith("<") or REFUSAL.match(val):
             continue
         low = val.lower()
         if "reason=" not in low or "by=" not in low:
@@ -108,15 +118,48 @@ def scan_manifests(merge_base: str, paths: list[str]) -> tuple[list[str], int, l
     return findings, checked, locks
 
 
-def report(findings: list[str], strict: bool) -> int:
+def status_sources(window: str) -> list[str]:
+    """Где искать объявления: активная поставка И та, что архивируется В ЭТОМ ЖЕ окне.
+
+    ⚠ **Читать только `delivery/active/STATUS.md` — уже случившийся дефект**
+    (поле `voice-interview-coach`, урок L50a). Объявление живёт одну поставку и на
+    handoff уезжает в `archive/` вместе с ней, а окно диффа при этом ещё содержит
+    коммит, где зависимость появилась: первый же push ПОСЛЕ архивации падал на
+    зависимостях, которые час назад были честно объявлены и проверены. Гейт
+    требовал невозможного — вернуть файл на место, которого у него больше нет.
+
+    Точность важнее удобства: берётся не весь `archive/`, а только те STATUS,
+    которые ИЗМЕНИЛИСЬ в том же окне `merge_base..HEAD`. Старое объявление из
+    прошлогодней поставки не должно молча оправдывать сегодняшнюю зависимость —
+    иначе гейт перестанет что-либо значить на второй архивации.
+    """
+    texts: list[str] = []
+    for path in ["delivery/active/STATUS.md", *_archived_in_window(window)]:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                texts.append(fh.read())
+        except OSError:
+            continue
+    return texts
+
+
+def _archived_in_window(window: str) -> list[str]:
+    changed = git("diff", "--name-only", window).splitlines()
+    return [
+        p
+        for p in changed
+        if p.startswith("delivery/archive/") and p.endswith("STATUS.md")
+    ]
+
+
+def report(findings: list[str], strict: bool, window: str) -> int:
     """Сверка находок с объявлениями в STATUS и починка словами."""
-    status = ""
-    try:
-        with open("delivery/active/STATUS.md", encoding="utf-8") as fh:
-            status = fh.read()
-    except OSError:
-        pass
-    ok, malformed = declared(status)
+    ok: set[str] = set()
+    malformed: list[str] = []
+    for status in status_sources(window):
+        found, bad = declared(status)
+        ok |= found
+        malformed.extend(bad)
 
     for bad in malformed:
         print(
@@ -201,7 +244,10 @@ def main() -> int:
               "new-dependency: новых зависимостей нет В ПРОЧИТАННОМ — "
               "проверено не всё (причины выше)")
         return 0
-    return report(findings, strict)
+    # Окно — ТО ЖЕ, по которому искали зависимости: объявление и находка
+    # обязаны браться из одного диапазона, иначе архивный STATUS из другого окна
+    # оправдает сегодняшнюю зависимость (см. `status_sources`).
+    return report(findings, strict, f"{merge_base}..HEAD")
 
 
 if __name__ == "__main__":

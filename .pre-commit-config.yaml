@@ -9,6 +9,11 @@
 default_language_version:
   python: python3
 
+# Хук без `stages:` идёт на КАЖДОЙ установленной стадии, а pre-push у нас поставлен: без
+# этой строки все гейты коммита, включая весь сьют, повторялись на push. На push идёт
+# только то, у чего стоит `stages: [pre-push]` (cqg@2.47).
+default_stages: [pre-commit]
+
 repos:
   # ── Конфиги парсятся, мусор не коммитится ──────────────────────────────────
   - repo: https://github.com/pre-commit/pre-commit-hooks
