@@ -14,7 +14,9 @@ export type NothingToUndoReason =
   | 'all_undone'
   | 'id_not_found'
   /** Запись по id уже откачена: второй откат вернул бы состояние, которого не выбирали. */
-  | 'already_undone';
+  | 'already_undone'
+  /** Записи по цели есть, но все — других проектов (D-23): их откатывают их сессии. */
+  | 'only_other_projects';
 
 export interface UndoOptions {
   readonly account?: string;
@@ -38,6 +40,11 @@ export interface UndoOptions {
    * Колбэком, потому что ядро отката не должно знать про клиента Drive.
    */
   readonly trash?: (fileId: string) => Promise<void>;
+  /**
+   * Проект вызывающей сессии (D-23): откат видит только записи этого проекта, запись
+   * чужого по id — отказ `undo.own-project`. Нет поля — вызов из терминала, видно всё.
+   */
+  readonly project?: string;
 }
 
 /**

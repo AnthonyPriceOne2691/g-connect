@@ -12,10 +12,31 @@
     },
     {
       "id": "write.allowlist",
-      "title": "Писать можно только в цели реестра с allow: write",
+      "title": "Цель реестра пишется только с allow: write; read-only в реестре не открывает и разрешение проекта",
       "kind": "deny",
-      "enforced_in": "src/core/targets.ts (assertWritable)",
-      "probe": "запись в цель вне реестра → policy_denied"
+      "enforced_in": "src/core/targets.ts (assertWritable) + src/core/write-right.ts (authorizeWrite)",
+      "probe": "запись в цель реестра с allow: read → policy_denied, даже под разрешением проекта"
+    },
+    {
+      "id": "write.grant",
+      "title": "Вне реестра писать можно только по действующему разрешению проекта — касанию владельца (D-23)",
+      "kind": "deny",
+      "enforced_in": "src/core/write-right.ts (authorizeWrite)",
+      "probe": "запись в цель вне реестра без разрешения проекта → needs_grant; с разрешением — право есть"
+    },
+    {
+      "id": "grant.signature",
+      "title": "Разрешение без подписи ключом владельца не принимается: подложенный файл ничего не открывает",
+      "kind": "deny",
+      "enforced_in": "src/core/grant/grants.ts (currentGrant)",
+      "probe": "файл разрешения с подписью чужим ключом → bad_signature, разрешения нет"
+    },
+    {
+      "id": "undo.own-project",
+      "title": "Откат из проекта — только записей этого проекта: чужую запись по id он не откатывает",
+      "kind": "deny",
+      "enforced_in": "src/core/undo-shared.ts (pickUndoRecord)",
+      "probe": "откат по id записи другого проекта → policy_denied undo.own-project"
     },
     {
       "id": "write.formula-column",

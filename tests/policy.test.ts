@@ -8,8 +8,9 @@
  * Меты обязательны: добавить правило и не исполнить его → тест красный.
  */
 
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -32,6 +33,10 @@ import { findReplace } from '../src/core/sheets/find-replace-op.js';
 import { formatCells } from '../src/core/sheets/format-op.js';
 import { setCells } from '../src/core/sheets/set-cells-op.js';
 import { assertWritable, resolveTarget } from '../src/core/targets.js';
+import { grantText, newGrant, projectKey } from '../src/core/grant/document.js';
+import { currentGrant, grantsDir, type GrantState } from '../src/core/grant/grants.js';
+import { pickUndoRecord } from '../src/core/undo-shared.js';
+import { authorizeWrite } from '../src/core/write-right.js';
 import { deleteColumns, deleteRows, deleteSheet } from '../src/core/sheets/structure-op.js';
 
 /** Лист с тем, чего откат вернуть не может: считается, чтобы назвать числом. */
@@ -58,6 +63,12 @@ import {
 
 const data = () => buildSheetData(snapshot());
 const client = () => new FakeSheetsClient();
+
+/** Действующее разрешение проекта — состоянием; подпись судит проба grant.signature. */
+const GRANTED: GrantState = {
+  state: 'granted',
+  grant: newGrant('/Users/someone/project', 'default', new Date()),
+};
 
 /** Проба на правило: должна ЗАВЕРШИТЬСЯ УСПЕШНО ровно тогда, когда правило работает. */
 const probes: Record<string, () => Promise<void>> = {
@@ -99,6 +110,85 @@ const probes: Record<string, () => Promise<void>> = {
       expect(payload.cause).toBe('write.allowlist');
       expect(payload.detail).toContain('write.allowlist');
     }
+    // D-23: read-only цель РЕЕСТРА не открывает и разрешение проекта — ограничение о
+    // конкретном файле сильнее разрешения обо всех.
+    const readOnly = resolveTarget('ref', {
+      targets: [{ alias: 'ref', id: 'REFONLY000000000000000000', type: 'sheet', allow: 'read' }],
+    });
+    await expect(authorizeWrite(readOnly, () => Promise.resolve(GRANTED))).rejects.toMatchObject({
+      payload: { code: 'policy_denied', cause: 'write.allowlist' },
+    });
+  },
+
+  // D-23: вне реестра право записи даёт только разрешение проекта (касание владельца).
+  'write.grant': async () => {
+    const unlisted = resolveTarget('UNLISTED000000000000000');
+    const none: GrantState = { state: 'none', reason: 'no_grant', detail: 'нет разрешения' };
+    await expect(authorizeWrite(unlisted, () => Promise.resolve(none))).rejects.toMatchObject({
+      payload: { code: 'needs_grant', cause: 'no_grant' },
+    });
+    expect(await authorizeWrite(unlisted, () => Promise.resolve(GRANTED))).toMatchObject({
+      via: 'grant',
+    });
+  },
+
+  // D-23: подложенный файл разрешения с чужой подписью не открывает ничего.
+  'grant.signature': async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'gconnect-policy-keys-'));
+    const key = (name: string): { file: string; pub: string } => {
+      const file = join(dir, name);
+      execFileSync('/usr/bin/ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', file]);
+      return {
+        file,
+        pub: execFileSync('/usr/bin/ssh-keygen', ['-y', '-f', file], { encoding: 'utf8' }).trim(),
+      };
+    };
+    const owner = key('owner');
+    const stranger = key('stranger');
+    const project = '/Users/someone/project';
+    const text = grantText(newGrant(project, 'default', new Date()));
+    const signature = execFileSync(
+      '/usr/bin/ssh-keygen',
+      ['-Y', 'sign', '-f', stranger.file, '-n', 'g-connect-grant'],
+      { input: text, encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
+    );
+    await mkdir(grantsDir(), { recursive: true });
+    await writeFile(
+      join(grantsDir(), `${projectKey(project)}.json`),
+      JSON.stringify({ text, signature }),
+    );
+    const keys = {
+      keyName: 'G connect',
+      signerKey: () => Promise.resolve(owner.pub),
+      sign: () => Promise.resolve(undefined),
+    };
+    expect(await currentGrant(keys, project, 'default')).toMatchObject({
+      state: 'none',
+      reason: 'bad_signature',
+    });
+  },
+
+  // D-23: откат из проекта не трогает записи другого проекта, даже названные по id.
+  'undo.own-project': async () => {
+    const record: WriteRecord = {
+      at: new Date().toISOString(),
+      account: 'default',
+      targetId: 'T',
+      alias: null,
+      sheet: 'Лист1',
+      op: 'setCells',
+      changes: [{ a1: 'B2', column: 'Часы', before: 1, after: 2 }],
+      revisionBefore: null,
+      revisionAfter: null,
+      correlationId: 'gc-other',
+      project: '/Users/someone/other',
+    };
+    await expect(
+      pickUndoRecord({ recent: () => Promise.resolve([record]) }, 'T', {
+        correlationId: 'gc-other',
+        project: '/Users/someone/mine',
+      }),
+    ).rejects.toMatchObject({ payload: { code: 'policy_denied', cause: 'undo.own-project' } });
   },
 
   'write.formula-column': async () => {
@@ -762,8 +852,9 @@ describe('правила как механизм (D-12)', () => {
       expect(rule.enforced_in).toMatch(/src\//);
     }
     // 40-е — write.named-confirm-bound-to-plan (поправка D-20), 41-е — docs.objects-not-destroyed,
-    // 42-е — docs.suggestions-not-edited, 43-е — input.no-silent-drop (D-22).
-    expect(policyRules()).toHaveLength(43);
+    // 42-е — docs.suggestions-not-edited, 43-е — input.no-silent-drop (D-22); 44–46 —
+    // write.grant, grant.signature, undo.own-project (D-23, разрешение проекта касанием).
+    expect(policyRules()).toHaveLength(46);
   });
 
   it('rules.md называет ровно списки ядра: конверт и подтверждение названием', () => {

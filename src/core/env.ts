@@ -44,6 +44,22 @@ export function profilesHome(): string {
   return join(homedir(), '.gconnect');
 }
 
+/**
+ * Проект вызова — корень проекта сессии, который клиент передаёт серверу (D-23).
+ *
+ * Claude Code ставит `CLAUDE_PROJECT_DIR` в окружение сервера: каталог процесса у
+ * сервера уровня пользователя ничего не говорит о сессии. Нет переменной — проекта нет,
+ * и запись вне реестра невозможна: только чтение.
+ */
+export function callerProject(): string | undefined {
+  return read('CLAUDE_PROJECT_DIR');
+}
+
+/** Имя ключа Secretive, которым подписываются разрешения; задаётся при подключении. */
+export function grantKeyName(): string {
+  return read('GCONNECT_GRANT_KEY') ?? 'G connect';
+}
+
 /** Активный профиль (аккаунт Google). */
 export function defaultAccount(): string {
   return read('GCONNECT_ACCOUNT') ?? 'default';

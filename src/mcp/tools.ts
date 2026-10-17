@@ -23,12 +23,12 @@ import { listProfiles, profileStatus } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
 import { readDoc } from './read-doc.js';
 import type { ApplyOutcome } from '../core/sheets/rows.js';
-import { assertWritable, resolveTarget, type RegistryEntry } from '../core/targets.js';
+import { resolveTarget, type RegistryEntry } from '../core/targets.js';
 import { undoLast } from '../core/undo.js';
 
 export type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
 import type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
-import { applyHint, applyOptions, maybeReport } from './apply-support.js';
+import { applyHint, applyOptions, journalOf, maybeReport, writeRight } from './apply-support.js';
 import { applyInput, operationOf } from './apply-schema.js';
 import { parseToolInput } from './boundary.js';
 import { targetArg } from './target-arg.js';
@@ -298,7 +298,7 @@ export const gcApply: ToolDefinition = {
     // получал «файл не найден» вместо «нет права записи» — нашла живая проба через
     // протокол, юнит-тесты вызывали обработчик и этого не видели.
     const resolved = await resolve(deps, operation.target);
-    if (operation.dryRun === false) assertWritable(resolved);
+    const right = operation.dryRun === false ? await writeRight(deps, resolved) : undefined;
 
     // Создание файла идёт до всякого чтения таблицы: у него нет ни листа, ни карты, а
     // цель — папка. Ветка ранняя намеренно — иначе `getSpreadsheet` на папке отказал бы
@@ -308,14 +308,14 @@ export const gcApply: ToolDefinition = {
       operation.op === 'createDoc' ||
       operation.op === 'createFolder'
     ) {
-      return runCreate(operation, resolved, deps);
+      return runCreate(operation, resolved, deps, right);
     }
 
     // Вид цели решает путь ДО чтения (P22): doc-операции идут в Docs API, и табличная
     // операция по документу отклоняется здесь, а не «файл не найден» из чужого API.
     assertTargetKind(operation, resolved);
     if (isDocOperation(operation)) {
-      return runDocApply(operation, resolved, deps);
+      return runDocApply(operation, resolved, deps, right);
     }
 
     const client = await deps.sheets();
@@ -326,7 +326,7 @@ export const gcApply: ToolDefinition = {
     );
     const data = buildSheetData(snapshot, wanted);
 
-    const options = applyOptions(deps, resolved, operation);
+    const options = applyOptions(deps, resolved, operation, right);
 
     const outcome: ApplyOutcome = await runOperation(client, data, operation, options);
 
@@ -401,7 +401,7 @@ export const gcUndo: ToolDefinition = {
   async handle(args, deps) {
     const input = z.object(undoInput).parse(args);
     const resolved = await resolve(deps, input.target);
-    assertWritable(resolved);
+    await writeRight(deps, resolved);
     if (resolved.type === 'doc') {
       const outcome = await runDocUndo(deps, resolved, input);
       return {
@@ -421,7 +421,8 @@ export const gcUndo: ToolDefinition = {
         const drive = await deps.drive();
         await drive.trash(fileId);
       },
-      journal: deps.journal,
+      ...(deps.project === undefined ? {} : { project: deps.project }),
+      journal: journalOf(deps),
     });
     return {
       ...outcome,

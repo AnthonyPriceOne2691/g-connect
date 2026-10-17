@@ -30,6 +30,7 @@ import {
   reportSheet,
   snapshot,
 } from './fixtures/sheet.js';
+import { FakeDriveClient } from './fixtures/drive.js';
 import { callMcp } from './fixtures/protocol.js';
 
 const SHEET_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
@@ -81,31 +82,6 @@ interface Harness {
   readonly client: FakeSheetsClient;
   readonly journalled: WriteRecord[];
   readonly drive: FakeDriveClient;
-}
-
-/** Фейк Drive: помнит созданное и отправленное в корзину — этим и проверяем откат. */
-class FakeDriveClient {
-  readonly created: { id: string; name: string; kind: string; parentId?: string }[] = [];
-  readonly trashed: string[] = [];
-
-  search(): Promise<{ files: never[]; incompleteBecause: never[] }> {
-    return Promise.resolve({ files: [], incompleteBecause: [] });
-  }
-
-  create(
-    kind: 'sheet' | 'doc' | 'folder',
-    name: string,
-    parentId?: string,
-  ): Promise<{ id: string; name: string; url: string }> {
-    const id = `FILE${this.created.length + 1}`;
-    this.created.push({ id, name, kind, ...(parentId === undefined ? {} : { parentId }) });
-    return Promise.resolve({ id, name, url: `https://drive.google.com/open?id=${id}` });
-  }
-
-  trash(fileId: string): Promise<void> {
-    this.trashed.push(fileId);
-    return Promise.resolve();
-  }
 }
 
 const harness = (over: Partial<ToolDeps> = {}): Harness => {
@@ -260,7 +236,7 @@ describe('B6, B7 — граница ошибок', () => {
     expect(JSON.stringify(result.error)).not.toContain('at Object');
   });
 
-  it('запись в цель вне реестра → policy_denied с id правила', async () => {
+  it('X2: запись в цель вне реестра без разрешения проекта → needs_grant с действием для человека', async () => {
     const { deps, client } = harness();
     const result = await callMcp(
       gcApply,
@@ -274,14 +250,19 @@ describe('B6, B7 — граница ошибок', () => {
       deps,
     );
     expect(result.ok).toBe(false);
-    expect(result.error?.code).toBe('policy_denied');
-    expect(result.error?.cause).toBe('write.allowlist');
+    // До D-23 здесь стоял policy_denied (write.allowlist): право давал только реестр. Теперь
+    // цель вне реестра пишется по разрешению проекта, и его отсутствие — needs_grant с
+    // действием «попроси владельца открыть G connect», а не тупик (урок L10: старый оракул
+    // охранял контракт, которого больше нет).
+    expect(result.error?.code).toBe('needs_grant');
+    expect(result.error?.action?.kind).toBe('open_grant');
+    expect(result.error?.detail).toContain('открой G connect');
     expect(client.writes).toHaveLength(0);
   });
 
   it('право проверяется ДО обращения к Google, а не после (нашла живая проба)', async () => {
     // Клиент, который падает при любом вызове: если право проверяется вторым,
-    // тест увидит ошибку сети вместо policy_denied — как это и было.
+    // тест увидит ошибку сети вместо отказа в праве — как это и было.
     const { deps } = harness({
       sheets: () => Promise.reject(new Error('в Google лезть не должны были')),
     });
@@ -296,8 +277,7 @@ describe('B6, B7 — граница ошибок', () => {
       },
       deps,
     );
-    expect(result.error?.code).toBe('policy_denied');
-    expect(result.error?.cause).toBe('write.allowlist');
+    expect(result.error?.code).toBe('needs_grant');
   });
 
   it('read-only цель не пишется даже при dryRun=false', async () => {
@@ -901,7 +881,7 @@ describe('G15, G16 — создание файлов Drive (D-19, слайс 8)'
     expect(drive.created).toHaveLength(0);
   });
 
-  it('G16: в созданный файл писать нельзя — его нет в реестре', async () => {
+  it('G16: в созданный файл без разрешения проекта писать нельзя — его нет в реестре', async () => {
     const { deps, client } = harness();
     const result = await callMcp(
       gcApply,
@@ -915,7 +895,7 @@ describe('G15, G16 — создание файлов Drive (D-19, слайс 8)'
       deps,
     );
     expect(result.ok).toBe(false);
-    expect(result.error?.cause).toBe('write.allowlist');
+    expect(result.error?.code).toBe('needs_grant');
     expect(client.writes).toHaveLength(0);
   });
 });

@@ -5,24 +5,49 @@
  * отвечают на «что умеет сервер», а этот файл на «как оформить один вызов записи».
  */
 
+import type { JournalSink } from '../core/journal.js';
 import type { ApplyOutcome } from '../core/sheets/rows.js';
-import { envelopeAuthorizes, parseEnvelope } from '../core/envelope.js';
+import { GRANT_ENVELOPE, envelopeAuthorizes, parseEnvelope } from '../core/envelope.js';
 import { renderPreview, writeReport } from '../core/report/html.js';
 import type { parseOperation } from '../core/ops.js';
 import type { RowOptions } from '../core/sheets/write-types.js';
 import type { ResolvedTarget } from '../core/targets.js';
+import { authorizeWrite, type WriteRight } from '../core/write-right.js';
+import type { GrantState } from '../core/grant/grants.js';
 import type { ToolDeps } from './deps.js';
+
+/** У вызова без проекта или без источника разрешений разрешения нет — право даёт реестр. */
+const NO_GRANT: GrantState = {
+  state: 'none',
+  reason: 'no_project',
+  detail: 'клиент не назвал проект сессии — только чтение',
+};
+
+/**
+ * Приёмник журнала вызова: запись помечается проектом сессии (D-23, T8). Одно место на все
+ * пути записи — таблицы, документы, создание файлов и откаты, — а не поле в четырёх.
+ */
+export function journalOf(deps: ToolDeps): JournalSink {
+  const { project, journal } = deps;
+  return project === undefined ? journal : (record) => journal({ ...record, project });
+}
+
+/** Право записи этого вызова (D-23): реестр или разрешение проекта — одна функция ядра. */
+export function writeRight(deps: ToolDeps, resolved: ResolvedTarget): Promise<WriteRight> {
+  return authorizeWrite(resolved, () => deps.grant?.() ?? Promise.resolve(NO_GRANT));
+}
 
 /** Опции записи из разобранной операции. Вынесено: в обработчике копило сложность. */
 export function applyOptions(
   deps: ToolDeps,
   resolved: ResolvedTarget,
   operation: ReturnType<typeof parseOperation>,
+  right?: WriteRight,
 ) {
   return {
     dryRun: operation.dryRun,
     force: operation.force,
-    journal: deps.journal,
+    journal: journalOf(deps),
     journalSource: deps.journalSource,
     account: deps.account,
     alias: resolved.alias,
@@ -30,7 +55,7 @@ export function applyOptions(
     // Конверт цели (D-18): разбирается здесь, где решается запись, а не при чтении
     // реестра — битый конверт не должен ронять чтение. Судит по числу ячеек, которое
     // известно только после построения плана, поэтому колбэком.
-    authorize: envelopeJudge(resolved),
+    authorize: envelopeJudge(resolved, right),
     ...(operation.confirm === undefined ? {} : { confirm: operation.confirm }),
     ...(operation.planId === undefined ? {} : { planId: operation.planId }),
     ...(operation.expectRevision === undefined ? {} : { expectRevision: operation.expectRevision }),
@@ -44,8 +69,14 @@ export function applyOptions(
  * отказывает записи с названной причиной (`write.envelope-invalid`), а не выбирает
  * половину того, что человек имел в виду.
  */
-export function envelopeJudge(resolved: ResolvedTarget): NonNullable<RowOptions['authorize']> {
-  const envelope = parseEnvelope(resolved.entry?.auto, resolved.alias);
+export function envelopeJudge(
+  resolved: ResolvedTarget,
+  right?: WriteRight,
+): NonNullable<RowOptions['authorize']> {
+  // Свой конверт цели — подпись владельца об этом файле — сильнее общего: под разрешением
+  // проекта конверт по умолчанию подставляется только цели без `auto` (D-23).
+  const own = parseEnvelope(resolved.entry?.auto, resolved.alias);
+  const envelope = own ?? (right?.via === 'grant' ? GRANT_ENVELOPE : null);
   return (op, cellCount) => envelopeAuthorizes(envelope, op, cellCount);
 }
 

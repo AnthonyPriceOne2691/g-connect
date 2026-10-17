@@ -5,7 +5,7 @@
  */
 
 import { gcError } from './errors.js';
-import { limitOf } from './policy.js';
+import { denyByRule, limitOf } from './policy.js';
 import { lastUndoable, type JournalSource, type WriteRecord } from './journal.js';
 import type { NothingToUndoReason, UndoOptions, UndoOutcome } from './undo-types.js';
 
@@ -14,7 +14,9 @@ export function reasonFor(
   options: UndoOptions,
 ): NothingToUndoReason {
   if (options.correlationId !== undefined) return 'id_not_found';
-  return history.length === 0 ? 'journal_empty' : 'all_undone';
+  if (history.length === 0) return 'journal_empty';
+  const own = ownRecords(history, options.project).filter((r) => r.op !== 'undo');
+  return own.length === 0 ? 'only_other_projects' : 'all_undone';
 }
 
 export function nothingToUndo(
@@ -22,15 +24,19 @@ export function nothingToUndo(
   seen: number,
   correlationId: string | undefined,
 ): UndoOutcome {
-  const detail =
-    reason === 'journal_empty'
-      ? 'По этой цели журнала нет: ни одной записи через ядро не проходило.'
-      : reason === 'all_undone'
-        ? `В журнале по этой цели записей: ${seen}, и все уже откачены — возвращать нечего.`
-        : reason === 'already_undone'
-          ? `Запись ${correlationId ?? '—'} уже откачена — второй откат вернул бы состояние, ` +
-            'которого человек не выбирал. Нужна та же правка снова — сделай её заново.'
-          : `Записи с id ${correlationId ?? '—'} среди последних ${seen} по этой цели нет.`;
+  const id = correlationId ?? '—';
+  const details: Readonly<Record<NothingToUndoReason, string>> = {
+    journal_empty: 'По этой цели журнала нет: ни одной записи через ядро не проходило.',
+    all_undone: `В журнале по этой цели записей: ${seen}, и все уже откачены — возвращать нечего.`,
+    already_undone:
+      `Запись ${id} уже откачена — второй откат вернул бы состояние, которого человек не ` +
+      'выбирал. Нужна та же правка снова — сделай её заново.',
+    id_not_found: `Записи с id ${id} среди последних ${seen} по этой цели нет.`,
+    only_other_projects:
+      `В журнале по этой цели записей: ${seen}, но своих у этого проекта нет — записи других ` +
+      'проектов откатывают их сессии или владелец из терминала.',
+  };
+  const detail = details[reason];
   return {
     status: 'nothing_to_undo',
     restored: [],
@@ -90,12 +96,35 @@ export async function pickUndoRecord(
   }
   const record =
     options.correlationId === undefined
-      ? lastUndoable(history)
+      ? lastUndoable(history, ownRecords(history, options.project))
       : (history.find((r) => r.correlationId === options.correlationId) ?? null);
   if (record === null) {
     return nothingToUndo(reasonFor(history, options), history.length, options.correlationId);
   }
+  assertOwnProject(record, options.project);
   return record;
+}
+
+/** Записи, которые видит сессия проекта (D-23); вызов из терминала видит все. */
+function ownRecords(history: readonly WriteRecord[], project: string | undefined) {
+  return project === undefined ? history : history.filter((r) => r.project === project);
+}
+
+/**
+ * Запись чужого проекта, названная по id, — отказ, а не откат (X10): правка проекта A
+ * откатывается сессией A или владельцем из терминала, а не соседом, получившим её id.
+ */
+function assertOwnProject(record: WriteRecord, project: string | undefined): void {
+  if (project === undefined || record.project === project) return;
+  denyByRule(
+    'undo.own-project',
+    `Запись ${record.correlationId} сделана ${
+      record.project === undefined
+        ? 'без проекта (из терминала или до разрешений)'
+        : `из проекта ${record.project}`
+    }, а откат просит ${project}. Откатить её может сессия того проекта или владелец из ` +
+      'терминала.',
+  );
 }
 
 /** Запись это или уже готовый отказ. */
