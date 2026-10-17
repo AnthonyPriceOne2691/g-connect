@@ -1,16 +1,16 @@
 # Active delivery status
 
 - **slug:** token-touch
-- **stack:** delivery@2.01, cqg@2.56, okf@absent
+- **stack:** delivery@2.04, cqg@2.63, okf@absent
 - **class:** L
 - **kind:** feature
 - **repro_test:** n/a reason=kind=feature
 - **diagnosis:** n/a reason=kind=feature
-- **phase:** plan
+- **phase:** implement
 - **builder:** agent:claude-opus-5-5
 - **verifier:** human:anton
 - **human_ok_spec:** yes (by=human:anton, at=2026-10-17) reason=ответ «Подписываю» на вопрос с вариантами; решения владельца в спеке: ключ анклава «палец или пароль Mac», запасной ход `gc run` — да, накат контура cqg@2.63 · delivery@2.04 — до кода поставки
-- **human_ok_plan:** pending reason=план и waiver предъявлены владельцу 2026-10-17
+- **human_ok_plan:** yes (by=human:anton, at=2026-10-17) reason=ответ «Подписываю» на вопрос с вариантами: план из семи слайсов, отклонённые альтернативы в plan.md, waiver 35/1800/4
 - **shape-oracles:** cqg-deployed
 - **behavior-oracles:** tests-present (671 тест; тесты инструментов — через настоящий протокол)
 - **artifact_oracle:** scripts/probe_mcp.mjs reason=судит СОБРАННЫЙ сервер по протоколу — в CI на каждом PR и перед переключением стабильной сборки
@@ -19,6 +19,8 @@
 - **parallel_sessions:** merge-guard
 - **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
 - **blockers:** none
+- **waivers:** max_files_touched=35 max_loc_diff=1800 max_runtime_paths=4 reason=поставка цельная: шов age, хранилище токена, gc_unlock, gc seal и gc run держатся друг за друга; оценка ~1400 строк в ~28 файлах, запас — под починки живого прогона (прошлый добавил ~400 строк) — слово владельца в сессии 2026-10-17 («Подписываю» на план с этим пределом) by=human:anton at=2026-10-17
+- **new_dependency:** age@1.3.2 и age-plugin-se@0.2.1 (Homebrew, системные, не npm) reason=шифрование токена ключом Secure Enclave (D-24); поставлены по слову владельца «Ставь сам» 2026-10-17 by=human:anton
 - **runtime_paths:** src/core/token/*.ts,src/core/auth.ts,src/core/profiles.ts,src/cli/manual.ts
   <!-- расшифровка через age и age-plugin-se с окном Touch ID из дочернего процесса сервера, отзыв и вход в Google: отказ виден только живьём; список уточнит план -->
 - **irreversible_surfaces:** none reason=отзыв старого входа в Google и удаление открытого token.json восстанавливаются новым входом владельца в браузере; оба шага делает только `gc seal`, и он требует касания владельца ДО отзыва — человек в цепочке, агент до необратимого сам не дотягивается
