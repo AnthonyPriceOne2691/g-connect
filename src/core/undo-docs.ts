@@ -130,28 +130,35 @@ function paragraphViewRequests(tabId: string, snapshot: DocRangeSnapshot): DocRe
   return requests;
 }
 
-/** Откат удаления: вставка снимка на место. Предусловие — ревизия не ушла после записи. */
-async function restoreSnapshot(
-  client: DocsClient,
-  targetId: string,
-  record: WriteRecord,
-  snapshot: DocSnapshot,
-  options: UndoOptions,
-): Promise<UndoOutcome> {
-  const { tab, stored } = storedAndTab(record, snapshot);
-  assertNotMoved(record, snapshot, options, 'doc_moved_after_delete', 'удаления');
-  const paragraphs = (stored.paragraphs ?? []).length;
-  return finishDocUndo(
-    client,
-    targetId,
-    record,
-    snapshot,
-    restoreRequests(tab.tabId, stored),
-    options,
-    `Удалённое восстановлено в табе «${stored.tab}»: ${stored.endIndex - stored.startIndex} юнитов, ` +
-      `${paragraphs} абзац(ев), со стилями текста и видом абзацев (заголовки и списки — тоже).`,
-  );
+type StoredSnapshot = NonNullable<NonNullable<WriteRecord['doc']>['snapshot']>;
+
+/**
+ * Откат по снимку — одна форма на удаление и стили: пролог (снимок, живой таб, ревизия не
+ * ушла после записи) и хвост записи общие, различаются код отказа, запросы и итог. Две
+ * рукописные копии этой формы были clone-парой в DRY-снимке; владелец 2026-10-17 решил
+ * убрать её, а не узаконить.
+ */
+function snapshotUndo(
+  movedCause: string,
+  movedWhat: string,
+  build: (tab: DocTab, stored: StoredSnapshot) => { requests: DocRequest[]; done: string },
+): DocUndoForm {
+  return async (client, targetId, record, snapshot, options) => {
+    const { tab, stored } = storedAndTab(record, snapshot);
+    assertNotMoved(record, snapshot, options, movedCause, movedWhat);
+    const { requests, done } = build(tab, stored);
+    return finishDocUndo(client, targetId, record, snapshot, requests, options, done);
+  };
 }
+
+/** Откат удаления: вставка снимка на место. Предусловие — ревизия не ушла после записи. */
+const restoreSnapshot = snapshotUndo('doc_moved_after_delete', 'удаления', (tab, stored) => ({
+  requests: restoreRequests(tab.tabId, stored),
+  done:
+    `Удалённое восстановлено в табе «${stored.tab}»: ${stored.endIndex - stored.startIndex} юнитов, ` +
+    `${(stored.paragraphs ?? []).length} абзац(ев), со стилями текста и видом абзацев ` +
+    '(заголовки и списки — тоже).',
+}));
 
 /** Откат массовой замены: по снимку позиций, с конца, чтобы сдвиги не портили адреса. */
 /**
@@ -288,35 +295,19 @@ export async function finishDocUndo(
  * и удалений. Стили и вид возвращаются БЕЗУСЛОВНО (в т.ч. NORMAL_TEXT и «без списка»):
  * пропуск «обычных» значений оставил бы новый заголовок заголовком.
  */
-async function undoStyles(
-  client: DocsClient,
-  targetId: string,
-  record: WriteRecord,
-  snapshot: DocSnapshot,
-  options: UndoOptions,
-): Promise<UndoOutcome> {
-  const { tab, stored } = storedAndTab(record, snapshot);
-  assertNotMoved(record, snapshot, options, 'doc_moved_after_style', 'правки стилей');
-  const requests: DocRequest[] = [
+const undoStyles = snapshotUndo('doc_moved_after_style', 'правки стилей', (tab, stored) => ({
+  requests: [
     ...exactStyleRequests(tab.tabId, stored.startIndex, stored.runs),
     ...paragraphViewRequests(tab.tabId, stored),
-  ];
-  return finishDocUndo(
-    client,
-    targetId,
-    record,
-    snapshot,
-    requests,
-    options,
-    `Стили возвращены: ${(stored.paragraphs ?? []).length} абзац(ев), текст не тронут.`,
-  );
-}
+  ],
+  done: `Стили возвращены: ${(stored.paragraphs ?? []).length} абзац(ев), текст не тронут.`,
+}));
 
 /** Снимок «до» и живой таб записи — общий пролог откатов по снимку. */
 function storedAndTab(
   record: WriteRecord,
   snapshot: DocSnapshot,
-): { tab: DocTab; stored: NonNullable<NonNullable<WriteRecord['doc']>['snapshot']> } {
+): { tab: DocTab; stored: StoredSnapshot } {
   const doc = docOf(record);
   return { tab: tabOrConflict(snapshot, doc.tab), stored: doc.snapshot! };
 }
