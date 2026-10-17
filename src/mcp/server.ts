@@ -24,7 +24,9 @@ import { z } from 'zod';
 
 import { ensureAccessToken } from '../core/auth.js';
 import { fileJournal, fileJournalSource } from '../core/audit.js';
-import { defaultAccount } from '../core/env.js';
+import { callerProject, defaultAccount, grantKeyName } from '../core/env.js';
+import { currentGrant } from '../core/grant/grants.js';
+import { secretiveKeys } from '../core/grant/secretive.js';
 import { googleExchanger } from '../core/google/exchanger.js';
 import { GoogleDriveClient } from '../core/google/drive.js';
 import { GoogleDocsClient } from '../core/google/docs.js';
@@ -74,10 +76,20 @@ export function retryReporter(
 }
 
 /** Настоящие зависимости: Google, реестр и журнал профиля. Собираются на каждый вызов. */
+/**
+ * Проект сессии и ключи разрешения (D-23) — один раз на процесс: клиент запускает сервер
+ * на сессию, и `CLAUDE_PROJECT_DIR` за её время не меняется.
+ */
+const PROJECT = callerProject();
+const GRANT_KEYS = secretiveKeys(grantKeyName());
+
 function deps(call?: CallContext): ToolDeps {
   const onRetry = retryReporter(call?.tool ?? 'вызов');
   return {
     account: ACCOUNT,
+    ...(PROJECT === undefined ? {} : { project: PROJECT }),
+    grant: () => currentGrant(GRANT_KEYS, PROJECT, ACCOUNT),
+    grantKeys: GRANT_KEYS,
     sheets: async () => new GoogleSheetsClient({ accessToken: await token(), onRetry }),
     docs: async () => new GoogleDocsClient({ accessToken: await token(), onRetry }),
     drive: async () => new GoogleDriveClient(await token(), onRetry),

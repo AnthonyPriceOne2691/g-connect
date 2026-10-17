@@ -8,14 +8,17 @@
  *   npm run gc -- map <ссылка на таблицу> [имя листа]
  *   npm run gc -- upsert <ссылка> <лист> <ключ=значение,...> <поле=значение,...>
  *                        [--write --confirm=<код плана>]
+ *   npm run gc -- grant [open|revoke <каталог проекта> | revoke --all]
  */
 
 import { execFileSync } from 'node:child_process';
 
 import { ensureAccessToken, login } from '../core/auth.js';
-import { defaultAccount } from '../core/env.js';
+import { defaultAccount, grantKeyName } from '../core/env.js';
 import { gcError, isGcError } from '../core/errors.js';
 import { googleExchanger } from '../core/google/exchanger.js';
+import { issueGrant, listGrants, revokeGrant } from '../core/grant/grants.js';
+import { secretiveKeys } from '../core/grant/secretive.js';
 import { GoogleSheetsClient } from '../core/google/sheets.js';
 import { profileStatus } from '../core/profiles.js';
 import { buildSheetData } from '../core/sheets/map.js';
@@ -158,6 +161,49 @@ async function cmdUpsert(
     console.log('\nЭто превью. Чтобы записать — повтори с --write');
 }
 
+/**
+ * Разрешения проектов (D-23) из терминала. `npm run` запускает скрипт из корня пакета,
+ * поэтому каталог проекта называется явно — текущий каталог тут ничего не значит.
+ * Без аргументов — все разрешения машины, каждое проверено как при записи.
+ */
+async function cmdGrant(action: string | undefined, project: string | undefined): Promise<void> {
+  const keys = secretiveKeys(grantKeyName());
+  if (action === undefined) return listCommand(keys);
+  if (action === 'revoke' && project === '--all') return revokeAll(keys);
+  if ((action !== 'open' && action !== 'revoke') || project === undefined) {
+    throw gcError('bad_request', {
+      detail: 'Нужно: npm run gc -- grant [open|revoke <каталог проекта> | revoke --all]',
+    });
+  }
+  return action === 'revoke' ? revokeOne(project) : openOne(keys, project);
+}
+
+type Keys = ReturnType<typeof secretiveKeys>;
+
+async function listCommand(keys: Keys): Promise<void> {
+  const listing = await listGrants(keys, ACCOUNT);
+  if (listing.length === 0)
+    console.log('Разрешений нет: G connect не открыт ни для одного проекта.');
+  for (const g of listing) console.log(`${g.state.padEnd(14)} ${g.expires ?? '—'}  ${g.project}`);
+}
+
+async function revokeAll(keys: Keys): Promise<void> {
+  for (const g of await listGrants(keys, ACCOUNT)) await revokeGrant(g.project);
+  console.log('Все разрешения отозваны.');
+}
+
+async function revokeOne(project: string): Promise<void> {
+  console.log(
+    (await revokeGrant(project)) ? `Отозвано: ${project}` : `Разрешения не было: ${project}`,
+  );
+}
+
+async function openOne(keys: Keys, project: string): Promise<void> {
+  console.log('Приложи палец: Secretive покажет Touch ID (ожидание до 60 с)…');
+  const grant = await issueGrant(keys, project, ACCOUNT);
+  console.log(`G connect открыт для ${project} до ${grant.expires}.`);
+}
+
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   const write = args.includes('--write');
@@ -188,10 +234,14 @@ async function main(): Promise<void> {
       console.log(JSON.stringify(status, null, 2));
       return;
     }
+    case 'grant':
+      await cmdGrant(rest[0], rest[1]);
+      return;
     default:
       console.log(
         'Команды: login · status · map <ссылка> [лист] · ' +
-          'upsert <ссылка> <лист> <ключ> <значения> [--write --confirm=<код>]',
+          'upsert <ссылка> <лист> <ключ> <значения> [--write --confirm=<код>] · ' +
+          'grant [open|revoke <каталог проекта> | revoke --all]',
       );
   }
 }

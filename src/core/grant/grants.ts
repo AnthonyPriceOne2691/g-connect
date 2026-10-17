@@ -8,7 +8,7 @@
  * а проверка всегда идёт настоящим `ssh-keygen -Y verify`.
  */
 
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { profilesHome } from '../env.js';
@@ -191,4 +191,53 @@ export async function revokeGrant(project: string): Promise<boolean> {
   if (stored === 'absent') return false;
   await rm(grantFile(project), { force: true });
   return true;
+}
+
+/** Строка списка разрешений машины — для человека в терминале (`gc grant`). */
+export interface GrantListing {
+  readonly project: string;
+  readonly expires: string | null;
+  readonly state: GrantState['state'] | GrantRefusal;
+}
+
+/**
+ * Все разрешения машины: проект, срок и состояние — каждое проверено тем же путём, что
+ * при записи. Файл с чужой подписью показывается как `bad_signature`, а не как разрешение.
+ */
+export async function listGrants(
+  keys: GrantKeys,
+  account: string,
+  now: Date = new Date(),
+): Promise<GrantListing[]> {
+  let names: string[];
+  try {
+    names = (await readdir(grantsDir())).filter((name) => name.endsWith('.json'));
+  } catch {
+    return [];
+  }
+  const listing: GrantListing[] = [];
+  for (const name of names) {
+    const project = projectOf(await readFile(join(grantsDir(), name), 'utf8').catch(() => ''));
+    if (project === undefined) {
+      listing.push({ project: `(файл ${name})`, expires: null, state: 'malformed' });
+      continue;
+    }
+    const state = await currentGrant(keys, project, account, now);
+    listing.push({
+      project,
+      expires: state.state === 'granted' ? state.grant.expires : (state.expiredAt ?? null),
+      state: state.state === 'granted' ? 'granted' : state.reason,
+    });
+  }
+  return listing;
+}
+
+/** Проект из файла разрешения — только для подписи строки списка; битый файл — `undefined`. */
+function projectOf(raw: string): string | undefined {
+  try {
+    const text = (JSON.parse(raw) as { text?: unknown }).text;
+    return typeof text === 'string' ? parseGrantText(text)?.project : undefined;
+  } catch {
+    return undefined;
+  }
 }

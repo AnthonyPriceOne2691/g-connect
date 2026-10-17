@@ -28,42 +28,24 @@ import {
   currentGrant,
   grantsDir,
   issueGrant,
+  listGrants,
   revokeGrant,
   type GrantKeys,
 } from '../src/core/grant/grants.js';
 import { agentKeyName, keyNameKey, secretiveKeys } from '../src/core/grant/secretive.js';
-import { signText } from '../src/core/grant/ssh.js';
 import { GcError } from '../src/core/errors.js';
+import { KEYGEN, fileKeys, makeKey, type SoftKey } from './fixtures/grant-keys.js';
 
-const KEYGEN = '/usr/bin/ssh-keygen';
 const PROJECT_A = '/Users/someone/Documents/Ahrefs cases';
 const PROJECT_B = '/Users/someone/Documents/portfolio-site';
 const NOON = new Date(2026, 9, 17, 12, 0, 0);
 
 let keysDir: string;
-let owner: { file: string; pub: string };
-let stranger: { file: string; pub: string };
-
-function makeKey(name: string, comment: string): { file: string; pub: string } {
-  const file = join(keysDir, name);
-  execFileSync(KEYGEN, ['-q', '-t', 'ed25519', '-N', '', '-C', comment, '-f', file]);
-  return { file, pub: execFileSync(KEYGEN, ['-y', '-f', file], { encoding: 'utf8' }).trim() };
-}
-
-/** Ключи «владельца» из файла: подпись — настоящий ssh-keygen, без агента и без пальца. */
-function fileKeys(key: { file: string; pub: string }): GrantKeys {
-  return {
-    keyName: 'G connect',
-    signerKey: () => Promise.resolve(key.pub),
-    sign: async (text, _publicKey, timeoutMs) => {
-      const result = await signText(text, { file: key.file }, timeoutMs);
-      return result.code === 0 ? result.stdout : undefined;
-    },
-  };
-}
+let owner: SoftKey;
+let stranger: SoftKey;
 
 /** Агент жив, но ключа «G connect» у него нет. */
-const noKey = (key: { file: string; pub: string }): GrantKeys => ({
+const noKey = (key: SoftKey): GrantKeys => ({
   ...fileKeys(key),
   signerKey: () => Promise.resolve(undefined),
 });
@@ -91,8 +73,8 @@ const original = process.env['GCONNECT_HOME'];
 
 beforeAll(async () => {
   keysDir = await mkdtemp(join(tmpdir(), 'gconnect-keys-'));
-  owner = makeKey('owner', 'G connect@secretive.test-host');
-  stranger = makeKey('stranger', 'evil@elsewhere');
+  owner = makeKey(keysDir, 'owner', 'G connect@secretive.test-host');
+  stranger = makeKey(keysDir, 'stranger', 'evil@elsewhere');
 });
 
 beforeEach(async () => {
@@ -274,6 +256,24 @@ describe('чужой проект, чужой профиль, истёкший �
     const lastSecond = new Date(2026, 9, 17, 23, 59, 58);
     expect((await currentGrant(fileKeys(owner), PROJECT_A, 'default', lastSecond)).state).toBe(
       'granted',
+    );
+  });
+});
+
+describe('список разрешений машины (gc grant)', () => {
+  it('каждое проверено как при записи: действующее, подложенное с чужой подписью, битый файл', async () => {
+    await issueGrant(fileKeys(owner), PROJECT_A, 'default', NOON);
+    const foreign = grantText(newGrant(PROJECT_B, 'default', NOON));
+    await plant(PROJECT_B, foreign, await sign(stranger, foreign));
+    await writeFile(join(grantsDir(), 'broken.json'), '{not json');
+    const listing = await listGrants(fileKeys(owner), 'default', NOON);
+    expect(listing).toHaveLength(3);
+    expect(listing).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ project: PROJECT_A, state: 'granted' }),
+        expect.objectContaining({ project: PROJECT_B, state: 'bad_signature' }),
+        expect.objectContaining({ state: 'malformed' }),
+      ]),
     );
   });
 });

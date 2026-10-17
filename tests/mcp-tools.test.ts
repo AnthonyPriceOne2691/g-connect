@@ -119,7 +119,7 @@ const applyConfirmed = async (
 };
 
 describe('B1 — набор инструментов', () => {
-  it('ровно шесть, и это требование §3, а не совпадение', () => {
+  it('ровно семь — §3 с поправкой D-23, а не совпадение', () => {
     expect(TOOLS).toHaveLength(EXPECTED_TOOL_COUNT);
     expect(TOOLS.map((t) => t.name)).toEqual([
       'gc_targets',
@@ -128,6 +128,7 @@ describe('B1 — набор инструментов', () => {
       'gc_scan',
       'gc_apply',
       'gc_undo',
+      'gc_grant',
     ]);
   });
 

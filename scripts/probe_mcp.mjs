@@ -98,7 +98,17 @@ try {
 
   const tools = await send('tools/list', {});
   const names = (tools.result?.tools ?? []).map((t) => t.name);
-  check('инструментов ровно шесть', names.length === 6, names.join(', '));
+  // D-23: седьмой — gc_grant, право проекта, а не документ. Его действия обязаны быть в
+  // СХЕМЕ транспорта: без open агенту нечем попросить палец, без revoke — отозвать.
+  check('инструментов ровно семь', names.length === 7, names.join(', '));
+  const grantActions =
+    (tools.result?.tools ?? []).find((t) => t.name === 'gc_grant')?.inputSchema?.properties?.action
+      ?.enum ?? [];
+  check(
+    'gc_grant объявляет open, status, revoke',
+    ['open', 'status', 'revoke'].every((a) => grantActions.includes(a)),
+    grantActions.join(', '),
+  );
 
   const applySchema = (tools.result?.tools ?? []).find((t) => t.name === 'gc_apply')?.inputSchema;
   check('gc_apply объявляет confirm', applySchema?.properties?.confirm !== undefined);

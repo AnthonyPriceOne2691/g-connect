@@ -31,6 +31,7 @@ import type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
 import { applyHint, applyOptions, journalOf, maybeReport, writeRight } from './apply-support.js';
 import { applyInput, operationOf } from './apply-schema.js';
 import { parseToolInput } from './boundary.js';
+import { gcGrant, grantSummary } from './grant-tool.js';
 import { targetArg } from './target-arg.js';
 
 /** Общий разбор цели: реестр + ссылка. Здесь же решается, можно ли писать. */
@@ -103,10 +104,14 @@ export const gcTargets: ToolDefinition = {
         // живёт в warnings, срок access-токена человеку показывает `gc status`.
         ...(a.warnings.length > 0 ? { warnings: a.warnings } : {}),
       })),
+      // Право проекта (D-23) — рядом с правами целей: без него агент узнавал бы о нём по
+      // отказу записи, а человек не видел бы, до какого часа G connect открыт.
+      grant: await grantSummary(deps),
       note:
-        'Произвольная ссылка доступна только для чтения: право записи даёт реестр ' +
-        '(правило write.allowlist). Цель с конвертом (auto) пишется с первой фразы, ' +
-        'без кода плана; всё, что вне конверта, показывает план и требует код от человека.',
+        'Право записи даёт реестр (правило write.allowlist) или разрешение проекта ' +
+        '(write.grant): владелец открывает G connect касанием, gc_grant. Без него ' +
+        'произвольная ссылка — только для чтения. Цель с конвертом (auto) пишется с первой ' +
+        'фразы, без кода плана; всё, что вне конверта, показывает план и требует код от человека.',
     };
   },
 };
@@ -441,10 +446,11 @@ export const TOOLS: readonly ToolDefinition[] = [
   gcScan,
   gcApply,
   gcUndo,
+  gcGrant,
 ];
 
-/** Ровно шесть — это требование §3, а не совпадение. Тест сверяет. */
-export const EXPECTED_TOOL_COUNT = 6;
+/** Ровно семь — требование §3 с поправкой D-23 (седьмой — право, а не документ). Тест сверяет. */
+export const EXPECTED_TOOL_COUNT = 7;
 
 /**
  * Единый перехват на границе: наружу уходит payload ошибки, а не исключение и не
