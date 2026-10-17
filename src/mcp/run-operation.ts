@@ -32,7 +32,30 @@ import type { SheetData, SheetsClient } from '../core/sheets/types.js';
  */
 type Operation = Exclude<
   ReturnType<typeof parseOperation>,
-  { op: 'createSheet' | 'createDoc' | 'createFolder' }
+  {
+    op:
+      | 'createSheet'
+      | 'createDoc'
+      | 'createFolder'
+      | 'appendText'
+      | 'insertText'
+      | 'deleteParagraph'
+      | 'deleteRange'
+      | 'replaceText'
+      | 'replaceAllText'
+      | 'insertTable'
+      | 'insertTableRow'
+      | 'insertTableColumn'
+      | 'deleteTable'
+      | 'deleteTableRow'
+      | 'deleteTableColumn'
+      | 'updateTextStyle'
+      | 'setParagraphStyle'
+      | 'createParagraphBullets'
+      | 'deleteParagraphBullets'
+      | 'insertPageBreak'
+      | 'insertInlineImage';
+  }
 >;
 type Options = Parameters<typeof upsertRow>[4];
 

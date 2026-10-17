@@ -10,6 +10,30 @@
 import { z } from 'zod';
 
 import { gcError } from './errors.js';
+import { issuesDetail, unknownFields, unknownFieldsDetail } from './field-check.js';
+import { commonFields } from './op-fields.js';
+import {
+  appendTextOp,
+  createParagraphBulletsOp,
+  deleteParagraphBulletsOp,
+  deleteParagraphOp,
+  deleteRangeOp,
+  deleteTableColumnOp,
+  deleteTableOp,
+  deleteTableRowOp,
+  insertInlineImageOp,
+  insertPageBreakOp,
+  insertTableColumnOp,
+  insertTableOp,
+  insertTableRowOp,
+  insertTextOp,
+  replaceAllTextOp,
+  replaceTextOp,
+  setParagraphStyleOp,
+  updateTextStyleOp,
+} from './docs/ops.js';
+
+export * from './docs/ops.js';
 import type { CellFormat } from './sheets/types.js';
 
 /** Значение ячейки, как его может прислать клиент. */
@@ -17,26 +41,6 @@ const cellValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 
 /** Имена колонок — ключи; значения примитивны. Объект в ячейку не пишется (§8.3). */
 const rowValues = z.record(z.string().min(1), cellValue);
-
-const commonFields = {
-  /** alias реестра, ссылка или ID. */
-  target: z.string().min(1),
-  sheet: z.string().min(1).optional(),
-  /** 1-based строка заголовков, если эвристику надо переопределить. */
-  headerRow: z.number().int().positive().max(1000).optional(),
-  /** По умолчанию НЕ пишем (§11.1). */
-  dryRun: z.boolean().default(true),
-  /** Осознанное подтверждение записи в формульную или защищённую колонку. */
-  force: z.boolean().default(false),
-  /**
-   * Код плана из превью — подпись человека под КОНКРЕТНОЙ правкой (D-16). Запись без него
-   * не проходит: «пиши» без кода означает «пиши что-нибудь», а между превью и записью план
-   * мог измениться.
-   */
-  confirm: z.string().min(1).optional(),
-  /** Ревизия, на которой строилась карта: защита от гонки с живой правкой. */
-  expectRevision: z.string().min(1).optional(),
-};
 
 export const appendRowOp = z.object({
   op: z.literal('appendRow'),
@@ -266,6 +270,24 @@ export const operationSchema = z.discriminatedUnion('op', [
   createSheetOp,
   createDocOp,
   createFolderOp,
+  appendTextOp,
+  insertTextOp,
+  deleteParagraphOp,
+  deleteRangeOp,
+  replaceTextOp,
+  replaceAllTextOp,
+  insertTableOp,
+  insertTableRowOp,
+  insertTableColumnOp,
+  deleteTableOp,
+  deleteTableRowOp,
+  deleteTableColumnOp,
+  updateTextStyleOp,
+  setParagraphStyleOp,
+  createParagraphBulletsOp,
+  deleteParagraphBulletsOp,
+  insertPageBreakOp,
+  insertInlineImageOp,
 ]);
 
 export type Operation = z.infer<typeof operationSchema>;
@@ -293,7 +315,51 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'createSheet',
   'createDoc',
   'createFolder',
+  'appendText',
+  'insertText',
+  'deleteParagraph',
+  'deleteRange',
+  'replaceText',
+  'replaceAllText',
+  'insertTable',
+  'insertTableRow',
+  'insertTableColumn',
+  'deleteTable',
+  'deleteTableRow',
+  'deleteTableColumn',
+  'updateTextStyle',
+  'setParagraphStyle',
+  'createParagraphBullets',
+  'deleteParagraphBullets',
+  'insertPageBreak',
+  'insertInlineImage',
 ];
+
+/** Имена doc-операций — ЕДИНСТВЕННЫМ источником (урок L21): срез общего списка. */
+const DOC_NAMES = [
+  'appendText',
+  'insertText',
+  'deleteParagraph',
+  'deleteRange',
+  'replaceText',
+  'replaceAllText',
+  'insertTable',
+  'insertTableRow',
+  'insertTableColumn',
+  'deleteTable',
+  'deleteTableRow',
+  'deleteTableColumn',
+  'updateTextStyle',
+  'setParagraphStyle',
+  'createParagraphBullets',
+  'deleteParagraphBullets',
+  'insertPageBreak',
+  'insertInlineImage',
+] as const;
+
+/** Операции над документом — разводятся по виду цели ДО чтения таблицы. */
+export const DOC_OPERATION_NAMES: readonly OperationName[] = DOC_NAMES;
+export type DocOperation = Extract<Operation, { op: (typeof DOC_NAMES)[number] }>;
 
 /**
  * Битое регулярное выражение — отказ на границе, а не падение в середине плана (V10).
@@ -315,89 +381,58 @@ function assertUsableRegex(operation: Operation): void {
   }
 }
 
-/** Путь ошибки zod в читаемый вид: `values.Часы`, а не `[object Object]`. */
-const pathOf = (issue: z.ZodIssue): string =>
-  issue.path.length === 0 ? 'корень запроса' : issue.path.join('.');
+/** Поля операции по её имени — из схемы ядра, а не вторым списком (урок L21). */
+export function fieldsOfOperation(op: OperationName): readonly string[] {
+  return Object.keys(operationSchema.optionsMap.get(op)?.shape ?? {});
+}
+
+const unknownOperation = (named: unknown) =>
+  gcError('bad_request', {
+    detail:
+      (typeof named === 'string' && named !== ''
+        ? `Операции «${named}» нет. `
+        : 'Не указана операция. ') + `Допустимы: ${OPERATION_NAMES.join(', ')}.`,
+    cause: 'unknown_operation',
+  });
 
 /**
- * Разбор операции. Ошибка — `bad_request` с перечислением допустимых операций:
- * агент, назвавший операцию неверно, должен узнать список, а не получить «invalid union».
+ * Незнакомое поле операции — отказ с названием (`input.no-silent-drop`, D-22). `z.object`
+ * срезал бы его молча, и опечатка в необязательном поле меняла бы правку без следа.
+ */
+function assertKnownFields(input: unknown, op: OperationName): void {
+  const known = fieldsOfOperation(op);
+  const unknown = unknownFields(input, known);
+  if (unknown.length === 0) return;
+  throw gcError('bad_request', {
+    detail: unknownFieldsDetail(unknown, known, `операции ${op}`),
+    cause: 'unknown_field',
+  });
+}
+
+/**
+ * Разбор операции. Ошибка — `bad_request` с перечислением допустимого: агент, назвавший
+ * операцию или поле неверно, должен узнать список, а не получить «invalid union».
  */
 export function parseOperation(input: unknown): Operation {
+  const named = (input as { op?: unknown } | null)?.op;
+  if (typeof named !== 'string' || !OPERATION_NAMES.includes(named as OperationName)) {
+    throw unknownOperation(named);
+  }
+  assertKnownFields(input, named as OperationName);
+
   const parsed = operationSchema.safeParse(input);
   if (parsed.success) {
     assertUsableRegex(parsed.data);
     return parsed.data;
   }
-
-  const named = (input as { op?: unknown } | null)?.op;
-  const unknownOp = typeof named !== 'string' || !OPERATION_NAMES.includes(named as OperationName);
-
-  if (unknownOp) {
-    throw gcError('bad_request', {
-      detail:
-        (typeof named === 'string' && named !== ''
-          ? `Операции «${named}» нет. `
-          : 'Не указана операция. ') + `Допустимы: ${OPERATION_NAMES.join(', ')}.`,
-      cause: 'unknown_operation',
-    });
-  }
-
-  const problems = parsed.error.issues
-    .slice(0, 5)
-    .map((issue) => `${pathOf(issue)}: ${issue.message}`)
-    .join('; ');
   // «Unrecognized key fontSize» говорит, чего НЕЛЬЗЯ, и молчит о том, что можно — агент
   // после такого ответа угадывает. Список допустимых полей вида дописывается явно
   // (пример V11): узнать его иначе неоткуда, схема вида в `tools/list` вложенная.
   const aboutFormat = parsed.error.issues.some((issue) => issue.path[0] === 'format');
   throw gcError('bad_request', {
     detail:
-      `Запрос операции «${named}» не проходит проверку — ${problems}.` +
+      `Запрос операции «${named}» не проходит проверку — ${issuesDetail(parsed.error.issues)}.` +
       (aboutFormat ? ` Допустимые поля вида: ${FORMAT_FIELDS.join(', ')}.` : ''),
     cause: 'schema_violation',
   });
-}
-
-/** JSON-схема для `tools/list`: генерируется ИЗ zod, а не пишется вторым текстом. */
-export function operationJsonSchema(): Record<string, unknown> {
-  return {
-    type: 'object',
-    required: ['op', 'target'],
-    properties: {
-      op: { type: 'string', enum: [...OPERATION_NAMES], description: 'Что делать со строками' },
-      target: { type: 'string', description: 'alias реестра, ссылка на таблицу или её ID' },
-      sheet: { type: 'string', description: 'Имя листа; без него берётся первый' },
-      headerRow: { type: 'integer', minimum: 1, description: 'Переопределить строку заголовков' },
-      key: {
-        type: 'object',
-        description: 'upsertRow: ключ строки по именам колонок',
-        additionalProperties: true,
-      },
-      where: {
-        type: 'object',
-        description: 'setCells: условие отбора строк по именам колонок',
-        additionalProperties: true,
-      },
-      values: {
-        type: 'object',
-        description: 'Что записать: имена колонок → значения',
-        additionalProperties: true,
-      },
-      dryRun: {
-        type: 'boolean',
-        default: true,
-        description: 'true (по умолчанию) — вернуть план, ничего не записывая',
-      },
-      force: {
-        type: 'boolean',
-        default: false,
-        description: 'Осознанно писать в формульную или защищённую колонку',
-      },
-      expectRevision: {
-        type: 'string',
-        description: 'Ревизия из gc_read: запись отклоняется, если таблица изменилась',
-      },
-    },
-  };
 }

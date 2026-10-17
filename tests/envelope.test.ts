@@ -23,6 +23,7 @@ import {
 const envelope = (over: Partial<AutoEnvelope> = {}): AutoEnvelope => ({
   ops: ['upsertRow', 'setCells', 'formatCells', 'appendRow'],
   maxCells: DEFAULT_MAX_CELLS,
+  maxChars: 1000,
   ...over,
 });
 
@@ -58,6 +59,23 @@ describe('K10 — что вообще нельзя положить в конв�
       'autoFill',
       'duplicateSheet',
       'createFile',
+      // Документы (уровень 3): вставки добавляют (откат удаляет ровно их), точечная
+      // замена в одном абзаце обратима снимком и масштаб виден в превью.
+      'appendText',
+      'insertText',
+      'replaceText',
+      // Табличные вставки: пустая структура, откат удаляет её, пока она пуста.
+      'insertTable',
+      'insertTableRow',
+      'insertTableColumn',
+      // Стили обратимы снимком прежних полей; текст не трогают вовсе.
+      'updateTextStyle',
+      'setParagraphStyle',
+      'createParagraphBullets',
+      'deleteParagraphBullets',
+      // Объекты: один юнит, откат удаляет вставленное.
+      'insertPageBreak',
+      'insertInlineImage',
     ]);
     // В конверте только добавляющее и обратимое: ни одного удаления, ни перемещения,
     // ни сортировки, ни вырезания — они уничтожают или перемешивают.

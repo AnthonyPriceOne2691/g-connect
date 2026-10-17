@@ -227,25 +227,68 @@ async function standingWrites(
   return history.filter((r) => r.op !== 'undo' && !undone.has(r.correlationId));
 }
 
+/** Чем кончилось подтверждение разрушающей правки — общий вердикт листов и документов. */
+export type NamedVerdict =
+  'confirmed' | 'none' | 'not_named' | 'foreign_code' | 'plan_missing' | 'plan_stale';
+
 /**
- * Названо ли в подтверждении то, что правим (D-20).
+ * Подтверждение разрушающей правки (D-20 с поправкой 2026-10-01).
  *
- * Нормализация перечислена, а не «умная»: регистр, кавычки любых видов, повторные
- * пробелы. Совпадением считается ВХОЖДЕНИЕ имени — «да, удаляю „AutoLink Platform“»
- * проходит, «да» нет. Код плана принимается тоже: у вызовов без превью названия нет.
+ * Фраза человека с названием предмета принимается ТОЛЬКО вместе с кодом плана, который
+ * агент берёт из показанного превью: фраза — подпись, код — привязка к экземпляру плана.
+ * Без привязки повтор «да, заменяю Fluminense» сделал массовую замену второй раз
+ * («Fluminense FC FC», находка читателя 2026-10-01): предмет называет правку, а не план.
+ * Код плана один по-прежнему подтверждает сам — у вызовов без превью названия нет.
+ *
+ * Фраза НАЗЫВАЕТ ПРЕДМЕТ (`namesSubject`) — одно правило для таблиц и документов (поправка
+ * 2026-10-02, решение владельца): «да, удаляю „AutoLink Platform“» проходит, «да» нет.
  */
-function namesTheSubject(confirm: string, token: string, code: string | null): boolean {
-  const normalized = normalizeConfirm(confirm);
-  if (code !== null && normalized === normalizeConfirm(code)) return true;
-  return normalized.includes(normalizeConfirm(token));
+export function namedConfirmVerdict(
+  given: string | undefined,
+  planId: string | undefined,
+  token: string,
+  code: string | null,
+): NamedVerdict {
+  if (given === undefined) return 'none';
+  const same = (value: string) =>
+    code !== null && normalizeConfirm(value) === normalizeConfirm(code);
+  if (same(given)) return 'confirmed';
+  if (looksLikePlanCode(given)) return 'foreign_code';
+  if (!namesSubject(given, token)) return 'not_named';
+  if (planId === undefined) return 'plan_missing';
+  return same(planId) ? 'confirmed' : 'plan_stale';
 }
 
-function normalizeConfirm(value: string): string {
+/**
+ * Нормализация перечислена, а не «умная»: регистр, «ё» как «е», знаки препинания и кавычки
+ * любых видов — пробел, повторные пробелы — один. До 2026-10-02 знаки препинания считались,
+ * и человек обязан был повторить двоеточие из текста абзаца буквально.
+ */
+export function normalizeConfirm(value: string): string {
   return value
     .toLowerCase()
-    .replace(/[«»"'`„“”]/g, '')
-    .replace(/\s+/g, ' ')
+    .replace(/ё/g, 'е')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
+}
+
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Фраза человека называет предмет правки (D-20, поправка 2026-10-02): предмет входит во
+ * фразу с НАЧАЛА слова — «Иванов» называется и «Ивановым», но не «заИванов». Число и короткий
+ * предмет — целым словом: строку «1» не называет «удаляю 12». Глагол не нужен: экземпляр
+ * правки держит код плана.
+ */
+export function namesSubject(phrase: string, subject: string): boolean {
+  const wanted = normalizeConfirm(subject);
+  if (wanted === '') return false;
+  // Короткий предмет — целым словом: колонку «C» называет «удаляю колонку C», но не
+  // «да, confirm». Число — тоже целиком.
+  const short = wanted.replace(/ /g, '').length < 3;
+  const tail = short || /\p{N}$/u.test(wanted) ? '(?![\\p{L}\\p{N}])' : '';
+  const pattern = `(?<![\\p{L}\\p{N}])${escapeRegExp(wanted)}${tail}`;
+  return new RegExp(pattern, 'u').test(normalizeConfirm(phrase));
 }
 
 /**
@@ -260,41 +303,60 @@ function namedConfirmOutcome(
   options: RowOptions,
 ): ApplyOutcome | null {
   const token = base.structural?.confirmToken ?? '';
-  const code = base.planId;
-  const given = options.confirm;
-  if (given !== undefined && namesTheSubject(given, token, code)) return null;
+  const phrase = base.structural?.confirmPhrase ?? token;
+  const verdict = namedConfirmVerdict(options.confirm, options.planId, token, base.planId);
+  if (verdict === 'confirmed') return null;
 
-  // Чужой код — это РАСХОЖДЕНИЕ, а не отсутствие подтверждения, и говорить о нём надо
-  // по-разному. Живой прогон 2026-09-04: разрушающий путь на код `ffffff` отвечал
-  // «одного „да“ недостаточно» человеку, который «да» не говорил, — а на неразрушающем
-  // пути `plan_mismatch` в это же время работал правильно.
-  const mismatch = given !== undefined && looksLikePlanCode(given);
+  // Чужой код и устаревший план — это РАСХОЖДЕНИЕ, а не отсутствие подтверждения, и
+  // говорить о нём надо по-разному (живой прогон 2026-09-04: на код `ffffff` разрушающий
+  // путь отвечал «одного „да“ недостаточно» человеку, который «да» не говорил).
+  const mismatch = verdict === 'foreign_code' || verdict === 'plan_stale';
   return {
     status: mismatch ? 'plan_mismatch' : 'confirm_required',
     ...base,
-    notes: [...base.notes, confirmNote(base, given, mismatch)],
+    notes: [
+      ...base.notes,
+      namedConfirmNote(verdict, phrase, base.planId, options.confirm, options.planId),
+    ],
     revisionAfter: null,
   };
 }
 
-/** Текст отказа: он разный для чужого кода, для «не назвал предмет» и для «не сказал ничего». */
-function confirmNote(
-  base: Omit<ApplyOutcome, 'status' | 'revisionAfter'>,
+/**
+ * Текст отказа по вердикту — общий для листов и документов: чужой код, устаревший план,
+ * фраза без кода плана, «не назвал предмет» и «не сказал ничего» звучат по-разному.
+ */
+export function namedConfirmNote(
+  verdict: Exclude<NamedVerdict, 'confirmed'>,
+  phrase: string,
+  code: string | null,
   given: string | undefined,
-  mismatch: boolean,
+  planId: string | undefined,
 ): string {
-  const phrase = base.structural?.confirmPhrase ?? base.structural?.confirmToken ?? '';
-  const code = base.planId ?? '—';
-  if (mismatch) {
-    return (
-      `Подтверждён код ${given ?? ''}, а у этого плана код ${code}. Записи не было. ` +
-      `Эта правка разрушающая: подтверди её, назвав предмет — «${phrase}» — или кодом плана ниже.`
-    );
+  const shown = code ?? '—';
+  const how =
+    `подтверди, назвав предмет: «${phrase}» — фраза человека идёт в confirm, а код плана ` +
+    `${shown} из этого превью в planId (его прикладываешь ты), — или одним кодом плана.`;
+  switch (verdict) {
+    case 'foreign_code':
+      return `Подтверждён код ${given ?? ''}, а у этого плана код ${shown}. Записи не было. Эта правка разрушающая: ${how}`;
+    case 'plan_stale':
+      return (
+        `Фраза названа, но план изменился с превью (код ${planId ?? ''} → ${shown}): правку ` +
+        'уже записали или документ правили. Записи не было. Покажи человеку новый план — ' +
+        `повтор прежней фразы второй правки не делает; ${how}`
+      );
+    case 'plan_missing':
+      return (
+        'Фраза названа, но к ней не приложен код плана из превью, которое видел человек. ' +
+        `Записи не было: фраза без привязки к плану при повторе сделала бы правку второй раз; ${how}`
+      );
+    case 'not_named':
+      return `Записи не было. «${given ?? ''}» предметом правки не называет; ${how}`;
+    case 'none':
+      return `Записи не было. Подтверждения не было вовсе; ${how}`;
   }
-  const what =
-    given === undefined ? 'Подтверждения не было вовсе' : `«${given}» предметом правки не называет`;
-  return `Записи не было. Подтверди правку, назвав её предмет: «${phrase}» (или кодом плана ${code}). ${what}.`;
 }
 
 /** Похоже на код плана: шесть hex. Нужно, чтобы отличить чужой код от «да». */
-const looksLikePlanCode = (value: string): boolean => /^[0-9a-f]{6}$/i.test(value.trim());
+export const looksLikePlanCode = (value: string): boolean => /^[0-9a-f]{6}$/i.test(value.trim());

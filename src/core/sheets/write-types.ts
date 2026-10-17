@@ -7,12 +7,21 @@
 import type { JournalSink, JournalSource, StructuralKind } from '../journal.js';
 import type { ResolveOptions } from '../resolver.js';
 import type { CellFormat, CellValue, SheetProperties } from './types.js';
+import type { DocOperationKind } from '../docs/types.js';
+
+export type { DocOperationKind };
 
 export type RowValues = Readonly<Record<string, unknown>>;
 
 /** Операции записи. Имя типа нужно и охранникам, и журналу. */
 export type OperationKind =
-  'appendRow' | 'upsertRow' | 'setCells' | 'formatCells' | 'findReplace' | StructuralKind;
+  | 'appendRow'
+  | 'upsertRow'
+  | 'setCells'
+  | 'formatCells'
+  | 'findReplace'
+  | StructuralKind
+  | DocOperationKind;
 
 /**
  * Структурная часть плана (D-19): превью правки геометрии описывает ПОЗИЦИИ, а не ячейки.
@@ -183,6 +192,11 @@ export interface RowOptions extends ResolveOptions {
   readonly force?: boolean;
   /** Код плана из превью — подпись человека под этой правкой (D-16). */
   readonly confirm?: string;
+  /**
+   * Код плана, который агент прикладывает к ФРАЗЕ человека у разрушающих правок (поправка
+   * D-20, 2026-10-01): фраза — подпись, код — привязка к показанному плану.
+   */
+  readonly planId?: string;
   /**
    * Судья разрешения (D-18): разрешает ли конверт цели эту операцию на столько ячеек.
    * Колбэком, как `readRevision`: число ячеек известно только после построения плана, а

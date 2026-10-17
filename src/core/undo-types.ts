@@ -9,7 +9,12 @@
 import type { JournalSink } from './journal.js';
 import type { CellFormat } from './sheets/types.js';
 
-export type NothingToUndoReason = 'journal_empty' | 'all_undone' | 'id_not_found';
+export type NothingToUndoReason =
+  | 'journal_empty'
+  | 'all_undone'
+  | 'id_not_found'
+  /** Запись по id уже откачена: второй откат вернул бы состояние, которого не выбирали. */
+  | 'already_undone';
 
 export interface UndoOptions {
   readonly account?: string;
@@ -82,4 +87,10 @@ export interface UndoOutcome {
    * вернув не всё (урок L5).
    */
   readonly notRestored?: readonly string[];
+  /**
+   * Что вернул откат в ДОКУМЕНТЕ: «вставленный абзац удалён», «текст восстановлен со
+   * стилями». Отдельным полем по той же причине, что `structureUndone`: у текстовой
+   * правки нет ячеек, и молчать о сделанном нельзя (урок L5).
+   */
+  readonly docUndone?: string;
 }

@@ -8,8 +8,105 @@
 
 import { z } from 'zod';
 
-import { OPERATION_NAMES, type OperationName } from '../core/ops.js';
+import {
+  OPERATION_NAMES,
+  parseOperation,
+  setParagraphStyleOp,
+  type Operation,
+  type OperationName,
+} from '../core/ops.js';
 import { targetArg } from './target-arg.js';
+
+/**
+ * Поля операций над документом (уровень 3).
+ *
+ * Живой прогон 2026-10-02 через протокол: ни одна правка документа не доходила до ядра.
+ * SDK MCP собирает из этой схемы `z.object` и молча выбрасывает незнакомые ключи, а
+ * doc-полей здесь не было вовсе — `tab`, `text`, `uri` терялись по дороге, и ядро
+ * отвечало «text: Required» на запрос, где текст был. Тесты молчали: они зовут обработчик
+ * напрямую, мимо схемы транспорта, а проба сверяла с ядром только ИМЕНА операций (L21 —
+ * тот же класс, что девять операций из двадцати одной). Оракул теперь сверяет ПОЛЯ:
+ * `tests/mcp-transport.test.ts` и `probe_mcp.mjs`.
+ *
+ * Типы здесь нестрогие намеренно, как у табличных полей: судит ядро, и его отказ —
+ * `bad_request` с понятным текстом, а отказ транспорта пришёл бы в формате SDK.
+ * Перечисление вида абзаца берётся из ядра — список значений в двух местах разъехался бы.
+ */
+const docFields = {
+  tab: z.string().min(1).optional().describe('Документ: таб по заголовку; без него — единственный'),
+  text: z.string().min(1).optional().describe('appendText/insertText: текст НОВОГО абзаца'),
+  afterHeading: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'appendText: дописать в конец РАЗДЕЛА с этим заголовком (граница — следующий ' +
+        'заголовок того же или старшего уровня); без него — в конец таба',
+    ),
+  uri: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'insertInlineImage: https-URL, доступный Google (он скачивает файл сам); локальный ' +
+        'путь и file:// отклоняются до обращения к сети',
+    ),
+  style: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe(
+      'updateTextStyle: bold, italic, underline, strikethrough, link (URL), fontSize ' +
+        '(6–96), color #RRGGBB — частичная правка, остальное не сбрасывается',
+    ),
+  namedStyle: setParagraphStyleOp.shape.namedStyle
+    .optional()
+    .describe('setParagraphStyle: вид абзаца — обычный текст или заголовок'),
+  rows: z.number().int().positive().optional().describe('insertTable: число строк (1–50)'),
+  table: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Таблица документа по номеру из карты (mode=map)'),
+  tableWithCell: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Таблица документа по тексту любой её ячейки — вместо table'),
+  rowWithCell: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('insertTableRow/deleteTableRow: строка таблицы по тексту её ячейки'),
+  rowIndex: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('insertTableRow/deleteTableRow: строка таблицы по номеру, с 1'),
+  columnTitle: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('insertTableColumn/deleteTableColumn: колонка таблицы по тексту ячейки шапки'),
+  columnIndex: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('insertTableColumn/deleteTableColumn: колонка таблицы по номеру, с 1'),
+  right: z
+    .boolean()
+    .optional()
+    .describe('insertTableColumn: правее колонки-якоря (по умолчанию да)'),
+  startIndex: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('deleteRange: начало диапазона — запасной путь, индексы едут при каждой правке'),
+  endIndex: z.number().int().positive().optional().describe('deleteRange: конец диапазона'),
+};
 
 export const applyInput = {
   /**
@@ -35,18 +132,25 @@ export const applyInput = {
     .record(z.string(), z.unknown())
     .optional()
     .describe(
-      'Условие отбора строк: им адресуют правку setCells, formatCells, findReplace, ' +
-        'insertRows, deleteRows и moveRows. Ключ строки или значение любой колонки; ' +
-        'пустое условие у удаления и перемещения отклоняется',
+      'Таблица: условие отбора строк для setCells, formatCells, findReplace, insertRows, ' +
+        'deleteRows и moveRows — ключ строки или значение любой колонки; пустое условие у ' +
+        'удаления и перемещения отклоняется. Документ: селектор абзаца, ровно один ключ из ' +
+        'paragraphIndex (№ из mode=map), textStartsWith, textContains, firstParagraph, ' +
+        'lastParagraph',
     ),
   values: z
     .record(z.string(), z.unknown())
     .optional()
     .describe('Имена колонок → значения (для записи; formatCells их не требует)'),
+  // Два смысла у одного имени: список колонок у таблицы и число колонок у новой таблицы
+  // документа. Только список — и `insertTable` отклонялся бы транспортом до ядра.
   columns: z
-    .array(z.string().min(1))
+    .union([z.array(z.string().min(1)), z.number().int().positive()])
     .optional()
-    .describe('formatCells: имена колонок, чей вид правим'),
+    .describe(
+      'formatCells/findReplace: имена колонок, чей вид или текст правим; insertTable: ' +
+        'число колонок новой таблицы (1–10)',
+    ),
   format: z
     .record(z.string(), z.unknown())
     .optional()
@@ -57,17 +161,27 @@ export const applyInput = {
     .boolean()
     .optional()
     .describe('formatCells: заодно поправить ячейку заголовка этих колонок'),
-  find: z.string().min(1).optional().describe('findReplace: что искать'),
+  find: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('findReplace, replaceText, replaceAllText: что искать'),
   count: z
     .number()
     .int()
     .positive()
     .optional()
-    .describe('insertRows/insertColumns: сколько вставить (по умолчанию 1)'),
+    .describe(
+      'insertRows/insertColumns: сколько вставить (по умолчанию 1); стили документа: ' +
+        'сколько абзацев подряд от якоря where (по умолчанию 1)',
+    ),
   below: z
     .boolean()
     .optional()
-    .describe('insertRows/insertColumns: вставить ниже (правее) якоря, а не выше'),
+    .describe(
+      'insertRows/insertColumns: вставить ниже (правее) якоря, а не выше; ' +
+        'insertTableRow: ниже строки-якоря (по умолчанию да)',
+    ),
   before: z
     .record(z.string(), z.unknown())
     .optional()
@@ -96,7 +210,10 @@ export const applyInput = {
       'Колонка по ИМЕНИ. Её едят insertColumns, deleteColumns, sortRange, copyRange, ' +
         'cutRange и autoFill',
     ),
-  replace: z.string().optional().describe('findReplace: на что заменить'),
+  replace: z
+    .string()
+    .optional()
+    .describe('findReplace, replaceText, replaceAllText: на что заменить'),
   matchCase: z.boolean().optional().describe('findReplace: учитывать регистр'),
   matchEntireCell: z.boolean().optional().describe('findReplace: совпадение по всей ячейке'),
   searchByRegex: z
@@ -114,9 +231,36 @@ export const applyInput = {
         'фраза с НАЗВАНИЕМ предмета правки («удаляю строку AutoLink Platform»). ' +
         'Одного «да» недостаточно',
     ),
+  planId: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Код плана из превью, которое видел человек. У разрушающих правок его прикладываешь ' +
+        'ТЫ к фразе человека в confirm: фраза — подпись, код — привязка к показанному плану ' +
+        '(повтор фразы после записи второй правки не делает)',
+    ),
   expectRevision: z
     .string()
     .min(1)
     .optional()
     .describe('Ревизия для вызовов БЕЗ превью (CLI, раннер): у превью её несёт код плана'),
+  ...docFields,
 };
+
+/**
+ * Поля, которые знает только транспорт: ядру их не передают. Ядро отклоняет незнакомое
+ * поле с названием (D-22), поэтому всё, что принадлежит инструменту, а не операции,
+ * снимается здесь, в одном месте.
+ */
+export const TRANSPORT_ONLY_FIELDS = ['report'] as const;
+
+/** Запрос `gc_apply` → операция ядра: без полей транспорта, со строгим разбором ядра. */
+export function operationOf(args: Record<string, unknown>): Operation {
+  const own = Object.fromEntries(
+    Object.entries(args).filter(
+      ([key]) => !(TRANSPORT_ONLY_FIELDS as readonly string[]).includes(key),
+    ),
+  );
+  return parseOperation(own);
+}

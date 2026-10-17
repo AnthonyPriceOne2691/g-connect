@@ -124,7 +124,7 @@ describe('вход целиком', () => {
       },
     });
     expect(shown).toContain('accounts.google.com');
-    expect(result.scopes).toHaveLength(4);
+    expect(result.scopes).toEqual([...MVP_SCOPES]);
     expect((await readToken())?.refresh_token).toBe('r');
     expect(ex.calls).toContain('exchange:C');
   });

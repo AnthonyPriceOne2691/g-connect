@@ -32,6 +32,7 @@ export function applyOptions(
     // известно только после построения плана, поэтому колбэком.
     authorize: envelopeJudge(resolved),
     ...(operation.confirm === undefined ? {} : { confirm: operation.confirm }),
+    ...(operation.planId === undefined ? {} : { planId: operation.planId }),
     ...(operation.expectRevision === undefined ? {} : { expectRevision: operation.expectRevision }),
     ...(resolved.entry?.aliases === undefined ? {} : { aliases: resolved.entry.aliases }),
     ...(resolved.entry?.sheet === undefined ? {} : { registrySheet: resolved.entry.sheet }),
@@ -43,7 +44,7 @@ export function applyOptions(
  * отказывает записи с названной причиной (`write.envelope-invalid`), а не выбирает
  * половину того, что человек имел в виду.
  */
-function envelopeJudge(resolved: ResolvedTarget): NonNullable<RowOptions['authorize']> {
+export function envelopeJudge(resolved: ResolvedTarget): NonNullable<RowOptions['authorize']> {
   const envelope = parseEnvelope(resolved.entry?.auto, resolved.alias);
   return (op, cellCount) => envelopeAuthorizes(envelope, op, cellCount);
 }
@@ -61,9 +62,10 @@ export function applyHint(outcome: ApplyOutcome): string | undefined {
   ) {
     return (
       'Записи не было. Эта правка разрушающая: покажи человеку план целиком и попроси ' +
-      `подтвердить НАЗВАНИЕМ предмета — «${phrase}». Одного «да» ядро не примет. Код плана ` +
-      `(${outcome.planId ?? '—'}) тоже подойдёт, но название человеку понятнее. Придумывать ` +
-      'подтверждение за человека нельзя.'
+      `подтвердить НАЗВАНИЕМ предмета — «${phrase}». Одного «да» ядро не примет. В вызов: ` +
+      `фраза человека — в confirm, код плана ${outcome.planId ?? '—'} этого превью — в planId ` +
+      '(его прикладываешь ты: фраза без привязки к плану при повторе сделала бы правку второй ' +
+      'раз). Придумывать подтверждение за человека нельзя.'
     );
   }
   if (outcome.status === 'ok') {

@@ -12,15 +12,16 @@
 
 import { z } from 'zod';
 
-import { parseEnvelope } from '../core/envelope.js';
+import { envelopeSummary } from './envelope-view.js';
 import { gcError, isGcError } from '../core/errors.js';
 import type { SearchQuery } from '../core/google/drive.js';
-import { operationJsonSchema, parseOperation } from '../core/ops.js';
 import { runOperation } from './run-operation.js';
 import { runCreate } from './run-create.js';
-import { limitOf, policyText, policyRules } from '../core/policy.js';
+import { assertTargetKind, isDocOperation, runDocApply, runDocUndo } from './run-doc-operation.js';
+import { asData, limitOf, policyText, policyRules } from '../core/policy.js';
 import { listProfiles, profileStatus } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
+import { readDoc } from './read-doc.js';
 import type { ApplyOutcome } from '../core/sheets/rows.js';
 import { assertWritable, resolveTarget, type RegistryEntry } from '../core/targets.js';
 import { undoLast } from '../core/undo.js';
@@ -28,7 +29,8 @@ import { undoLast } from '../core/undo.js';
 export type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
 import type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
 import { applyHint, applyOptions, maybeReport } from './apply-support.js';
-import { applyInput } from './apply-schema.js';
+import { applyInput, operationOf } from './apply-schema.js';
+import { parseToolInput } from './boundary.js';
 import { targetArg } from './target-arg.js';
 
 /** Общий разбор цели: реестр + ссылка. Здесь же решается, можно ли писать. */
@@ -67,24 +69,6 @@ const readSheet = async (deps: ToolDeps, target: string, sheet?: string, headerR
   return { resolved, client, data };
 };
 
-/**
- * Конверт для ответа `gc_targets`: что разрешено с первой фразы. Битый конверт не роняет
- * список целей — он назван строкой, потому что «почему по этой цели опять просят код»
- * человек должен читать здесь, а не выяснять записью.
- */
-function envelopeSummary(
-  raw: unknown,
-  alias: string,
-): { readonly ops: readonly string[]; readonly maxCells: number } | string | null {
-  try {
-    const envelope = parseEnvelope(raw, alias);
-    return envelope === null ? null : { ops: envelope.ops, maxCells: envelope.maxCells };
-  } catch (error) {
-    const detail = (error as { payload?: { detail?: string } }).payload?.detail;
-    return detail ?? 'Конверт написан неверно: запись идёт через план и код.';
-  }
-}
-
 export const gcTargets: ToolDefinition = {
   name: 'gc_targets',
   title: 'Доступные цели',
@@ -107,7 +91,7 @@ export const gcTargets: ToolDefinition = {
         // Конверт цели (D-18) виден там же, где права: иначе агент узнавал бы о нём
         // только по факту записи, а человек — никогда. Битый конверт называется здесь
         // же — это ответ на «почему по этой цели просят код».
-        auto: envelopeSummary(t.auto, t.alias),
+        auto: envelopeSummary(t.auto, t.alias, t.type),
       })),
       accounts: accounts.map((a) => ({
         account: a.account,
@@ -129,24 +113,50 @@ export const gcTargets: ToolDefinition = {
 
 const readInput = {
   target: targetArg,
-  mode: z.enum(['map', 'values']).default('map'),
-  sheet: z.string().min(1).optional().describe('Имя листа; без него берётся первый'),
-  headerRow: z.number().int().positive().optional().describe('Переопределить строку шапки'),
-  limit: z.number().int().positive().max(5000).optional().describe('Сколько строк вернуть'),
+  mode: z.enum(['map', 'values', 'text']).default('map'),
+  sheet: z.string().min(1).optional().describe('Таблица: имя листа; без него берётся первый'),
+  headerRow: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Таблица: переопределить строку шапки'),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(5000)
+    .optional()
+    .describe('Сколько строк или абзацев вернуть'),
+  tab: z.string().min(1).optional().describe('Документ: таб по заголовку; без него — единственный'),
+  fromParagraph: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Документ, mode=text: с какого № абзаца читать (номера — из mode=map)'),
 };
 
 export const gcRead: ToolDefinition = {
   name: 'gc_read',
   title: 'Прочитать документ или таблицу',
   description:
-    'Начинай отсюда. mode=map даёт дешёвую карту: листы, границы данных, имена колонок с ' +
-    'типами и допустимыми значениями, примеры строк и ПРЕДУПРЕЖДЕНИЯ (шапка выбрана ' +
-    'неуверенно, на листе два блока, объединённые ячейки). mode=values читает строки.',
+    'Начинай отсюда. mode=map даёт дешёвую карту и ПРЕДУПРЕЖДЕНИЯ: у таблицы — листы, ' +
+    'границы данных, имена колонок с типами и допустимыми значениями; у документа — табы, ' +
+    'оглавление с № абзацев и таблицы. mode=values читает строки таблицы, mode=text — ' +
+    'абзацы документа.',
   input: readInput,
   async handle(args, deps) {
     // Обработчик разбирает вход САМ: схема транспорта не единственная граница —
     // тесты и раннер вызывают инструменты напрямую, и там валидировать больше некому.
     const input = z.object(readInput).parse(args);
+    const resolved = await resolve(deps, input.target);
+    if (resolved.type === 'doc') return readDoc(deps, resolved.id, input);
+    if (input.mode === 'text') {
+      throw gcError('bad_request', {
+        detail: 'mode=text читает абзацы документа. У таблицы строки читает mode=values.',
+      });
+    }
     const { data } = await readSheet(deps, input.target, input.sheet, input.headerRow);
 
     if (input.mode === 'values') {
@@ -160,7 +170,8 @@ export const gcRead: ToolDefinition = {
         sheet: data.map.sheet,
         headerRow: data.map.headerRow,
         columns: data.map.columns.map((c) => c.name),
-        rows: withData.slice(0, limit),
+        // Содержимое — ДАННЫЕ с пометкой источника (правило content.is-data).
+        rows: asData(`таблица ${resolved.id}, лист «${data.map.sheet}»`, withData.slice(0, limit)),
         truncated: withData.length > limit,
         warnings: data.map.warnings,
       };
@@ -276,8 +287,11 @@ export const gcApply: ToolDefinition = {
     'dryRun=false. Неизвестная колонка или значение вне списка допустимых дают ' +
     'status=needs_clarification с вариантами: спроси, не угадывай.',
   input: applyInput,
+  // Вход судит ядро (`operationOf`): неизвестная операция, поля НАЗВАННОЙ операции, типы.
+  // Общая схема `applyInput` — для `tools/list`, чтобы модель видела поля, а не для суда.
+  parseInput: (args) => args,
   async handle(args, deps) {
-    const operation = parseOperation(args);
+    const operation = operationOf(args);
 
     // Право проверяется ДО любого обращения к Google. Порядок не косметика: при
     // обратном порядке запрос на запись в чужой файл сначала лез в сеть, и человек
@@ -295,6 +309,13 @@ export const gcApply: ToolDefinition = {
       operation.op === 'createFolder'
     ) {
       return runCreate(operation, resolved, deps);
+    }
+
+    // Вид цели решает путь ДО чтения (P22): doc-операции идут в Docs API, и табличная
+    // операция по документу отклоняется здесь, а не «файл не найден» из чужого API.
+    assertTargetKind(operation, resolved);
+    if (isDocOperation(operation)) {
+      return runDocApply(operation, resolved, deps);
     }
 
     const client = await deps.sheets();
@@ -357,6 +378,9 @@ function undoHint(outcome: Awaited<ReturnType<typeof undoLast>>): string | undef
     ...(values === 0 ? [] : [`значения в ${values} ячейк(ах)`]),
     ...(formats === 0 ? [] : [`вид ${formats} ячейк(и)`]),
     ...(outcome.structureUndone === undefined ? [] : [outcome.structureUndone]),
+    // У отката документа ячеек нет: без этого поля подсказка велела агенту сказать
+    // «вернулось — ничего» сразу после удалённой вставки (живой прогон 2026-10-02, LR3-6).
+    ...(outcome.docUndone === undefined ? [] : [outcome.docUndone.replace(/\.$/, '')]),
   ];
   const what = parts.length === 0 ? 'ничего: список возвращённого пуст' : parts.join('; ');
   const not =
@@ -378,6 +402,14 @@ export const gcUndo: ToolDefinition = {
     const input = z.object(undoInput).parse(args);
     const resolved = await resolve(deps, input.target);
     assertWritable(resolved);
+    if (resolved.type === 'doc') {
+      const outcome = await runDocUndo(deps, resolved, input);
+      return {
+        ...outcome,
+        target: { id: resolved.id, alias: resolved.alias },
+        hint: undoHint(outcome),
+      };
+    }
     const client = await deps.sheets();
     const outcome = await undoLast(client, resolved.id, deps.journalSource, {
       account: deps.account,
@@ -423,7 +455,7 @@ export async function runTool(
   deps: ToolDeps,
 ): Promise<ToolResult> {
   try {
-    return { ok: true, data: await definition.handle(args, deps) };
+    return { ok: true, data: await definition.handle(parseToolInput(definition, args), deps) };
   } catch (error) {
     const gc = isGcError(error)
       ? error
@@ -444,7 +476,5 @@ export function serverInstructions(): string {
     '---',
     `Машинная часть правил: ${String(rules.length)} шт., исполняется ядром независимо от того,`,
     'прочитаны ли они. Полный список — ресурс policy://rules.',
-    '',
-    `Схема операции gc_apply: ${JSON.stringify(operationJsonSchema().required)}.`,
   ].join('\n');
 }

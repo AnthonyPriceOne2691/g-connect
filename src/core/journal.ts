@@ -6,6 +6,7 @@
  * системы, а гейт `di-indirection` был бы прав, что зависимость добывается, а не даётся.
  */
 
+import type { DocOperationKind, DocRangeSnapshot, DocTextRun } from './docs/types.js';
 import type { CellFormat, SheetProperties } from './sheets/types.js';
 
 export interface JournalChange {
@@ -84,6 +85,61 @@ export interface SnapshotCell {
  * операция, чей снимок в бюджет не влез, обязана отказать ДО записи, а не записаться
  * необратимо.
  */
+export interface DocWriteDetail {
+  readonly tab: string;
+  /** Диапазон, который заняла правка (юниты ПОСЛЕ записи) — его откат и удаляет/сверяет. */
+  readonly startIndex: number;
+  readonly endIndex: number;
+  /** Снимок «до» для удалений и замен; у вставки его нет — откат удаляет вставленное. */
+  readonly snapshot?: DocRangeSnapshot;
+  /**
+   * Что фактически встало в документ (вставки). Охранник отката сверяет ЭТО с текущим
+   * текстом диапазона: правленное вставленное откатывать нельзя — унесёт чужое (P4).
+   */
+  readonly inserted?: string;
+  /**
+   * Массовая замена: каждое вхождение — что занимает сейчас и что было. Позиции — ПОСЛЕ
+   * правки; откат идёт с конца, чтобы сдвиги не портили адреса предыдущих.
+   */
+  readonly replacements?: readonly DocReplacement[];
+  /** Табличная правка: структура и снимок содержимого (уровень 3, слайс 6c). */
+  readonly table?: DocTableDetail;
+  /**
+   * Правка стилей (слайс 7): текст не менялся, `snapshot` хранит прежние прогоны и вид
+   * абзацев — откат накатывает их обратно, ничего не вставляя и не удаляя.
+   */
+  readonly styled?: true;
+}
+
+/** Табличная правка документа: чем откатывать структуру и чем вернуть содержимое. */
+export interface DocTableDetail {
+  readonly kind:
+    'insertTable' | 'insertRow' | 'insertColumn' | 'deleteRow' | 'deleteColumn' | 'deleteTable';
+  /** startIndex таблицы ПОСЛЕ правки; у deleteTable — точка, где таблица стояла. */
+  readonly tableStart: number;
+  readonly rowIndex?: number;
+  readonly columnIndex?: number;
+  readonly rows?: number;
+  readonly columns?: number;
+  /** Снимок удалённой строки/колонки: по ячейке — прогоны со стилями. */
+  readonly cells?: readonly (readonly DocTextRun[])[];
+  /** Снимок всей удалённой таблицы: `grid[r][c]` — прогоны ячейки. */
+  readonly grid?: readonly (readonly (readonly DocTextRun[])[])[];
+}
+
+/** Одно вхождение массовой замены: текущий диапазон и снимок оригинала. */
+export interface DocReplacement {
+  readonly tab: string;
+  readonly startIndex: number;
+  readonly endIndex: number;
+  readonly runs: readonly DocTextRun[];
+  /**
+   * Что записано на место вхождения. Откат сверяет его ДАЖЕ под force: позиции чужой
+   * правкой сдвигаются, и слепой откат стёр бы чужой текст. Нет у записей до 2026-10-01.
+   */
+  readonly written?: string;
+}
+
 export interface RangeSnapshot {
   readonly a1Range: string;
   readonly rows: readonly (readonly SnapshotCell[])[];
@@ -103,6 +159,7 @@ export interface WriteRecord {
     | 'formatCells'
     | 'findReplace'
     | StructuralKind
+    | DocOperationKind
     | 'undo';
   readonly changes: readonly JournalChange[];
   /** Геометрия: что сделали со строками, колонками, листами или файлами (D-19). */
@@ -114,6 +171,12 @@ export interface WriteRecord {
    * второе поле рядом с первым значило бы держать одно понятие в двух местах.
    */
   readonly snapshots?: readonly RangeSnapshot[];
+  /**
+   * Текстовая форма записи (уровень 3): таб, затронутый диапазон ПОСЛЕ правки и снимок
+   * «до» — им откат восстанавливает текст со стилями. У табличных записей поля нет,
+   * прежние записи целы (та же совместимость, что у `structure`/`snapshots`, D-19).
+   */
+  readonly doc?: DocWriteDetail;
   /** Ревизия таблицы до и после записи — по ним undo решает, безопасен ли откат. */
   readonly revisionBefore: string | null;
   readonly revisionAfter: string | null;
@@ -155,7 +218,11 @@ export function lastUndoable(records: readonly WriteRecord[]): WriteRecord | nul
     const record = records[i]!;
     if (record.op === 'undo') continue;
     if (undone.has(record.correlationId)) continue;
-    if (record.changes.length === 0 && record.structure === undefined) continue;
+    // Запись без ячеек, геометрии И текста — превью-след, откатывать нечего. Проверка
+    // на `doc` не украшение: без неё вставка в документ считалась бы неоткатываемой —
+    // тот же класс дыры, что нашёл оракул G3 у структурных правок (уровень 2).
+    if (record.changes.length === 0 && record.structure === undefined && record.doc === undefined)
+      continue;
     return record;
   }
   return null;

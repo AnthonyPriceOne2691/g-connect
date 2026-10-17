@@ -28,6 +28,13 @@ const check = (name, ok, detail = '') => {
   process.stdout.write(`${ok ? '  OK  ' : '  FAIL'} ${name}${detail === '' ? '' : ` — ${detail}`}\n`);
   if (!ok) failures.push(name);
 };
+// Непроверенное — отдельное состояние, а не зелёное: «doc-цели нет» раньше засчитывалось
+// как OK, и итог «всё зелёное» прятал целый непрогнанный блок (находка читателя 2026-10-01).
+const unchecked = [];
+const skip = (name, why) => {
+  process.stdout.write(`  SKIP ${name} — ${why}\n`);
+  unchecked.push(name);
+};
 
 const server = spawn('node', [join(ROOT, 'dist/mcp/server.js')], {
   env: { ...process.env, GCONNECT_ACCOUNT: process.env.GCONNECT_ACCOUNT ?? 'default' },
@@ -59,7 +66,9 @@ const send = (method, params) =>
     const id = nextId++;
     pending.set(id, resolve);
     server.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
-    setTimeout(() => reject(new Error(`таймаут на ${method}`)), 30_000);
+    // Не меньше худшей цепочки повторов: 4 попытки и 1+2+4 с пауз, а одна попытка Google
+    // живьём шла 20,7 с. При 30 с проба однажды покраснела от задержки Google, а не продукта.
+    setTimeout(() => reject(new Error(`таймаут на ${method}`)), 120_000);
   });
 
 const callTool = async (name, args) => {
@@ -88,6 +97,9 @@ try {
 
   const applySchema = (tools.result?.tools ?? []).find((t) => t.name === 'gc_apply')?.inputSchema;
   check('gc_apply объявляет confirm', applySchema?.properties?.confirm !== undefined);
+  // Поправка D-20 (2026-10-01): фраза человека пишет только с кодом плана из превью —
+  // без поля в схеме транспорта агенту нечем его приложить (урок L21: схема ≠ ядро).
+  check('gc_apply объявляет planId', applySchema?.properties?.planId !== undefined);
 
   // Сквозная проверка связи схемы транспорта с ядром. Живой прогон 2026-09-04 нашёл, что
   // схема объявляла девять операций при двадцати одной в ядре: правки отклонялись ДО
@@ -104,10 +116,50 @@ try {
       `${missing.length === 0 ? '' : `, нет в схеме: ${missing.join(', ')}`}` +
       `${extra.length === 0 ? '' : `, лишние: ${extra.join(', ')}`}`,
   );
+  // Уровень 3: doc-операции обязаны быть в СХЕМЕ транспорта, а не только в ядре — тот же
+  // класс, что блокер 2026-09-04 (девять операций из двадцати одной). Список берётся из
+  // ядра, поэтому расхождение здесь означает, что схему собрали не из него.
+  const { DOC_OPERATION_NAMES } = await import('../dist/core/ops.js');
+  const missingDocs = DOC_OPERATION_NAMES.filter((name) => !declared.includes(name));
+  check(
+    'протокол отдаёт doc-операции уровня 3',
+    missingDocs.length === 0,
+    `doc-операций ${DOC_OPERATION_NAMES.length}` +
+      `${missingDocs.length === 0 ? '' : `, нет в схеме: ${missingDocs.join(', ')}`}`,
+  );
+  // Поля, а не только имена (живой прогон 2026-10-02): схема объявляла все 18 doc-операций,
+  // но ни одного их поля — SDK срезал `tab`, `text`, `uri` до ядра, и через протокол не
+  // проходила ни одна правка документа, пока имена сходились 39/39.
+  const { operationSchema } = await import('../dist/core/ops.js');
+  const properties = Object.keys(applySchema?.properties ?? {});
+  const missingFields = operationSchema.options.flatMap((o) =>
+    Object.keys(o.shape)
+      .filter((field) => !properties.includes(field))
+      .map((field) => `${o.shape.op.value}.${field}`),
+  );
+  check(
+    'протокол объявляет каждое поле операций ядра',
+    missingFields.length === 0,
+    `полей в схеме ${properties.length}` +
+      `${missingFields.length === 0 ? '' : `, нет: ${missingFields.slice(0, 6).join(', ')} …`}`,
+  );
+  // Схема gc_read обязана знать mode=text: без него агент не прочитает абзацы документа.
+  const readSchema = (tools.result?.tools ?? []).find((t) => t.name === 'gc_read')?.inputSchema;
+  const modes = readSchema?.properties?.mode?.enum ?? [];
+  check('gc_read объявляет режимы карты, строк и абзацев', modes.includes('text'), modes.join(', '));
+
   // D-18: конверт цели виден там же, где права. Иначе о разрешении узнают по факту записи.
   check(
     'instructions объясняют конверт',
     (init.result?.instructions ?? '').includes('конверт'),
+  );
+  // Правила, уходящие модели, обязаны говорить про документы: иначе агент узнает об
+  // адресации по факту отказа (тот же класс, что L6 — обещание без механизма).
+  const { policyText } = await import('../dist/core/policy.js');
+  const rulesText = policyText();
+  check(
+    'policy://rules объясняет адресацию документов',
+    rulesText.includes('mode=map') && rulesText.includes('textStartsWith'),
   );
 
   const resources = await send('resources/list', {});
@@ -184,6 +236,86 @@ try {
       insert.status === 'preview',
       String(insert.status),
     );
+
+    // ── Документы (уровень 3). Цель берётся из реестра по виду: подписывать её конвертом
+    // и править живьём — дело человека, проба только СУДИТ превью и отказы.
+    const docEntry = (targets.targets ?? []).find((x) => x.type === 'doc');
+    if (docEntry === undefined) {
+      skip('живой doc-блок', 'в реестре нет doc-цели — шов documents.* этой пробой НЕ проверен');
+    } else {
+      const docMap = await callTool('gc_read', { target: docEntry.alias, mode: 'map' });
+      const revisionBefore = docMap.revisionId;
+      check(
+        'gc_read map читает документ: табы и оглавление',
+        Array.isArray(docMap.tabs) && docMap.tabs.length > 0,
+        `табов ${docMap.tabs?.length}, заголовков ${docMap.tabs?.[0]?.headings?.length}`,
+      );
+      const firstTab = docMap.tabs?.[0];
+      const textPage = await callTool('gc_read', {
+        target: docEntry.alias,
+        mode: 'text',
+        tab: firstTab?.title,
+        limit: 3,
+      });
+      // Абзацы — ДАННЫЕ с пометкой источника (content.is-data): живьём, через протокол.
+      const page = textPage.paragraphs?.value;
+      check(
+        'gc_read text отдаёт абзацы с номерами — как данные с источником',
+        textPage.paragraphs?.kind === 'data' &&
+          Array.isArray(page) &&
+          typeof page?.[0]?.n === 'number',
+        `абзацев ${page?.length}, источник ${textPage.paragraphs?.origin}, ревизия ${textPage.revisionId}`,
+      );
+      // Превью вставки: НИЧЕГО не пишем. Значение уникально прогону (урок L24), но здесь
+      // даже уникальность не нужна — вставка не зависит от содержимого.
+      const docPreview = await callTool('gc_apply', {
+        op: 'appendText',
+        target: docEntry.alias,
+        tab: firstTab?.title,
+        text: `проба уровня 3 ${new Date().toISOString()} — не записывается`,
+      });
+      check(
+        'превью вставки в документ отдаёт код плана и якорь',
+        /^[0-9a-f]{6}$/.test(docPreview.planId ?? '') &&
+          typeof docPreview.changes?.[0]?.anchor === 'string',
+        `status=${docPreview.status}, anchor=${docPreview.changes?.[0]?.anchor}`,
+      );
+      check('превью документа ничего не записало', docPreview.status === 'preview');
+      // Разрушающая doc-правка просит НАЗВАНИЕ предмета (D-20), а не код.
+      const docDelete = await callTool('gc_apply', {
+        op: 'deleteParagraph',
+        target: docEntry.alias,
+        tab: firstTab?.title,
+        where: { paragraphIndex: 1 },
+        dryRun: true,
+      });
+      check(
+        'удаление абзаца просит назвать предмет правки',
+        (docDelete.notes ?? []).join(' ').includes('удаляю'),
+        (docDelete.notes ?? []).slice(-1)[0] ?? String(docDelete.status),
+      );
+      // Локальная картинка отклоняется ДО обращения к Google (P19b).
+      const localImage = await callTool('gc_apply', {
+        op: 'insertInlineImage',
+        target: docEntry.alias,
+        tab: firstTab?.title,
+        uri: '/tmp/probe.png',
+        dryRun: false,
+      });
+      check(
+        'локальный источник картинки отклонён до сети',
+        // Только причина: «любое https в тексте» засчитывало и чужой отказ (находка читателя).
+        JSON.stringify(localImage).includes('image.local-source'),
+        JSON.stringify(localImage).slice(0, 160),
+      );
+      // «Ничего не записало» — по РЕВИЗИИ документа, а не по статусу ответов.
+      const docAfter = await callTool('gc_read', { target: docEntry.alias, mode: 'map' });
+      check(
+        'doc-блок ничего не записал: ревизия документа та же',
+        typeof revisionBefore === 'string' && docAfter.revisionId === revisionBefore,
+        `${revisionBefore} → ${docAfter.revisionId}`,
+      );
+    }
 
     // Разрушающая правка обязана просить НАЗВАНИЕ, а не код и не «да» (D-20).
     const remove = await callTool('gc_apply', {
@@ -289,8 +421,20 @@ try {
   server.kill();
 }
 
+// Повторы запросов к Google за прогон (T44): медленная проба без них — медленный Google,
+// с ними — видно, какой вызов и почему повторял.
+const retries = stderr.split('\n').filter((line) => line.includes(': повтор '));
+if (retries.length > 0) {
+  process.stdout.write(`  повторы Google за прогон: ${retries.length}\n${retries.map((l) => `    ${l}`).join('\n')}\n`);
+}
+
 if (failures.length > 0) {
   process.stdout.write(`probe_mcp: красные проверки — ${failures.join('; ')}\n`);
   process.exit(1);
 }
-process.stdout.write(`probe_mcp: всё зелёное${LIVE ? ' (живой режим)' : ' (протокол)'}\n`);
+const scope = LIVE ? 'живой режим' : 'протокол';
+process.stdout.write(
+  unchecked.length === 0
+    ? `probe_mcp: всё зелёное (${scope})\n`
+    : `probe_mcp: зелёное, но НЕ проверено: ${unchecked.join('; ')} (${scope})\n`,
+);

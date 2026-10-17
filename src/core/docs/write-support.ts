@@ -1,0 +1,299 @@
+/**
+ * Общее у doc-операций записи: селектор запроса, вопросы, хвост записи (уровень 3).
+ *
+ * Хвост записи один на вставки, удаления и будущие замены — гейт копипаста нашёл три
+ * копии, и он прав: разъехавшись, журнал и ответ описывали бы правку по-разному, а
+ * расхождение всплыло бы только на откате (класс L14).
+ */
+
+import { gcError, newCorrelationId } from '../errors.js';
+import {
+  assertPlanNotApplied,
+  namedConfirmNote,
+  namedConfirmVerdict,
+  normalizeConfirm,
+} from '../sheets/write-guards.js';
+import type { DocWriteDetail, JournalSink, JournalSource } from '../journal.js';
+import type { EnvelopeDecision, OperationKind, Question } from '../sheets/write-types.js';
+import { paragraphLabel, resolveParagraph } from './selectors.js';
+import type { DocParagraph, DocRequest, DocSnapshot, DocTab, DocsClient } from './types.js';
+
+export interface DocChangePreview {
+  readonly kind: string;
+  readonly tab: string;
+  /** Якорь, которым правку читает человек. */
+  readonly anchor: string;
+  readonly before: string | null;
+  readonly after: string | null;
+}
+
+export interface DocApplyOutcome {
+  readonly status: 'preview' | 'ok' | 'confirm_required' | 'needs_clarification' | 'no_change';
+  readonly planId: string | null;
+  readonly changes: readonly DocChangePreview[];
+  readonly notes: readonly string[];
+  readonly questions: readonly Question[];
+  readonly correlationId?: string;
+  readonly revisionBefore?: string | null;
+  readonly revisionAfter?: string | null;
+}
+
+export interface DocRunOptions {
+  readonly dryRun?: boolean;
+  readonly confirm?: string;
+  /** Код плана из превью к фразе человека у разрушающих правок (поправка D-20). */
+  readonly planId?: string;
+  readonly force?: boolean;
+  readonly journal?: JournalSink;
+  readonly journalSource?: JournalSource;
+  readonly account?: string;
+  readonly alias?: string | null;
+  /** Судья конверта (D-18): разрешает ли цель эту правку с первой фразы, мера — юниты. */
+  readonly authorize?: (op: OperationKind, charCount: number) => EnvelopeDecision;
+}
+
+/** Селектор абзаца на внешней границе — ровно один ключ (проверяет `narrowSelector`). */
+export interface DocWhere {
+  readonly paragraphIndex?: number | undefined;
+  readonly textStartsWith?: string | undefined;
+  readonly textContains?: string | undefined;
+  readonly firstParagraph?: true | undefined;
+  readonly lastParagraph?: true | undefined;
+}
+
+export const clarify = (questions: readonly Question[]): DocApplyOutcome => ({
+  status: 'needs_clarification',
+  planId: null,
+  changes: [],
+  notes: [],
+  questions,
+});
+
+/** Селектор схемы → селектор ядра: ровно один ключ, иначе вопрос, а не догадка. */
+export function narrowSelector(where: DocWhere): Parameters<typeof resolveParagraph>[1] | Question {
+  const keys = Object.entries(where).filter(([, v]) => v !== undefined);
+  if (keys.length === 1) {
+    return Object.fromEntries(keys) as Parameters<typeof resolveParagraph>[1];
+  }
+  return {
+    field: 'where',
+    reason: 'ambiguous',
+    detail:
+      keys.length === 0
+        ? 'Селектор пуст: скажи, какой абзац.'
+        : `В селекторе ${keys.length} условия сразу (${keys.map(([k]) => k).join(', ')}) — оставь одно.`,
+    candidates: [],
+    available: [
+      'paragraphIndex',
+      'textStartsWith',
+      'textContains',
+      'firstParagraph',
+      'lastParagraph',
+    ],
+  };
+}
+
+export interface DocCommit {
+  readonly op: string;
+  readonly tabTitle: string;
+  readonly code: string;
+  readonly changes: readonly DocChangePreview[];
+  readonly notes: readonly string[];
+  readonly requests: readonly DocRequest[];
+  /** Что ляжет в журнал: диапазон после правки и снимок «до», если он есть. */
+  readonly doc: DocWriteDetail;
+}
+
+/** Хвост записи: запрос под серверным предусловием, строка журнала, ok-ответ. */
+export async function commitDocWrite(
+  client: DocsClient,
+  snapshot: DocSnapshot,
+  commit: DocCommit,
+  options: DocRunOptions,
+): Promise<DocApplyOutcome> {
+  const { revisionId: revisionAfter } = await client.batchUpdate(
+    snapshot.docId,
+    commit.requests,
+    snapshot.revisionId,
+  );
+  const correlationId = newCorrelationId();
+  if (options.journal !== undefined) {
+    await options.journal({
+      at: new Date().toISOString(),
+      account: options.account ?? 'default',
+      targetId: snapshot.docId,
+      alias: options.alias ?? null,
+      sheet: commit.tabTitle,
+      op: commit.op as never,
+      changes: [],
+      doc: commit.doc,
+      revisionBefore: snapshot.revisionId,
+      revisionAfter,
+      correlationId,
+      planId: commit.code,
+    });
+  }
+  return {
+    status: 'ok',
+    planId: commit.code,
+    changes: commit.changes,
+    notes: commit.notes,
+    questions: [],
+    correlationId,
+    revisionBefore: snapshot.revisionId,
+    revisionAfter,
+  };
+}
+
+export interface PlannedPreview {
+  readonly code: string;
+  readonly changes: readonly DocChangePreview[];
+  readonly notes: readonly string[];
+}
+
+/**
+ * Один план записывается один раз — по ОБОИМ кодам: тому, на который ссылается вызов
+ * (`planId` к фразе или код в `confirm`), и коду текущего плана. Первый ловит повтор уже
+ * записанного плана с понятной причиной, второй — план, равный записанному. Раньше
+ * сверялся только `confirm`, и фраза (не код) проходила мимо охранника всегда.
+ */
+export async function assertDocPlanNotApplied(
+  options: DocRunOptions,
+  code: string,
+  docId: string,
+): Promise<void> {
+  const referenced = options.planId ?? options.confirm;
+  if (referenced !== undefined && referenced !== code) {
+    await assertPlanNotApplied(options, referenced, docId);
+  }
+  await assertPlanNotApplied(options, code, docId);
+}
+
+/**
+ * Абзацы с неразрешёнными предложениями ядро не правит: их текст — смесь исходного и
+ * предложенного («Счёт: 2:13:1.» при «2:1» → «3:1»), и замена или удаление легли бы по
+ * этой смеси (находка читателя 2026-10-01). Отказ ДО подтверждения, с советом.
+ */
+export function assertNoSuggestions(paragraphs: readonly DocParagraph[]): void {
+  const marked = paragraphs.filter((p) => p.hasSuggestions === true);
+  if (marked.length === 0) return;
+  throw gcError('policy_denied', {
+    detail:
+      `В ${marked.map((p) => `абзаце № ${p.index}`).join(', ')} неразрешённые предложения: текст ` +
+      'там — смесь исходного и предложенного, и правка легла бы по ней. Прими или отклони ' +
+      'предложения в интерфейсе Docs, потом правь.',
+    cause: 'docs.suggestions-not-edited',
+  });
+}
+
+/** Заметка превью разрушающей правки: чем её подтверждать — фраза человека плюс код плана. */
+export const destructiveNote = (phrase: string, code: string): string =>
+  `Правка разрушающая: запись — фразой человека «${phrase}» в confirm и кодом плана ${code} ` +
+  'из этого превью в planId (код прикладываешь ты, человеку его называть не нужно).';
+
+const signal = (text: string): number => text.replace(/[^\p{L}\p{N}]/gu, '').length;
+
+/** Слова согласия: предмет из них подтвердило бы голое «да». */
+const CONSENT = new Set([
+  'да',
+  'ок',
+  'ok',
+  'okay',
+  'yes',
+  'ага',
+  'угу',
+  'конечно',
+  'хорошо',
+  'давай',
+  'верно',
+]);
+
+/**
+ * Предмет для фразы подтверждения (D-20, поправка 2026-10-02): первые `want` частей — слов
+ * абзаца или ячеек строки; короткий предмет добирается следующими частями. Номер — только
+ * если частей нет вовсе (пустой абзац, пустая шапка) или предмет — слово согласия: абзац
+ * «Да.» иначе подтвердило бы голое «да».
+ */
+export function namedSubject(parts: readonly string[], want: number, fallback: string): string {
+  const meaningful = parts.filter((part) => signal(part) > 0);
+  const taken = meaningful.slice(0, want);
+  for (const part of meaningful.slice(want)) {
+    if (signal(taken.join('')) >= 3) break;
+    taken.push(part);
+  }
+  const subject = taken.join(' ').replace(/[^\p{L}\p{N}]+$/u, '');
+  return subject === '' || CONSENT.has(normalizeConfirm(subject)) ? fallback : subject;
+}
+
+/**
+ * Подтверждение названием (D-20 с поправками 2026-10-01 и 2026-10-02) — общий вердикт с
+ * листами: фраза человека должна НАЗЫВАТЬ предмет (`subject`), а `phrase` — то, что ей
+ * показывают; пишет она только вместе с кодом плана из превью. Голое «да», чужой код,
+ * устаревший план и молчание различены. `null` — подтверждено, запись разрешена.
+ */
+export function namedConfirmRefusal(
+  options: Pick<DocRunOptions, 'confirm' | 'planId'>,
+  phrase: string,
+  subject: string,
+  planned: PlannedPreview,
+): DocApplyOutcome | null {
+  const verdict = namedConfirmVerdict(options.confirm, options.planId, subject, planned.code);
+  if (verdict === 'confirmed') return null;
+  return {
+    status: 'confirm_required',
+    planId: planned.code,
+    changes: planned.changes,
+    notes: [
+      ...planned.notes,
+      namedConfirmNote(verdict, phrase, planned.code, options.confirm, options.planId),
+    ],
+    questions: [],
+  };
+}
+
+/**
+ * Кто разрешил НЕразрушающую запись: код плана или конверт (D-16/D-18), мера — юниты.
+ * `null` — разрешена.
+ */
+export function permissionRefusal(
+  options: DocRunOptions,
+  op: OperationKind,
+  charCount: number,
+  planned: PlannedPreview,
+): DocApplyOutcome | null {
+  if (options.confirm === planned.code) return null;
+  const decision = options.authorize?.(op, charCount);
+  if (decision?.authorized === true) return null;
+  return {
+    status: 'confirm_required',
+    planId: planned.code,
+    changes: planned.changes,
+    notes: [
+      ...planned.notes,
+      ...(decision === undefined ? [] : [decision.reason]),
+      `Запись — по коду плана: подтверди «пиши ${planned.code}».`,
+    ],
+    questions: [],
+  };
+}
+
+/**
+ * Body-абзац по селектору запроса: один ключ, найден, и НЕ в ячейке таблицы —
+ * общий шаг всех операций, адресующих абзац.
+ */
+export function resolveBodyParagraph(
+  tab: DocTab,
+  where: DocWhere | undefined,
+  inTableAdvice: string,
+): { paragraph: DocParagraph } | { outcome: DocApplyOutcome } {
+  const selector = narrowSelector(where ?? {});
+  if ('field' in selector) return { outcome: clarify([selector]) };
+  const hit = resolveParagraph(tab, selector);
+  if (hit.status === 'question') return { outcome: clarify([hit.question]) };
+  if (hit.value.inTable !== undefined) {
+    throw gcError('bad_request', {
+      detail: `Абзац ${paragraphLabel(hit.value)} живёт в ячейке таблицы — ${inTableAdvice}`,
+    });
+  }
+  return { paragraph: hit.value };
+}

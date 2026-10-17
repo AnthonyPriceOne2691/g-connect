@@ -19,7 +19,6 @@ import {
   gcRead,
   gcTargets,
   gcUndo,
-  runTool,
   serverInstructions,
   type ToolDeps,
 } from '../src/mcp/tools.js';
@@ -31,6 +30,7 @@ import {
   reportSheet,
   snapshot,
 } from './fixtures/sheet.js';
+import { callMcp } from './fixtures/protocol.js';
 
 const SHEET_ID = '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms';
 const FOLDER_ID = '1FOLDERaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -115,6 +115,7 @@ const harness = (over: Partial<ToolDeps> = {}): Harness => {
   const deps: ToolDeps = {
     account: 'default',
     sheets: () => Promise.resolve(client),
+    docs: () => Promise.reject(new Error('в этом сьюте doc-целей нет — см. mcp-doc-read.test.ts')),
     drive: () => Promise.resolve(drive),
     registry: () => Promise.resolve(registry),
     journal: async (record) => {
@@ -131,10 +132,10 @@ const harness = (over: Partial<ToolDeps> = {}): Harness => {
 const applyConfirmed = async (
   args: Record<string, unknown>,
   deps: ToolDeps,
-): ReturnType<typeof runTool> => {
-  const preview = await runTool(gcApply, { ...args, dryRun: true }, deps);
+): ReturnType<typeof callMcp> => {
+  const preview = await callMcp(gcApply, { ...args, dryRun: true }, deps);
   const { planId } = preview.data as { planId: string | null };
-  return runTool(
+  return callMcp(
     gcApply,
     { ...args, dryRun: false, ...(planId === null ? {} : { confirm: planId }) },
     deps,
@@ -177,7 +178,7 @@ describe('B1 — набор инструментов', () => {
 describe('B2 — gc_targets отдаёт права, но не секреты', () => {
   it('цели с правами и пометка про allowlist', async () => {
     const { deps } = harness();
-    const result = await runTool(gcTargets, {}, deps);
+    const result = await callMcp(gcTargets, {}, deps);
     expect(result.ok).toBe(true);
     const data = result.data as {
       targets: { alias: string; allow: string; auto: unknown }[];
@@ -195,7 +196,7 @@ describe('B2 — gc_targets отдаёт права, но не секреты', 
 
   it('в ответе нет ни токенов, ни путей к профилю', async () => {
     const { deps } = harness();
-    const json = JSON.stringify((await runTool(gcTargets, {}, deps)).data);
+    const json = JSON.stringify((await callMcp(gcTargets, {}, deps)).data);
     expect(json).not.toContain('access_token');
     expect(json).not.toContain('refresh_token');
     expect(json).not.toContain('.gconnect');
@@ -205,7 +206,7 @@ describe('B2 — gc_targets отдаёт права, но не секреты', 
 describe('B4, B5 — превью по умолчанию и вопрос вместо догадки', () => {
   it('gc_apply без dryRun возвращает preview и ничего не пишет', async () => {
     const { deps, client, journalled } = harness();
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       { op: 'upsertRow', target: 'log', key: { Проект: 'G connect' }, values: { Часы: 5 } },
       deps,
@@ -221,7 +222,7 @@ describe('B4, B5 — превью по умолчанию и вопрос вме
 
   it('неизвестная колонка → needs_clarification со списком и подсказкой спросить', async () => {
     const { deps } = harness();
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       { op: 'setCells', target: 'log', where: { Проект: 'G connect' }, values: { Бюджет: 100 } },
       deps,
@@ -252,7 +253,7 @@ describe('B4, B5 — превью по умолчанию и вопрос вме
 describe('B6, B7 — граница ошибок', () => {
   it('неизвестная операция → ok:false с кодом и списком допустимых, без стектрейса', async () => {
     const { deps } = harness();
-    const result = await runTool(gcApply, { op: 'удалиВсё', target: 'log', values: {} }, deps);
+    const result = await callMcp(gcApply, { op: 'удалиВсё', target: 'log', values: {} }, deps);
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe('bad_request');
     expect(result.error?.detail).toContain('upsertRow');
@@ -261,7 +262,7 @@ describe('B6, B7 — граница ошибок', () => {
 
   it('запись в цель вне реестра → policy_denied с id правила', async () => {
     const { deps, client } = harness();
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       {
         op: 'upsertRow',
@@ -284,7 +285,7 @@ describe('B6, B7 — граница ошибок', () => {
     const { deps } = harness({
       sheets: () => Promise.reject(new Error('в Google лезть не должны были')),
     });
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       {
         op: 'upsertRow',
@@ -301,7 +302,7 @@ describe('B6, B7 — граница ошибок', () => {
 
   it('read-only цель не пишется даже при dryRun=false', async () => {
     const { deps } = harness();
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       { op: 'appendRow', target: 'reference', values: { Часы: 1 }, dryRun: false },
       deps,
@@ -313,7 +314,7 @@ describe('B6, B7 — граница ошибок', () => {
     const { deps } = harness({
       sheets: () => Promise.reject(new Error('сеть отвалилась внезапно')),
     });
-    const result = await runTool(gcRead, { target: 'log', mode: 'map' }, deps);
+    const result = await callMcp(gcRead, { target: 'log', mode: 'map' }, deps);
     expect(result.ok).toBe(false);
     expect(result.error?.code).toBe('internal');
     expect(result.error?.cause).toContain('сеть отвалилась');
@@ -322,7 +323,7 @@ describe('B6, B7 — граница ошибок', () => {
 
   it('у каждой ошибки границы есть correlationId — иначе её не найти в аудите', async () => {
     const { deps } = harness();
-    const result = await runTool(gcApply, { op: 'нет такой', target: 'log', values: {} }, deps);
+    const result = await callMcp(gcApply, { op: 'нет такой', target: 'log', values: {} }, deps);
     expect(result.error?.correlationId).toMatch(/^gc-/);
   });
 });
@@ -339,7 +340,7 @@ describe('B8 — правила уходят клиенту', () => {
 describe('gc_read — карта как первый шаг', () => {
   it('mode=map отдаёт карту с предупреждениями, а не строки', async () => {
     const { deps } = harness();
-    const data = (await runTool(gcRead, { target: 'log', mode: 'map' }, deps)).data as {
+    const data = (await callMcp(gcRead, { target: 'log', mode: 'map' }, deps)).data as {
       headerRow: number;
       columns: { name: string }[];
       warnings: string[];
@@ -351,12 +352,14 @@ describe('gc_read — карта как первый шаг', () => {
 
   it('mode=values помечает усечение, а не молча обрезает', async () => {
     const { deps } = harness();
-    const data = (await runTool(gcRead, { target: 'log', mode: 'values', limit: 1 }, deps))
+    const data = (await callMcp(gcRead, { target: 'log', mode: 'values', limit: 1 }, deps))
       .data as {
-      rows: unknown[];
+      rows: { kind: string; origin: string; value: unknown[] };
       truncated: boolean;
     };
-    expect(data.rows).toHaveLength(1);
+    expect(data.rows.kind).toBe('data');
+    expect(data.rows.origin).toContain('лист');
+    expect(data.rows.value).toHaveLength(1);
     expect(data.truncated).toBe(true);
   });
 });
@@ -371,7 +374,7 @@ describe('gc_undo через инструмент', () => {
       { op: 'upsertRow', target: 'log', key: { Проект: 'G connect' }, values: { Часы: 9 } },
       deps,
     );
-    const result = await runTool(gcUndo, { target: 'log' }, deps);
+    const result = await callMcp(gcUndo, { target: 'log' }, deps);
     expect(result.ok).toBe(true);
     const data = result.data as { status: string; restored: { value: unknown }[] };
     expect(data.status).toBe('ok');
@@ -386,7 +389,7 @@ describe('gc_undo через инструмент', () => {
       { op: 'upsertRow', target: 'log', key: { Проект: 'G connect' }, values: { Часы: 9 } },
       deps,
     );
-    await runTool(gcUndo, { target: 'log' }, deps);
+    await callMcp(gcUndo, { target: 'log' }, deps);
     const undone = journalled.find((r) => r.op === 'undo');
     // Тип WriteRecord и rules.md обещают человеку обе ревизии; до 2026-09-03 у строки
     // отката вторая была захардкожена null, и обещание было ложным.
@@ -396,7 +399,7 @@ describe('gc_undo через инструмент', () => {
 
   it('нечего откатывать → говорит прямо', async () => {
     const { deps } = harness({ journalSource: { recent: () => Promise.resolve([]) } });
-    const data = (await runTool(gcUndo, { target: 'log' }, deps)).data as {
+    const data = (await callMcp(gcUndo, { target: 'log' }, deps)).data as {
       status: string;
       reason?: string;
       hint?: string;
@@ -409,7 +412,7 @@ describe('gc_undo через инструмент', () => {
 
   it('откат по read-only цели запрещён', async () => {
     const { deps } = harness();
-    const result = await runTool(gcUndo, { target: 'reference' }, deps);
+    const result = await callMcp(gcUndo, { target: 'reference' }, deps);
     expect(result.error?.cause).toBe('write.allowlist');
   });
 });
@@ -430,7 +433,7 @@ describe('noopJournal не мешает', () => {
 describe('V10 — битое выражение на границе', () => {
   it('отклоняется ДО обращения к Google, и ни одной замены не сделано', async () => {
     const { deps, client } = harness();
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       {
         op: 'findReplace',
@@ -449,7 +452,7 @@ describe('V10 — битое выражение на границе', () => {
 
   it('то же выражение без searchByRegex — обычная строка, отказа нет', async () => {
     const { deps } = harness();
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       { op: 'findReplace', target: 'log', find: '[', replace: 'x' },
       deps,
@@ -461,7 +464,7 @@ describe('V10 — битое выражение на границе', () => {
 describe('V11 — вид на границе инструмента', () => {
   it('неизвестное поле вида отклонено ДО обращения к Google, с перечислением допустимых', async () => {
     const { deps, client } = harness();
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       {
         op: 'formatCells',
@@ -484,7 +487,7 @@ describe('V11 — вид на границе инструмента', () => {
 
   it('formatCells проходит через тот же контур подтверждения, что запись', async () => {
     const { deps, client } = harness();
-    const preview = await runTool(
+    const preview = await callMcp(
       gcApply,
       {
         op: 'formatCells',
@@ -499,7 +502,7 @@ describe('V11 — вид на границе инструмента', () => {
     expect(status).toBe('preview');
     expect(planId).toMatch(/^[0-9a-f]{6}$/);
 
-    const written = await runTool(
+    const written = await callMcp(
       gcApply,
       {
         op: 'formatCells',
@@ -527,7 +530,7 @@ describe('живой прогон B13 — что он нашёл', () => {
       JSON.stringify({ web: { client_id: 'id', client_secret: 's', redirect_uris: ['http://x'] } }),
     );
     const { deps } = harness();
-    const data = (await runTool(gcTargets, {}, deps)).data as {
+    const data = (await callMcp(gcTargets, {}, deps)).data as {
       accounts: { account: string; state: string }[];
     };
     expect(data.accounts).toHaveLength(1);
@@ -537,7 +540,7 @@ describe('живой прогон B13 — что он нашёл', () => {
 
   it('gc_apply на «значение уже такое» не выглядит выполненной записью', async () => {
     const { deps, client, journalled } = harness();
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       {
         target: 'log',
@@ -567,7 +570,7 @@ describe('живой прогон B13 — что он нашёл', () => {
     };
 
     const fromRegistry = (
-      await runTool(
+      await callMcp(
         gcRead,
         { target: 'log' },
         harness({ sheets: book, registry: () => Promise.resolve(withSheet) }).deps,
@@ -578,7 +581,7 @@ describe('живой прогон B13 — что он нашёл', () => {
 
     // Явный аргумент вызова старше реестра.
     const explicit = (
-      await runTool(
+      await callMcp(
         gcRead,
         { target: 'log', sheet: 'Инструкция' },
         harness({ sheets: book, registry: () => Promise.resolve(withSheet) }).deps,
@@ -589,7 +592,7 @@ describe('живой прогон B13 — что он нашёл', () => {
     // Без листа в реестре остаётся прежнее поведение — первый лист книги.
     const noDefault: Registry = { targets: [{ alias: 'log', id: SHEET_ID, type: 'sheet' }] };
     const first = (
-      await runTool(
+      await callMcp(
         gcRead,
         { target: 'log' },
         harness({ sheets: book, registry: () => Promise.resolve(noDefault) }).deps,
@@ -617,7 +620,7 @@ describe('живой прогон B13 — что он нашёл', () => {
         Promise.resolve(new FakeSheetsClient(snapshot([instructionSheet(), reportSheet()]))),
       registry: () => Promise.resolve(withSheet),
     });
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       { target: 'log', op: 'upsertRow', key: { Проект: 'G connect' }, values: { Часы: 4 } },
       deps,
@@ -641,17 +644,17 @@ describe('живой прогон B13 — что он нашёл', () => {
     const { deps } = harness({
       sheets: () => Promise.resolve(new FakeSheetsClient(snapshot([padded]))),
     });
-    const data = (await runTool(gcRead, { target: 'log', mode: 'values' }, deps)).data as {
-      rows: Record<string, unknown>[];
+    const data = (await callMcp(gcRead, { target: 'log', mode: 'values' }, deps)).data as {
+      rows: { value: Record<string, unknown>[] };
       truncated: boolean;
     };
-    expect(data.rows).toHaveLength(2);
+    expect(data.rows.value).toHaveLength(2);
     expect(data.truncated).toBe(false);
   });
 
   it('gc_undo не утверждает «журнал пуст», а называет причину из ядра', async () => {
     const { deps } = harness();
-    const result = await runTool(gcUndo, { target: 'log' }, deps);
+    const result = await callMcp(gcUndo, { target: 'log' }, deps);
     const data = result.data as { status: string; reason?: string; hint?: string };
     expect(data.status).toBe('nothing_to_undo');
     expect(data.reason).toBe('journal_empty');
@@ -663,7 +666,7 @@ describe('K1, K3, K9 — боевая запись по конверту (D-18)'
   it('K1: правка внутри конверта пишется с первой фразы, без кода плана', async () => {
     const applied = new MutableSheetsClient(snapshot());
     const { deps, journalled } = harness({ sheets: () => Promise.resolve(applied) });
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       {
         op: 'upsertRow',
@@ -687,7 +690,7 @@ describe('K1, K3, K9 — боевая запись по конверту (D-18)'
   it('K9: откат после боевой записи возвращает ровно её', async () => {
     const applied = new MutableSheetsClient(snapshot());
     const { deps, journalled } = harness({ sheets: () => Promise.resolve(applied) });
-    await runTool(
+    await callMcp(
       gcApply,
       {
         op: 'upsertRow',
@@ -698,7 +701,7 @@ describe('K1, K3, K9 — боевая запись по конверту (D-18)'
       },
       deps,
     );
-    const undone = (await runTool(gcUndo, { target: 'combat' }, deps)).data as {
+    const undone = (await callMcp(gcUndo, { target: 'combat' }, deps)).data as {
       status: string;
       restored: { value: unknown }[];
     };
@@ -709,7 +712,7 @@ describe('K1, K3, K9 — боевая запись по конверту (D-18)'
 
   it('K3: за границей конверта записи нет — статус, план и код в том же ответе', async () => {
     const { deps, client, journalled } = harness();
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       {
         op: 'setCells',
@@ -735,7 +738,7 @@ describe('K1, K3, K9 — боевая запись по конверту (D-18)'
 
   it('битый конверт: запись отказывает с названной причиной, а не пишет наугад', async () => {
     const { deps, client } = harness();
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       {
         op: 'upsertRow',
@@ -753,7 +756,7 @@ describe('K1, K3, K9 — боевая запись по конверту (D-18)'
 
   it('цель без конверта ведёт себя как прежде: без кода записи нет', async () => {
     const { deps, client } = harness();
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       {
         op: 'upsertRow',
@@ -776,7 +779,7 @@ describe('K4, K5, K6, K7 — что конверт НЕ разрешает ре�
 
   it('K4: неизвестная колонка внутри конверта — вопрос, а не догадка', async () => {
     const { deps, client } = harness();
-    const data = (await runTool(gcApply, { ...combat, values: { Бюджет: 5 } }, deps)).data as {
+    const data = (await callMcp(gcApply, { ...combat, values: { Бюджет: 5 } }, deps)).data as {
       status: string;
       questions: { available: string[] }[];
     };
@@ -787,7 +790,7 @@ describe('K4, K5, K6, K7 — что конверт НЕ разрешает ре�
 
   it('K5: значение вне списка допустимых — вопрос со списком', async () => {
     const { deps, client } = harness();
-    const data = (await runTool(gcApply, { ...combat, values: { Статус: 'почти готово' } }, deps))
+    const data = (await callMcp(gcApply, { ...combat, values: { Статус: 'почти готово' } }, deps))
       .data as { status: string; questions: { reason: string; available: string[] }[] };
     expect(data.status).toBe('needs_clarification');
     expect(data.questions[0]?.reason).toBe('not_in_enum');
@@ -797,7 +800,7 @@ describe('K4, K5, K6, K7 — что конверт НЕ разрешает ре�
   it('K6: формульная колонка внутри конверта требует force, а не конверта', async () => {
     const applied = new FakeSheetsClient(snapshot([formulaSheet()]));
     const { deps } = harness({ sheets: () => Promise.resolve(applied) });
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       { ...combat, sheet: 'Итоги', key: { Проект: 'G connect' }, values: { Итого: 1 } },
       deps,
@@ -816,9 +819,9 @@ describe('K4, K5, K6, K7 — что конверт НЕ разрешает ре�
       values: { Проект: 'Новый', Часы: 1 },
       dryRun: false,
     };
-    const first = (await runTool(gcApply, row, deps)).data as { status: string };
+    const first = (await callMcp(gcApply, row, deps)).data as { status: string };
     expect(first.status).toBe('ok');
-    const second = (await runTool(gcApply, row, deps)).data as { status: string; notes: string[] };
+    const second = (await callMcp(gcApply, row, deps)).data as { status: string; notes: string[] };
     expect(second.status).toBe('no_change');
     expect(second.notes.join(' ')).toContain('уже дописана');
     expect(journalled.filter((r) => r.op === 'appendRow')).toHaveLength(1);
@@ -829,12 +832,12 @@ describe('G15, G16 — создание файлов Drive (D-19, слайс 8)'
   it('G15: таблица создаётся в папке реестра, ссылка и id в ответе', async () => {
     const { deps, drive, journalled } = harness();
     const preview = (
-      await runTool(gcApply, { op: 'createSheet', target: 'folder', name: 'Октябрь 2026' }, deps)
+      await callMcp(gcApply, { op: 'createSheet', target: 'folder', name: 'Октябрь 2026' }, deps)
     ).data as { status: string; planId: string | null };
     expect(preview.status).toBe('preview');
     expect(drive.created).toHaveLength(0);
 
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       {
         op: 'createSheet',
@@ -862,9 +865,9 @@ describe('G15, G16 — создание файлов Drive (D-19, слайс 8)'
   it('G15: откат отправляет файл в корзину и говорит, что достать — руками', async () => {
     const { deps, drive, journalled } = harness();
     const preview = (
-      await runTool(gcApply, { op: 'createFolder', target: 'folder', name: 'Архив' }, deps)
+      await callMcp(gcApply, { op: 'createFolder', target: 'folder', name: 'Архив' }, deps)
     ).data as { planId: string | null };
-    await runTool(
+    await callMcp(
       gcApply,
       {
         op: 'createFolder',
@@ -875,7 +878,7 @@ describe('G15, G16 — создание файлов Drive (D-19, слайс 8)'
       },
       deps,
     );
-    const undone = (await runTool(gcUndo, { target: 'folder' }, deps)).data as {
+    const undone = (await callMcp(gcUndo, { target: 'folder' }, deps)).data as {
       status: string;
       structureUndone?: string;
     };
@@ -888,7 +891,7 @@ describe('G15, G16 — создание файлов Drive (D-19, слайс 8)'
 
   it('G16: создать в таблице нельзя — отказ со списком того, что делать', async () => {
     const { deps, drive } = harness();
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       { op: 'createSheet', target: 'log', name: 'Октябрь', dryRun: false, confirm: 'x' },
       deps,
@@ -900,7 +903,7 @@ describe('G15, G16 — создание файлов Drive (D-19, слайс 8)'
 
   it('G16: в созданный файл писать нельзя — его нет в реестре', async () => {
     const { deps, client } = harness();
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       {
         op: 'upsertRow',
@@ -952,7 +955,7 @@ describe('тексты, которые читает МОДЕЛЬ (находка
     // когда механизм ждал фразу. Правку сделали, а оракула на неё не было — то есть
     // следующая правка текста могла бы вернуть дефект молча.
     const { deps } = harness();
-    const result = await runTool(
+    const result = await callMcp(
       gcApply,
       { op: 'deleteRows', target: 'log', where: { Проект: 'G connect' } },
       deps,
@@ -970,7 +973,7 @@ describe('тексты, которые читает МОДЕЛЬ (находка
       { op: 'upsertRow', target: 'log', key: { Проект: 'G connect' }, values: { Часы: 9 } },
       deps,
     );
-    const undone = (await runTool(gcUndo, { target: 'log' }, deps)).data as { hint?: string };
+    const undone = (await callMcp(gcUndo, { target: 'log' }, deps)).data as { hint?: string };
     expect(undone.hint).toContain('Вернулось');
     expect(undone.hint).toContain('значения');
     expect(undone.hint).toContain('а не «откачено»');

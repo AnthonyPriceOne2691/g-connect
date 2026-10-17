@@ -258,7 +258,8 @@ describe('B10 — откат при чужих правках', () => {
       client,
       'SHEET1',
       {
-        recent: () => Promise.resolve([record()]),
+        // Свежая: предмет теста — сверка ревизии; свежесть force больше не снимает.
+        recent: () => Promise.resolve([record({ at: new Date().toISOString() })]),
       },
       { currentRevision: 'rev-99', force: true, journal: noopJournal },
     );

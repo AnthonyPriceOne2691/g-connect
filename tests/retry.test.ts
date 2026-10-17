@@ -72,4 +72,19 @@ describe('withRetry', () => {
     );
     expect(seen).toEqual(['2/3@10', '3/3@20']);
   });
+
+  it('называет ПРИЧИНУ повтора: иначе всплеск задержки не отличить от медленного Google', async () => {
+    // Живьём 2026-10-02: 30 с и 20,7 с при обычных 0,6 — и ни одной строки, почему.
+    const reasons: string[] = [];
+    let calls = 0;
+    await withRetry(
+      async () => {
+        calls += 1;
+        if (calls === 1) throw gcError('google_unavailable', { cause: 'HTTP 503' });
+        return 'ok';
+      },
+      { backoffMs: 1, sleep: noSleep, onRetry: (_a, _t, _d, reason) => reasons.push(reason) },
+    );
+    expect(reasons).toEqual(['google_unavailable: HTTP 503']);
+  });
 });

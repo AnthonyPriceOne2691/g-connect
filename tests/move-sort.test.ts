@@ -54,10 +54,12 @@ describe('G11, G12 — перемещение строк и сортировка
     journalled: WriteRecord[],
     confirm: string,
   ): Promise<void> => {
-    await run({});
+    // Путь агента (поправка D-20): фраза человека + код плана из превью.
+    const preview = await run({});
     await run({
       dryRun: false,
       confirm,
+      ...(preview.planId === null ? {} : { planId: preview.planId }),
       journal: async (record) => {
         journalled.push(record);
       },

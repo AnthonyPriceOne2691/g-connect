@@ -24,6 +24,7 @@ const written = async (
   await run({
     dryRun: false,
     confirm: confirm ?? preview.planId ?? '',
+    ...(preview.planId === null ? {} : { planId: preview.planId }),
     journal: async (record) => {
       journalled.push(record);
     },

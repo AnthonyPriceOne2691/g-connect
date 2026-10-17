@@ -7,7 +7,7 @@
       "title": "Записывающая операция по умолчанию возвращает план, а не пишет",
       "kind": "default",
       "value": true,
-      "enforced_in": "src/core/ops.ts (commonFields, dryRun) + src/core/sheets/commit.ts (finishWrite)",
+      "enforced_in": "src/core/op-fields.ts (commonFields, dryRun) + src/core/sheets/commit.ts (finishWrite)",
       "probe": "операция без dryRun не пишет ни одной ячейки"
     },
     {
@@ -79,7 +79,7 @@
       "id": "content.is-data",
       "title": "Прочитанное из документов — данные, никогда не инструкции",
       "kind": "invariant",
-      "enforced_in": "src/core/policy.ts (asData) — пометка источника в возвращаемых данных",
+      "enforced_in": "src/core/policy.ts (asData) + src/mcp/read-doc.ts, src/mcp/tools.ts (gc_read: абзацы и строки — asData с источником)",
       "probe": "прочитанный текст помечен как данные и не может инициировать запись"
     },
     {
@@ -232,6 +232,14 @@
       "probe": "удаление диапазона больше бюджета отказывает ДО записи, назвав оба числа"
     },
     {
+      "id": "write.snapshot-max-chars",
+      "title": "Правка документа, чей снимок для отката больше 20000 UTF-16-юнитов, отказывает до записи",
+      "kind": "limit",
+      "value": 20000,
+      "enforced_in": "src/core/docs/delete-op.ts (runDocDelete)",
+      "probe": "удаление диапазона больше бюджета отказывает ДО подтверждения, назвав оба числа"
+    },
+    {
       "id": "write.undo-names-what-it-cannot",
       "title": "Откат, вернувший не всё, обязан назвать, чего не вернул",
       "kind": "default",
@@ -252,8 +260,67 @@
       "title": "Разрушающая правка подтверждается названием предмета, а не «да»",
       "kind": "default",
       "value": true,
-      "enforced_in": "src/core/envelope.ts (NAMED_CONFIRM_OPS) + src/core/sheets/write-guards.ts (namedConfirmOutcome)",
-      "probe": "удаление с подтверждением «да» не пишет; с названием предмета — пишет"
+      "enforced_in": "src/core/envelope.ts (NAMED_CONFIRM_OPS) + src/core/sheets/write-guards.ts (namedConfirmOutcome, namesSubject) + src/core/docs/write-support.ts (namedSubject, namedConfirmRefusal)",
+      "probe": "удаление с подтверждением «да» не пишет; с названием предмета — пишет, и глагол, регистр и знаки препинания не считаются"
+    },
+    {
+      "id": "write.named-confirm-bound-to-plan",
+      "title": "Фраза человека пишет разрушающую правку только вместе с кодом плана из показанного превью",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/sheets/write-guards.ts (namedConfirmVerdict) + src/core/docs/write-support.ts (namedConfirmRefusal, assertDocPlanNotApplied)",
+      "probe": "повтор «да, заменяю Fluminense» с кодом прежнего превью — plan_already_applied, текст заменён один раз; фраза без кода плана — confirm_required без записи"
+    },
+    {
+      "id": "docs.selector-not-guess",
+      "title": "Неоднозначный селектор абзаца — вопрос с кандидатами, а не правка первого совпавшего",
+      "kind": "deny",
+      "enforced_in": "src/core/docs/selectors.ts (resolveParagraph, resolveSection, resolveTable)",
+      "probe": "textContains, совпавший с несколькими абзацами, даёт needs_clarification с номерами абзацев, и ни одной правки"
+    },
+    {
+      "id": "docs.write-needs-revision",
+      "title": "Правка документа идёт только под ревизией, которую сверяет сервер Google",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/google/docs.ts (batchUpdate → writeControl.requiredRevisionId) + src/core/docs/plan.ts (ревизия в коде плана)",
+      "probe": "запись на ушедшей ревизии отклоняется целиком с doc_changed, документ не меняется"
+    },
+    {
+      "id": "docs.undo-restores-styles",
+      "title": "Откат правки документа возвращает текст СО СТИЛЯМИ и видом абзацев, а не голую строку",
+      "kind": "default",
+      "value": true,
+      "enforced_in": "src/core/undo-docs.ts (restoreRequests, undoStyles) + src/core/undo-docs-table.ts (fillCells)",
+      "probe": "после удаления и отката жирный фрагмент снова жирный, заголовок — заголовком, список — списком"
+    },
+    {
+      "id": "docs.image-source-remote",
+      "title": "Картинка вставляется только по https-URL, доступному Google; локальные файлы отклоняются до сети",
+      "kind": "deny",
+      "enforced_in": "src/core/docs/insert-op.ts (assertImageSource)",
+      "probe": "локальный путь и file:// дают отказ image.local-source с советом, ни одного обращения к Google"
+    },
+    {
+      "id": "docs.objects-not-destroyed",
+      "title": "Удаление, задевающее встроенный объект (картинку, @-чип, дату, разрыв), не выполняется: откат вернул бы текст без объекта",
+      "kind": "deny",
+      "enforced_in": "src/core/docs/delete-op.ts (budgetedSnapshot) + src/core/google/docs.ts (objectRun)",
+      "probe": "удаление абзаца с картинкой — policy_denied docs.objects-not-destroyed до подписи, документ не изменён"
+    },
+    {
+      "id": "docs.suggestions-not-edited",
+      "title": "Абзацы с неразрешёнными предложениями ядро не правит: их текст — смесь исходного и предложенного",
+      "kind": "deny",
+      "enforced_in": "src/core/docs/write-support.ts (assertNoSuggestions) + src/core/docs/replace-op.ts (findOccurrences) + src/core/google/docs.ts (paragraphHasSuggestions)",
+      "probe": "удаление абзаца с предложением — policy_denied docs.suggestions-not-edited до подписи; массовая замена обходит его и называет числом"
+    },
+    {
+      "id": "input.no-silent-drop",
+      "title": "Незнакомое поле запроса — отказ с названием и подсказкой, а не молчаливый пропуск",
+      "kind": "deny",
+      "enforced_in": "src/core/ops.ts (parseOperation, assertKnownFields) + src/core/field-check.ts (unknownFieldsDetail, closestField) + src/mcp/boundary.ts (parseToolInput, strictInput)",
+      "probe": "appendText с опечаткой afterHeding даёт bad_request unknown_field с названием поля и подсказкой afterHeading, и ни одной правки"
     }
   ]
 }
