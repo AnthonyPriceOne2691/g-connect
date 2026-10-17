@@ -7,7 +7,7 @@
  * обмена с часами теста.
  */
 
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -24,7 +24,7 @@ import {
   type TokenSealer,
 } from '../src/core/profiles.js';
 import type { TokenUnsealer } from '../src/core/token/sealing.js';
-import { tokenVault, type TokenVault } from '../src/core/token/vault.js';
+import { clockTime, tokenVault, type TokenVault } from '../src/core/token/vault.js';
 import { AGE_DIR, realAgeProfile } from './fixtures/sealing.js';
 
 const HOUR = 3_600_000;
@@ -37,6 +37,8 @@ let unsealer: TokenUnsealer;
 let touches = 0;
 let declineNext = false;
 let rotateTo: string | undefined;
+let googleSays: StoredToken | undefined;
+let unsealedText: string | undefined;
 const refreshed: string[] = [];
 
 /** «Касание» — расшифровка; отказ касания — то, что ответил бы плагин на отмену. */
@@ -47,7 +49,9 @@ const counted: TokenUnsealer = {
       declineNext = false;
       return Promise.reject(gcError('unlock_declined', { cause: 'declined' }));
     }
-    return unsealer.unseal(sealed, meta);
+    return unsealedText === undefined
+      ? unsealer.unseal(sealed, meta)
+      : Promise.resolve(unsealedText);
   },
 };
 
@@ -55,6 +59,7 @@ const exchanger = {
   exchangeCode: (): Promise<StoredToken> => Promise.reject(new TypeError('обмена кода тут нет')),
   refresh(_client: OAuthClient, refreshToken: string): Promise<StoredToken> {
     refreshed.push(refreshToken);
+    if (googleSays !== undefined) return Promise.resolve(googleSays);
     return Promise.resolve({
       access_token: `A${refreshed.length}`,
       expiry_date: clock + HOUR,
@@ -100,6 +105,8 @@ describe.skipIf(AGE_DIR === undefined)('токен процесса под па�
     touches = 0;
     declineNext = false;
     rotateTo = undefined;
+    googleSays = undefined;
+    unsealedText = undefined;
     refreshed.length = 0;
   });
 
@@ -114,6 +121,7 @@ describe.skipIf(AGE_DIR === undefined)('токен процесса под па�
     expect(codeOf(() => v.accessToken())).toMatchObject({
       code: 'google_locked',
       cause: 'not_unlocked',
+      detail: expect.stringContaining('ещё не открыт'),
     });
     expect(v.status()).toEqual({ state: 'locked' });
     expect(touches).toBe(0);
@@ -141,6 +149,7 @@ describe.skipIf(AGE_DIR === undefined)('токен процесса под па�
     expect(codeOf(() => v.accessToken())).toMatchObject({
       code: 'google_locked',
       cause: 'expired',
+      detail: expect.stringMatching(/истёк в \d\d:\d\d/),
     });
     expect(v.status()).toEqual({ state: 'locked' });
     await v.unlock();
@@ -192,5 +201,42 @@ describe.skipIf(AGE_DIR === undefined)('токен процесса под па�
     });
     await expect(vault().unlock()).rejects.toMatchObject({ payload: { code: 'scope_missing' } });
     expect(touches).toBe(0);
+  });
+
+  it('Google не назвал срок — час; ответ без access-токена — auth_expired, Google закрыт', async () => {
+    googleSays = { access_token: 'A-без-срока' };
+    expect(await vault().unlock()).toEqual({
+      state: 'unlocked',
+      until: clockTime(clock + HOUR - 60_000),
+    });
+    googleSays = { scope: 'x' };
+    const w = vault();
+    await expect(w.unlock()).rejects.toMatchObject({
+      payload: { code: 'auth_expired', cause: 'refresh_without_access_token' },
+    });
+    expect(w.status()).toEqual({ state: 'locked' });
+  });
+
+  it('расшифровано не то — internal «войди заново», а не мусор вместо токена', async () => {
+    unsealedText = 'не json';
+    await expect(vault().unlock()).rejects.toMatchObject({
+      payload: { code: 'internal', cause: 'sealed_not_a_token' },
+    });
+    unsealedText = '{"refresh_token":""}';
+    await expect(vault().unlock()).rejects.toMatchObject({
+      payload: { cause: 'sealed_not_a_token' },
+    });
+  });
+
+  it('шифротекст не читается — auth_expired с действием, а не падение', async () => {
+    await chmod(join(profileDir(), 'token.age'), 0o000);
+    try {
+      await expect(vault().unlock()).rejects.toMatchObject({
+        payload: { code: 'auth_expired', cause: 'no_sealed_token' },
+      });
+      expect(touches).toBe(0);
+    } finally {
+      await chmod(join(profileDir(), 'token.age'), 0o600);
+    }
   });
 });

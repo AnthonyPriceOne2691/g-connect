@@ -159,7 +159,11 @@ describe('профили', () => {
 
   it('нет ключа анклава у профиля — token_unsealed с действием «gc seal», а не пустой получатель', async () => {
     await expect(profileSealer(ageToolsIn('/opt/homebrew/bin'))).rejects.toMatchObject({
-      payload: { code: 'token_unsealed', cause: 'no_identity' },
+      payload: {
+        code: 'token_unsealed',
+        cause: 'no_identity',
+        detail: expect.stringContaining('gc -- seal'),
+      },
     });
   });
 

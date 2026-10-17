@@ -98,8 +98,14 @@ describe.skipIf(AGE_DIR === undefined)('шов age на настоящей пр�
   it('U10: программы нет — seal_tool_missing с командой установки', async () => {
     const absent = ageToolsIn(join(dir, 'нет-такого-каталога'));
     const missing = await codeOf(sealFor(absent, ownRecipient, 'секрет'));
-    expect(missing).toMatchObject({ code: 'seal_tool_missing' });
-    expect(JSON.stringify(missing)).toContain('brew install age age-plugin-se');
+    expect(missing).toMatchObject({
+      code: 'seal_tool_missing',
+      cause: 'age_missing',
+      detail: expect.stringContaining('brew install age age-plugin-se'),
+    });
+    expect(await codeOf(unsealWith(absent, ownKey, 'x', ownRecipient))).toMatchObject({
+      code: 'seal_tool_missing',
+    });
     expect(await codeOf(requireAgeTools(absent))).toMatchObject({ code: 'seal_tool_missing' });
   });
 
@@ -120,6 +126,32 @@ describe.skipIf(AGE_DIR === undefined)('шов age на настоящей пр�
     } finally {
       process.env['PATH'] = saved;
     }
+  });
+
+  it('отказ age — internal с его последней строкой, без «report unexpected»; не «нет программы»', async () => {
+    const refused = (await codeOf(sealFor(tools, 'age1неверный', 'секрет'))) as { detail: string };
+    expect(refused).toMatchObject({ code: 'internal', cause: 'age_seal_failed' });
+    expect(refused.detail).not.toContain('report unexpected');
+    const garbage = join(dir, 'garbage.txt');
+    await writeFile(garbage, 'это не ключ\n');
+    const sealed = await sealFor(tools, ownRecipient, 'секрет');
+    expect(await codeOf(unsealWith(tools, garbage, sealed, ownRecipient))).toMatchObject({
+      code: 'internal',
+      cause: 'age_unseal_failed',
+    });
+  });
+
+  it('плагин ищется по PATH ребёнка из каталога программ', async () => {
+    // Заглушка плагина в каталоге программ: age её находит и падает на протоколе — это
+    // не «плагина нет». Без PATH ребёнка из каталога ответ был бы «нет программы».
+    const own = join(dir, 'tools-bin');
+    await mkdir(own, { recursive: true });
+    await writeFile(join(own, 'age-plugin-se'), '#!/bin/sh\nexit 0\n');
+    await chmod(join(own, 'age-plugin-se'), 0o755);
+    const withPlugin: AgeTools = { ...tools, path: `${own}:/usr/bin:/bin` };
+    expect(await codeOf(sealFor(withPlugin, SE_RECIPIENT, 'секрет'))).toMatchObject({
+      code: 'internal',
+    });
   });
 
   it('получатель берётся из строки «# public key» файла ключа', async () => {
@@ -151,8 +183,12 @@ describe('шов age: таймер и создание ключа на загл�
     await writeFile(join(stub, 'age'), '#!/bin/sh\nsleep 30 &\nwait\n');
     await chmod(join(stub, 'age'), 0o755);
     const started = Date.now();
-    const result = await codeOf(unsealWith(ageToolsIn(stub), join(stub, 'key'), 'x', 'r', 300));
-    expect(result).toMatchObject({ code: 'unlock_declined', cause: 'timeout' });
+    const result = await codeOf(unsealWith(ageToolsIn(stub), join(stub, 'key'), 'x', 'r', 1_500));
+    expect(result).toMatchObject({
+      code: 'unlock_declined',
+      cause: 'timeout',
+      detail: expect.stringContaining('Касания не было 2 с'),
+    });
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 

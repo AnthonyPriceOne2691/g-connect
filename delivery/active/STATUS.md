@@ -19,7 +19,7 @@
 - **parallel_sessions:** merge-guard
 - **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
 - **blockers:** none
-- **waivers:** max_files_touched=35 max_loc_diff=1800 max_runtime_paths=4 reason=поставка цельная: шов age, хранилище токена, gc_unlock, gc seal и gc run держатся друг за друга; оценка ~1400 строк в ~28 файлах, запас — под починки живого прогона (прошлый добавил ~400 строк) — слово владельца в сессии 2026-10-17 («Подписываю» на план с этим пределом) by=human:anton at=2026-10-17
+- **waivers:** max_files_touched=45 max_loc_diff=2400 max_runtime_paths=4 reason=оценка плана (~1400 строк в ~28 файлах) занижена на треть: до живого прогона вышло 1903 строки в 39 файлах — около 1000 строк тесты на настоящем age, сжимать нечего; запас ~500 строк и 6 файлов — под починки живого прогона (прошлый добавил ~400). Прежний предел 35/1800/4 — «Подписываю» на план; новый — слово владельца в сессии 2026-10-17 («Да, до 45 и 2400») by=human:anton at=2026-10-17
 - **new_dependency:** age@1.3.2 и age-plugin-se@0.2.1 (Homebrew, системные, не npm) reason=шифрование токена ключом Secure Enclave (D-24); поставлены по слову владельца «Ставь сам» 2026-10-17 by=human:anton
 - **runtime_paths:** src/core/token/*.ts,src/core/auth.ts,src/core/profiles.ts,src/cli/manual.ts
   <!-- расшифровка через age и age-plugin-se с окном Touch ID из дочернего процесса сервера, отзыв и вход в Google: отказ виден только живьём; список уточнит план -->
