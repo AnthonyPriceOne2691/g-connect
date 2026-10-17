@@ -17,7 +17,7 @@
 
 import { createHash } from 'node:crypto';
 
-import { CREATE_MIME, type CreateKind, type DriveClient } from './google/drive.js';
+import type { CreateKind, DriveClient } from './google/drive.js';
 import { gcError } from './errors.js';
 import { limitOf } from './policy.js';
 import { finishWrite, type Prepared, type WriteContext } from './sheets/commit.js';
@@ -224,6 +224,3 @@ async function writeContent(
     });
   }
 }
-
-/** mimeType по типу — для сообщений человеку и для проверки в тестах. */
-export const mimeOf = (kind: CreateKind): string => CREATE_MIME[kind];
