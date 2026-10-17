@@ -392,11 +392,22 @@ def _outward_surface(root: Path) -> set[str]:
     это случай, после которого проверку снимают целиком (§4.3b), и он же уже
     стоил ревизии breaker'ам объёма. Исключение то же самое и по той же причине:
     механика контура — не blast radius продукта.
+
+    ⚠ Население — файлы git, а не обход диска (поле G connect 2026-10-17): сборка
+    в игнорируемом `.stable/` — копия репозитория вместе со `scripts/` — отдала
+    детектору его же `_OUTWARD_MARKERS` из `.stable/scripts/delivery_runtime.py`,
+    и он потребовал объявить отправку у продукта без единой отправки.
+    `BREAKER_EXCLUDE` — префикс от корня, `.stable/scripts/` им не ловится; прочие
+    гейты контура ходят через git — расхождение братьев. Нет git — прежний обход:
+    молчать хуже.
     """
-    for f in root.rglob("*.py"):
+    listed = git("-C", str(root), "ls-files", "-z", "--", "*.py").split("\0")
+    for f in [root / rel for rel in listed if rel] or root.rglob("*.py"):
         if f.relative_to(root).as_posix().startswith(BREAKER_EXCLUDE):
             continue
         if any(part in {".venv", "node_modules", "__pycache__"} for part in f.parts):
+            continue
+        if not f.is_file():
             continue
         low = f.read_text(encoding="utf-8", errors="ignore").lower()
         if any(m in low for m in _OUTWARD_MARKERS):
@@ -413,15 +424,16 @@ def _detected_surfaces(root: Path) -> set[str]:
     return _deploy_surface(root) | _outward_surface(root)
 
 
-def _signature_is_valid(status: str, root: Path) -> bool:
+def _signature_is_valid(status: str, root: Path, home: Path | None = None) -> bool:
     """Подпись проверяется ИСПОЛНЕНИЕМ `ssh-keygen -Y verify`, а не наличием файла.
 
     Файл рядом — это снова «объявленный реестр без файла» наоборот: подпись,
     которую никто не проверил, неотличима от подделанной. Ключ обязан жить там,
     куда агент не дотягивается (анклав, аппаратный токен): подпись из файла в
-    `~/.ssh` — это та же строка текста, только длиннее.
+    `~/.ssh` — это та же строка текста, только длиннее. Лежит подпись в каталоге
+    поставки (`home`) и уезжает с ней в архив (§2.3a).
     """
-    sig = root / "delivery" / "active" / "irreversible.sig"
+    sig = (home or root / "delivery" / "active") / "irreversible.sig"
     signers = root / ".github" / "allowed_signers"
     if not (sig.is_file() and signers.is_file()):
         return False
@@ -436,7 +448,8 @@ def _signature_is_valid(status: str, root: Path) -> bool:
     return proc.returncode == 0
 
 
-def unsigned_irreversible_gaps(status: str, root: Path = ROOT) -> list[str]:
+def unsigned_irreversible_gaps(status: str, root: Path = ROOT,
+                               home: Path | None = None) -> list[str]:
     """§3.4a: необратимое, до которого агент дотягивается без человека.
 
     Три состояния, и они обязаны различаться. Поверхность видна детектором, но
@@ -465,7 +478,7 @@ def unsigned_irreversible_gaps(status: str, root: Path = ROOT) -> list[str]:
                 "единственный breaker, у которого этого нельзя: он охраняет ровно "
                 "класс «письменное разрешение подделывается агентом». Здесь waiver "
                 "принимается только подписью"]
-    if not _signature_is_valid(status, root):
+    if not _signature_is_valid(status, root, home):
         return [f"объявлено необратимое без человека в цепочке "
                 f"({', '.join(sorted(declared))}), подписи нет или она не сходится "
                 "(§3.4a). Это остановка, а не повод просить waiver: сначала "

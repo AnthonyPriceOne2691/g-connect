@@ -96,9 +96,18 @@ for line in open(mp, encoding="utf-8"):
     names = sorted(set(names))
     if not names:
         continue
-    low = line.lower()
-    claims_na = "n/a" in low or "⛔" in line
-    claims_on = ("✅" in line or "подключ" in low) and not claims_na
+    # Статус — ВЕДУЩИЙ токен ячейки-заявления, а не подстрока где угодно в строке
+    # (поле Ally 17.10). Канон задаёт статус перечнем «как есть · адаптирован ·
+    # n/a + причина»: токен стоит В НАЧАЛЕ поля, дальше проза. Первая ячейка —
+    # ПРЕДМЕТ строки (роль или гейт) и заявлением не бывает: в «Объявления n/a
+    # истекают с кодом» n/a — о чём роль, а не её статус. Подстрока роняла такой
+    # коммит («n/a без объявления»), гасила соседнее ✅ при объявленном n/a и
+    # читала «не подключён» как ✅. Колонку по шапке не ищем: образец карты в
+    # каноне кладёт статус и в «В этом проекте», флот пишет так же.
+    leads = [re.sub(r"^[^\w⛔✅]+", "", c).lower()
+             for c in line.strip().strip("|").split("|")[1:]]
+    claims_na = any(s.startswith(("n/a", "⛔")) for s in leads)
+    claims_on = any(s.startswith(("✅", "подключ")) for s in leads) and not claims_na
     for n in names:
         if claims_on and n in na_scripts:
             problems.append(

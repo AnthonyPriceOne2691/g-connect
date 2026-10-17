@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Ratified:** 2026-09-01
-**Canon stack:** delivery@2.01 · cqg@2.56 · okf@absent
+**Canon stack:** delivery@2.04 · cqg@2.63 · okf@absent
 <!-- версии из шапок соответствующих *.md; absent = слой не развёрнут -->
 **CI:** deployed (github-actions, `quality.yml`)   <!-- §10.4 -->
 

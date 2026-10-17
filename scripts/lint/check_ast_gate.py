@@ -37,10 +37,11 @@ from pathlib import Path
 
 from ast_rules import find_inline_prompt, find_silent_except
 from ast_web_rules import find_cpu_in_async, find_unbounded_list
+from doctor_hooks import HookReaders
 
 FEATURES = Path(os.environ.get("LINT_PY_SRC", "backend/features"))
 
-# Население гейта отбирают ДВА принципа, и они разной природы. Держать их одним
+# Население гейта отбирают ТРИ принципа, и они разной природы. Держать их одним
 # кортежем и было дефектом: почему в списке лежат `/tests/` и `/migrations/`, не
 # сказано нигде, поэтому про `.venv` не с чем было спорить — он просто не похож
 # на прежние записи и проваливался молча.
@@ -63,6 +64,12 @@ NOT_OUR_CODE = frozenset((
 # Тогда сюда — и вот это как раз НАСТРОЙКА развёртывания, законно разная у разных
 # проектов, в отличие от ①.
 NOT_JUDGED_HERE = frozenset(("tests", "migrations"))
+# ③ «НАШ РЕПОЗИТОРИЙ, ЧУЖОЕ АВТОРСТВО» (§6) — механика контура и снимок канонов:
+# судит их сьют канона, не гейт проекта. Выражение НЕ своё, а доктора (`CONTOUR_RE`,
+# зеркало `exclude_contour()` гейта длины): третья копия разошлась бы, как две
+# разошлись до `cqg@2.35`. Поле local-web-agent 17.10: `LINT_PY_SRC=.` и локальный
+# снимок дали `silent-except` на `docs/canon/stack_selftest.py`.
+CONTOUR = HookReaders.CONTOUR_RE
 
 # «Тестовый файл» — понятие §3.1e, и это ЕДИНОЕ выражение: тот же ERE стоит в
 # `check_grep_gate.sh`, `check_file_length.sh`, `mutation_ts.sh` и
@@ -76,7 +83,7 @@ IS_TEST = re.compile(
 
 
 def in_population(rel_posix: str) -> bool:
-    """Судит ли гейт этот файл. Один вход на оба принципа отбора.
+    """Судит ли гейт этот файл. Один вход на все три принципа отбора.
 
     Сверяется ЭЛЕМЕНТ пути, а не подстрока: `my_node_modules_util/` и
     `venv_helper.py` — продуктовый код, и слабая форма (`"venv" in path`)
@@ -84,7 +91,8 @@ def in_population(rel_posix: str) -> bool:
     совпал бы ещё и каталог НАД репозиторием (`/home/u/build/proj/...`).
     """
     parts = set(rel_posix.split("/"))
-    return not (parts & NOT_OUR_CODE) and not (parts & NOT_JUDGED_HERE)
+    return not (parts & NOT_OUR_CODE or parts & NOT_JUDGED_HERE
+                or CONTOUR.match(rel_posix))
 
 
 RULES = {

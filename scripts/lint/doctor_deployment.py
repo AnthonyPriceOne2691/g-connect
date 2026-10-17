@@ -267,20 +267,28 @@ class DeploymentScreen:
         # вовсе. Ложное красное на верной раскладке; исполнитель идёт «доложить
         # из docs/canon/» и портит рабочие документы канонными.
         #
-        # Население сужено до имён, которые едут КОРНЕМ: канон и его селфтест
-        # кладутся в корень проекта, оттуда их и зовут. Файл с тем же именем
-        # глубже в дереве — чужой, и сверять его со снимком не о чем.
-        code, listing = run(["git", "ls-files"], self.root)
+        # Население сужено по ПРИРОДЕ файла, а не по месту: см. `_copies_of`.
         out = []
-        for rel in (listing.splitlines() if code == 0 else []):
-            if rel.startswith(f"{self.CANON_DIR}/") or rel != name:
-                continue
+        for rel in self._copies_of(name):
             if rel in adapted or name in adapted:
                 continue
             f = self.root / rel
             if f.is_file() and f.read_bytes() != body:
                 out.append(rel)
         return out
+
+    def _copies_of(self, name: str) -> list[str]:
+        """Копии едущего файла: отслеживаемые, вне снимка.
+
+        ТЕКСТ (README выше) сверяется только в корне; ПРОГРАММУ (`SOURCE_EXT`)
+        зовут оттуда, куда положили, — поле voice 17.10: `scripts/stack_selftest.py`
+        от 08-11 (110 блоков из 116) доктор не видел, смотря в корень.
+        """
+        code, listing = run(["git", "ls-files"], self.root)
+        program = name.endswith(self.SOURCE_EXT)
+        return [rel for rel in (listing.splitlines() if code == 0 else [])
+                if not rel.startswith(f"{self.CANON_DIR}/")
+                and (rel == name or program and rel.endswith("/" + name))]
 
     def _provenance_verdict(self, total: int, torn: list[str], gone: list[str],
                             stale: list[str]) -> None:

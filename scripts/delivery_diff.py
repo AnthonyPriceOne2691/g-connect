@@ -2,16 +2,41 @@
 """Что изменилось: дифф, идентификаторы правки, уроки из архива.
 
 Часть `delivery_check.py` (`delivery@1.53`). Ответ на вопрос «на что вообще
-смотреть»: объём диффа, какие имена в нём появились и какие строки архива к нему
-применимы. Суждения здесь нет — оно в разделах, которые этим пользуются.
+смотреть»: объём диффа, какие имена в нём появились, какие строки архива к нему
+применимы и какие поставки он архивирует. Суждения здесь нет — оно в разделах,
+которые этим пользуются.
 """
 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
-from delivery_base import git, merge_base_of, out_of_blast_radius
+from delivery_base import ROOT, git, merge_base_of, out_of_blast_radius
 from delivery_decisions import DECISION_STOPWORDS
+
+#: STATUS поставки в архиве — тот же образец, что `ARCHIVED_STATUS` у `okf_sync_gate`
+#: (каноны друг друга не импортируют: проект вправе развернуть один без другого).
+ARCHIVED_STATUS = re.compile(r"^delivery/archive/[^/]+/STATUS\.md$")
+
+
+def archived_in_diff(base: str | None) -> list[Path]:
+    """Каталоги поставок, которые архивирует ЭТОТ дифф: их STATUS ДОБАВЛЕН в окне.
+
+    Поле Smart Friend Ally 17.10: handoff и перенос в `archive/` — один коммит, и
+    гейт, смотревший только в `active/`, видел пустоту — «idle», 0 ошибок при
+    неподписанной спеке (§2.3a). Окно — общее у всех потребителей базы. Только
+    ДОБАВЛЕННЫЕ: правка давнего архива поставкой не является (как у `okf@1.20`).
+    `--no-renames` — иначе перенос `active/` → `archive/` пришёл бы переименованием;
+    `-z` — кириллический slug git отдал бы в кавычках, и образец его не узнал бы.
+    """
+    merge_base = merge_base_of(base)
+    if not merge_base:
+        return []
+    out = git("-C", str(ROOT), "diff", "--name-only", "-z", "--diff-filter=A",
+              "--no-renames", f"{merge_base}..HEAD")
+    return [ROOT / Path(f).parent for f in out.split("\0") if ARCHIVED_STATUS.match(f)]
+
 
 def diff_stats(base: str) -> tuple[int, int, int, int, list[str]] | None:
     """(files, added, deleted, excluded, paths) для base..HEAD; None если ref недоступен.

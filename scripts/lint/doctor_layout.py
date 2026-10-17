@@ -271,7 +271,7 @@ class LayoutChecks:
             out[rel] = f"### `{raw}`"
         return out
 
-    def _compare_with_snapshot(self, text: str, rel: str, marker: str, lang: str,
+    def _compare_with_snapshot(self, text: str, rel: str, marker: str, lang: str | None,
                                declared: dict) -> None:
         """Сравнение по МАРКЕРУ — для конфигов, чьё тело лежит под заголовком."""
         live = self.root / rel
@@ -431,8 +431,8 @@ class LayoutChecks:
         self._judge_payload_bodies(canon_dir, snap, declared)
         text = snap.read_text(encoding="utf-8", errors="replace")
 
-        # Язык блока для конфигов — `yaml` исторически; на деле сверяется ТЕЛО,
-        # а не подсветка, поэтому одного значения хватает всем формам.
+        # Язык — ВЫБОР блока, а не подсветка: `"yaml"` для всех (`cqg@2.22`) сверял
+        # шесть конфигов из десяти не с их телом. `None` — блок под самим маркером.
         for rel, marker in sorted(self.canon_configs(text).items()):
-            self._compare_with_snapshot(text, rel, marker, "yaml", declared)
+            self._compare_with_snapshot(text, rel, marker, None, declared)
 
