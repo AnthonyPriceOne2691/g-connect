@@ -280,6 +280,8 @@ describe('таблица со шапкой и строкой текстом (X7,
     // Живой прогон упал и здесь: откат создания читал ревизию «Моего диска» как таблицы.
     const undone = await callMcp(gcUndo, { target: 'Мой диск' }, notASheet);
     expect((undone.data as { status: string }).status).toBe('ok');
+    // Живой ответ был «не удалён.. НЕ вернулось»: точка фразы и точка шаблона подряд.
+    expect((undone.data as { hint: string }).hint).not.toContain('..');
     expect(drive.trashed).toEqual(['FILE1']);
     expect(asked).toBe(0);
   });
