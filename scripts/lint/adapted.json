@@ -1,0 +1,15 @@
+{
+  "_": "Объявленные адаптации канонных файлов (CQG §5.5, cqg@1.71). reason — почему отличается, changed — что именно переносить при следующем обновлении. Пометка ПОЧИНКА — правка дефекта канона: снять запись, когда канон починит у себя (cqg@2.07 ③).",
+  ".dependency-cruiser.cjs": {
+    "reason": "слои G connect вместо канонных models/services/web: ядро — лист, шов с googleapis ровно один",
+    "changed": "forbidden целиком: core-is-leaf (src/core не зависит от mcp/cli), library-seam-is-one (googleapis только из src/core/google), no-circular, no-orphans; канонные models-is-leaf и services-no-web сняты — таких слоёв нет. Канон 2.32→2.55 файл не менял: на накате 2.55 переносить было нечего"
+  },
+  ".github/workflows/quality.yml": {
+    "reason": "TS-проект без backend/frontend: одна джоба на Node, шаги зовут npm/npx, а не venv и pip; свои шаги — проба собранного сервера по протоколу",
+    "changed": "джобы gates/delivery канона сведены в quality; установка — npm ci; Typecheck, Tests, Coverage — npx tsc/vitest; шаг probe (npm run build && node scripts/probe_mcp.mjs); delivery_check без --require-ci; шагов Canon payload selftest, OKF и smoke evals нет (вариант D, OKF не развёрнут). С канона 2.55 перенесён шаг «Diff base» (одна база на джобу, отказ вслух)"
+  },
+  ".pre-commit-config.yaml": {
+    "reason": "транспорт local и TS-гейты: значения LINT_* в entry каждого хука, python-хуки канона (ruff, mypy, AST-правила) не применимы — python-кода продукта нет",
+    "changed": "хуки typecheck/eslint/prettier/tests на npx; check_grep_gate_ts.sh вместо check_grep_gate.sh; маска длины *.ts *.py *.mjs; у jscpd и complexity нет files: — идут на любом коммите, поэтому маски TS из cqg@2.53 не нужны. С канона 2.55 перенесён default_stages: [pre-commit] (cqg@2.47)"
+  }
+}

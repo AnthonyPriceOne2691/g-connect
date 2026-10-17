@@ -27,9 +27,11 @@
 
 ## Развёрнуто на сегодня
 
-- ① Delivery — да. ② CQG — нет (шаг 2 §0.1 в backlog, момент: конец фазы 1).
-  ③ OKF — нет (момент: после фазы 2). ④ CI и гейт мержа — нет.
-- Поэтому в STATUS честно стоит `shape-oracles: weak`, `ci-oracles: weak`.
+- ① Delivery — да (`delivery@2.01`). ② CQG — да (`cqg@2.55`, адаптирован под TS: карта ролей
+  в `delivery/STACK-ACCEPTANCE.md`). ③ OKF — нет. ④ CI (`quality.yml`) и гейт мержа
+  (`scripts/merge_guard.sh`) — да; серверной защиты ветки нет.
+- Каноны — вариант D (AGENT_STACK §7.1a): репозиторий публичный, тексты контура в git не
+  коммитятся. Снимок `docs/canon/` лежит только локально и закрыт `.git/info/exclude`.
 
 ## Гейт перед объявлением done
 

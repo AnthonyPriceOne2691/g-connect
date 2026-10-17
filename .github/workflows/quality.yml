@@ -14,6 +14,35 @@ jobs:
           # merge_guard и baseline-ratchet сравнивают с origin/main — нужна история.
           fetch-depth: 0
 
+      # База диффа — одна на джобу, отказ — вслух (CQG §8.3a, перенесено с cqg@2.55). Без
+      # неё baseline-ratchet брал дефолт origin/main, а на push в main это сам HEAD: дифф
+      # пуст, и ратчет проходил, ничего не сравнив. PR — ветка назначения; push — состояние
+      # до толчка; ни то ни другое недостижимо — отказ с причиной, а не тихий фолбэк.
+      - name: Diff base (одна на джобу, отказ — вслух)
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          else
+            before="${{ github.event.before }}"
+            zero="0000000000000000000000000000000000000000"
+            if [ -n "$before" ] && [ "$before" != "$zero" ] \
+               && git cat-file -e "${before}^{commit}" 2>/dev/null; then
+              base="$before"
+            else
+              default="${{ github.event.repository.default_branch }}"
+              base="$(git merge-base "origin/$default" HEAD 2>/dev/null || true)"
+              if [ -z "$base" ] || [ "$base" = "$(git rev-parse HEAD)" ]; then
+                echo "::error::база диффа не определима (before=$before, default=$default):"\
+                     "первый push репозитория или переписанная история." \
+                     "Открой PR или сделай второй коммит — гейт не имеет права судить пустоту."
+                exit 1
+              fi
+            fi
+          fi
+          echo "BASE=$base" >> "$GITHUB_ENV"
+          echo "база диффа: $base"
+
       - uses: actions/setup-node@v4
         with:
           node-version: '24'

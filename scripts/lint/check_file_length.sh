@@ -110,7 +110,7 @@ baseline_lookup() {
 # И то же правило читает доктор (CONTOUR_RE): зеркало обязано совпадать, иначе
 # полная канонная раскладка обвиняет сама себя (замер: DEAD 1 на свежем стенде).
 exclude_contour() {
-  grep -vE '^(scripts/lint/|scripts/delivery_(check|metrics)\.py$|scripts/okf_[a-z_]+\.py$|scripts/merge_guard\.sh$|delivery/|knowledge/|([^/]+/)*(\.dependency-cruiser|eslint\.config)\.[cm]?js$)'
+  grep -vE '^(scripts/lint/|scripts/delivery_(check|metrics)\.py$|scripts/okf_[a-z_]+\.py$|scripts/merge_guard\.sh$|delivery/|knowledge/|docs/canon/|([^/]+/)*(\.dependency-cruiser|eslint\.config)\.[cm]?js$)'
 }
 
 scanned=0
