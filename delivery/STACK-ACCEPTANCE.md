@@ -1,7 +1,7 @@
 # Stack acceptance
 
-**Date:** 2026-09-01 (развёртывание) · 2026-10-17 (накат delivery 1.84→2.01, cqg 2.32→2.55)
-**Stack:** delivery@2.01 · cqg@2.55 · okf@absent
+**Date:** 2026-09-01 (развёртывание) · 2026-10-17 (накат delivery 1.84→2.01, cqg 2.32→2.56)
+**Stack:** delivery@2.01 · cqg@2.56 · okf@absent
 **Где лежат каноны:** вариант D (AGENT_STACK §7.1a) — тексты контура только локально:
 `~/Documents/Prepare/` и снимок `docs/canon/`, в git не уезжают (`.git/info/exclude`);
 механика (`scripts/**`, конфиги, workflow) коммитится. Репозиторий публичный, а каноны —
@@ -54,13 +54,17 @@ stale_after: 2026-11-17
 
 ## Полнота, не только зелёность
 
+Прогон 2026-10-17, накат на cqg@2.56 · delivery@2.01 (ветка `chore/contour-2.55`):
+
 - [x] `check_gate_coverage.sh` — OK: 16 скриптов, подключено 9, осознанно нет 7, правил сверено 6
-- [x] `pre-commit run --all-files` — 23 хука, все зелёные
+- [x] `pre-commit run --all-files` — 23 хука, все зелёные; сьют — 610 тестов
 - [x] `contour_doctor.py` — **DEAD 0**: ни один объявленный гейт не молчит на своём нарушении.
-      AUTO 41 · WEAK 9 · ABSENT 7 · TOOL 3 · SKIP 2. WEAK — честные пропуски по
-      отсутствию python-инструментов в пробе доктора (ruff, mutmut, pip-audit, pytest-cov)
-- [ ] `stack_selftest.py` — n/a: каноны вне репозитория, самопроверка гоняется в `Prepare/`
-- [x] `python3 scripts/delivery_check.py` — прогнан, errors нет
+      AUTO 46 · WEAK 15 · ABSENT 3 · TOOL 3 · SKIP 0. WEAK — честные пропуски по
+      отсутствию python-инструментов в пробе доктора (ruff, mutmut, pip-audit, pytest-cov),
+      четыре объявленные адаптации, сьют на pre-push, область jscpd 73 из 74
+- [ ] `stack_selftest.py` — external: вариант D, самопроверка гоняется в `Prepare/`
+- [x] `extract_payload.py --check-local` — отслеживается 0, без игнора 0
+- [x] `python3 scripts/delivery_check.py` — 0 ошибок (активной поставки нет, гейт в ожидании)
 - [x] Число просмотренных артефактов непустое: `delivery_check` читает STATUS, constitution,
       `.claude/settings.json`, `decisions.md`, `archive/INDEX.md` — не «нет каталога, пропускаю»
 
