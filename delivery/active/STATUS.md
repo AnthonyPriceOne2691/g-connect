@@ -6,7 +6,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=kind=feature
 - **diagnosis:** n/a reason=kind=feature
-- **phase:** implement
+- **phase:** verify
 - **builder:** agent:claude-opus-5-5
 - **verifier:** human:anton
 - **human_ok_spec:** yes (by=human:anton, at=2026-10-17) reason=ответ «Подписываю» на вопрос с вариантами, спека и план предъявлены вместе; решения владельца в спеке: «всё своё на срок», срок до 23:59 местного, Secretive и Touch ID, клиент только Claude Code
@@ -19,7 +19,7 @@
 - **parallel_sessions:** merge-guard
 - **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
 - **blockers:** none
-- **waivers:** none
+- **waivers:** max_files_touched=46 max_loc_diff=2452 max_runtime_paths=3 reason=поставка цельная: подпись разрешения, право записи по нему, gc_grant, таблица со шапкой и подключение к Claude Code держатся друг за друга; замер разреза показал, что первая часть всё равно 43 файла и 2170 строк — слово владельца в сессии 2026-10-17 («Одна поставка, waiver») by=human:anton at=2026-10-17
 - **runtime_paths:** src/core/grant*.ts,scripts/install_stable.sh,scripts/connect_claude.sh
   <!-- окно Touch ID из дочернего процесса сервера через агента Secretive, ssh-keygen -Y sign/verify, запись в конфиги Claude Code уровня пользователя: отказ виден только живьём (слайс 7) -->
 - **irreversible_surfaces:** none reason=записи в Google идут через превью, журнал и откат, удаление — в корзину; правка ~/.claude/settings.json и ~/.claude/CLAUDE.md — скриптом с резервной копией и согласием владельца; писем и доступа по ссылке поставка не добавляет

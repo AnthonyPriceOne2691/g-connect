@@ -15,6 +15,8 @@
 #   scripts/connect_claude.sh --apply             # подключить
 #   scripts/connect_claude.sh --disconnect        # показать, что снимется
 #   scripts/connect_claude.sh --disconnect --apply
+# Ключ Secretive для подписи разрешений — GCONNECT_GRANT_KEY (по умолчанию «G connect»
+# в самом сервере): `GCONNECT_GRANT_KEY=irreversible scripts/connect_claude.sh --apply`.
 # Для проверки на временном каталоге: CLAUDE_HOME (вместо ~/.claude), CLAUDE_JSON (вместо
 # ~/.claude.json), CLAUDE_BIN (вместо `claude`).
 set -euo pipefail
@@ -27,6 +29,8 @@ SETTINGS="$CLAUDE_HOME/settings.json"
 MEMO="$CLAUDE_HOME/CLAUDE.md"
 RULE='mcp__g-connect__*'
 NAME='g-connect'
+KEY_ENV=()
+[[ -n "${GCONNECT_GRANT_KEY:-}" ]] && KEY_ENV=(--env "GCONNECT_GRANT_KEY=$GCONNECT_GRANT_KEY")
 
 MODE=connect
 APPLY=0
@@ -52,6 +56,7 @@ edit() { python3 "$ROOT/scripts/connect_claude_edit.py" "$@"; }
 if [[ "$APPLY" == 0 ]]; then
   printf 'connect_claude (%s, показ — ничего не пишу):\n' "$MODE"
   printf '  сервер:  %s %s\n' "$NODE" "$SERVER"
+  printf '  ключ:    %s\n' "${GCONNECT_GRANT_KEY:-G connect (по умолчанию сервера)}"
   edit status "$SETTINGS" "$MEMO" "$RULE"
   printf 'Сделать: scripts/connect_claude.sh%s --apply\n' "$([[ "$MODE" == disconnect ]] && echo ' --disconnect')"
   exit 0
@@ -67,7 +72,8 @@ printf 'резервные копии: %s\n' "$BACKUP"
 "$CLAUDE_BIN" mcp remove "$NAME" --scope user >/dev/null 2>&1 || true
 if [[ "$MODE" == connect ]]; then
   "$CLAUDE_BIN" mcp add --scope user --transport stdio --env GCONNECT_ACCOUNT=default \
-    "$NAME" -- "$NODE" "$SERVER" >/dev/null || die "claude mcp add не удался — откат из $BACKUP"
+    ${KEY_ENV[@]+"${KEY_ENV[@]}"} "$NAME" -- "$NODE" "$SERVER" >/dev/null \
+    || die "claude mcp add не удался — откат из $BACKUP"
   edit connect "$SETTINGS" "$MEMO" "$RULE"
   printf '%sG connect подключён: новые сессии Claude Code в любом проекте видят mcp__g-connect__*.%s\n' \
     "$green" "$reset"

@@ -72,6 +72,15 @@ describe('connect_claude.sh — подключение ко всем проек�
     expect(await readdir(join(home, '.claude', 'backups'))).toHaveLength(1);
   });
 
+  it('ключ подписи передаётся серверу: GCONNECT_GRANT_KEY=irreversible', async () => {
+    env = { ...env, GCONNECT_GRANT_KEY: 'irreversible' };
+    run('--apply');
+    const calls = (await readFile(claudeLog, 'utf8')).trim().split('\n');
+    expect(calls[1]).toContain(
+      '--env GCONNECT_ACCOUNT=default --env GCONNECT_GRANT_KEY=irreversible g-connect --',
+    );
+  });
+
   it('повторный --apply не дублирует ни правило, ни памятку; чужой текст памятки цел', async () => {
     await writeFile(join(home, '.claude', 'CLAUDE.md'), '# Мои правила\n\nНе трогать.\n');
     run('--apply');
