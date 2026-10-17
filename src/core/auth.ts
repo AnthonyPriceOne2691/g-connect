@@ -1,10 +1,11 @@
 /**
- * OAuth: вход, обновление токена, смена набора прав (DESIGN.md §11.7, §13.5).
+ * OAuth: вход и пригодность профиля (DESIGN.md §11.7, §13.5).
  *
  * Обмен кода на токен делает ЯДРО — ни `client_secret`, ни токен не уходят в браузер
  * и наружу из этого модуля: панель получает статус (§13.5). Сетевая часть вынесена
  * за интерфейс `TokenExchanger`, поэтому и петля redirect'а, и логика обновления
- * проверяются без Google.
+ * проверяются без Google. Токен после входа ложится сразу шифротекстом (D-24); обновление
+ * access-токена живёт в хранилище процесса — `src/core/token/vault.ts`.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -13,12 +14,12 @@ import { gcError } from './errors.js';
 import {
   DEFAULT_ACCOUNT,
   missingScopes,
-  profileStatus,
   readOAuthClient,
-  readToken,
-  writeToken,
+  requireProfile,
+  writeSealedToken,
   type OAuthClient,
   type StoredToken,
+  type TokenSealer,
 } from './profiles.js';
 
 /**
@@ -36,12 +37,20 @@ export const MVP_SCOPES = [
 ] as const;
 
 export const REDIRECT_PORT = 3333;
-/** Порог обновления: токен считается истёкшим заранее, чтобы не упасть на середине запроса. */
-const EXPIRY_SKEW_MS = 60_000;
 
 export interface TokenExchanger {
   exchangeCode(client: OAuthClient, code: string): Promise<StoredToken>;
   refresh(client: OAuthClient, refreshToken: string): Promise<StoredToken>;
+}
+
+/**
+ * Отзыв входа — для перехода на шифротекст (`gc seal`, D-24). По документации Google отзыв
+ * гасит ВСЕ токены приложения и не мгновенно, поэтому вход после него — только когда
+ * старый токен уже не принимается (`isAlive` — false).
+ */
+export interface TokenRevoker {
+  revoke(refreshToken: string): Promise<void>;
+  isAlive(client: OAuthClient, refreshToken: string): Promise<boolean>;
 }
 
 export function buildAuthUrl(
@@ -166,6 +175,8 @@ export interface LoginOptions {
   readonly account?: string;
   readonly scopes?: readonly string[];
   readonly exchanger: TokenExchanger;
+  /** Шифровальщик ключа анклава: токен ложится на диск только шифротекстом (D-24). */
+  readonly sealer: TokenSealer;
   /** Как показать ссылку человеку: открыть браузер или напечатать. */
   readonly present?: (url: string) => void | Promise<void>;
   readonly port?: number;
@@ -177,7 +188,7 @@ export interface LoginResult {
   readonly scopes: readonly string[];
 }
 
-/** Полный вход: ссылка → согласие → код → токен в профиль (600). */
+/** Полный вход: ссылка → согласие → код → токен в профиль шифротекстом (600). */
 export async function login(options: LoginOptions): Promise<LoginResult> {
   const account = options.account ?? DEFAULT_ACCOUNT;
   const scopes = options.scopes ?? MVP_SCOPES;
@@ -202,37 +213,29 @@ export async function login(options: LoginOptions): Promise<LoginResult> {
       cause: 'no_refresh_token',
     });
   }
-  await writeToken(token, account);
+  await writeSealedToken(
+    options.sealer,
+    {
+      refresh_token: token.refresh_token,
+      ...(token.scope === undefined ? {} : { scope: token.scope }),
+    },
+    account,
+  );
   return { account, scopes: (token.scope ?? scopes.join(' ')).split(/\s+/).filter(Boolean) };
 }
 
-export interface AccessTokenOptions {
-  readonly account?: string;
-  readonly scopes?: readonly string[];
-  readonly exchanger: TokenExchanger;
-  readonly now?: () => number;
-}
-
-/**
- * Действующий access-токен: из профиля, при истечении — обновлённый.
- * Недостающее право — отдельная ошибка с объяснением, ЧТО именно не выдано и зачем:
- * иначе смена набора scopes выглядит как «доступ сломался».
- */
 const SCOPE_PREFIX = 'https://www.googleapis.com/auth/';
 
-/** Профиль пригоден и права выданы — или ошибка с действием. Вынесено ради сложности. */
-async function requireUsableProfile(account: string, required: readonly string[]): Promise<void> {
-  const status = await profileStatus(account);
-  if (status.state !== 'connected') {
-    const code =
-      status.state === 'no_profile'
-        ? 'no_profile'
-        : status.state === 'no_credentials'
-          ? 'no_credentials'
-          : 'auth_expired';
-    throw gcError(code, { detail: `Профиль «${account}»: ${status.state}. Нужен вход.` });
-  }
-
+/**
+ * Профиль пригоден и права выданы — или ошибка с действием. Недостающее право — отдельная
+ * ошибка с объяснением, ЧТО именно не выдано и зачем: иначе смена набора scopes выглядит
+ * как «доступ сломался».
+ */
+export async function requireUsableProfile(
+  account: string,
+  required: readonly string[] = MVP_SCOPES,
+): Promise<void> {
+  const status = await requireProfile(account);
   const lacking = missingScopes(status, required);
   if (lacking.length === 0) return;
   throw gcError('scope_missing', {
@@ -241,36 +244,4 @@ async function requireUsableProfile(account: string, required: readonly string[]
       'Нужен повторный вход — набор прав изменился, старый токен их не покрывает.',
     cause: lacking.join(' '),
   });
-}
-
-export async function ensureAccessToken(options: AccessTokenOptions): Promise<string> {
-  const account = options.account ?? DEFAULT_ACCOUNT;
-  const now = options.now ?? Date.now;
-
-  await requireUsableProfile(account, options.scopes ?? MVP_SCOPES);
-
-  const token = await readToken(account);
-  const accessToken = token?.access_token;
-  const expiry = token?.expiry_date;
-  const fresh =
-    accessToken !== undefined && (expiry === undefined || expiry - EXPIRY_SKEW_MS > now());
-  if (fresh) return accessToken;
-
-  const client = await readOAuthClient(account);
-  const refreshed = await options.exchanger.refresh(client, token?.refresh_token ?? '');
-  // Google не возвращает refresh_token при обновлении — потерять его нельзя.
-  const keptRefresh = refreshed.refresh_token ?? token?.refresh_token;
-  const merged: StoredToken = {
-    ...token,
-    ...refreshed,
-    ...(keptRefresh === undefined ? {} : { refresh_token: keptRefresh }),
-  };
-  await writeToken(merged, account);
-  if (merged.access_token === undefined) {
-    throw gcError('auth_expired', {
-      detail: 'Google не вернул access-токен при обновлении.',
-      cause: 'refresh_without_access_token',
-    });
-  }
-  return merged.access_token;
 }

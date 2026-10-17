@@ -100,7 +100,9 @@ try {
   const names = (tools.result?.tools ?? []).map((t) => t.name);
   // D-23: седьмой — gc_grant, право проекта, а не документ. Его действия обязаны быть в
   // СХЕМЕ транспорта: без open агенту нечем попросить палец, без revoke — отозвать.
-  check('инструментов ровно семь', names.length === 7, names.join(', '));
+  // D-24: восьмой — gc_unlock, касание для токена Google; без него Google не открыть вовсе.
+  check('инструментов ровно восемь', names.length === 8, names.join(', '));
+  check('gc_unlock объявлен', names.includes('gc_unlock'));
   const grantActions =
     (tools.result?.tools ?? []).find((t) => t.name === 'gc_grant')?.inputSchema?.properties?.action
       ?.enum ?? [];
