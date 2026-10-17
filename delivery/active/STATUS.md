@@ -6,13 +6,13 @@
 - **kind:** feature
 - **repro_test:** n/a reason=kind=feature
 - **diagnosis:** n/a reason=kind=feature
-- **phase:** implement
+- **phase:** verify
 - **builder:** agent:claude-opus-5-5
 - **verifier:** human:anton
 - **human_ok_spec:** yes (by=human:anton, at=2026-10-17) reason=ответ «Подписываю» на вопрос с вариантами; решения владельца в спеке: ключ анклава «палец или пароль Mac», запасной ход `gc run` — да, накат контура cqg@2.63 · delivery@2.04 — до кода поставки
 - **human_ok_plan:** yes (by=human:anton, at=2026-10-17) reason=ответ «Подписываю» на вопрос с вариантами: план из семи слайсов, отклонённые альтернативы в plan.md, waiver 35/1800/4
 - **shape-oracles:** cqg-deployed
-- **behavior-oracles:** tests-present (671 тест; тесты инструментов — через настоящий протокол)
+- **behavior-oracles:** tests-present (717 тестов; тесты инструментов — через настоящий протокол; живой прогон U1–U14 — 2026-10-18, `live-run.md`)
 - **artifact_oracle:** scripts/probe_mcp.mjs reason=судит СОБРАННЫЙ сервер по протоколу — в CI на каждом PR и перед переключением стабильной сборки
 - **ci-oracles:** tooling
 - **worktree:** ветка feat/token-touch reason=класс L (§5.1); мерж только через merge_guard.sh, за ним contour_doctor
