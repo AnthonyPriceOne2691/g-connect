@@ -30,6 +30,10 @@ export type ErrorCode =
   | 'needs_grant'
   | 'grant_declined'
   | 'grant_key_missing'
+  | 'google_locked'
+  | 'unlock_declined'
+  | 'seal_tool_missing'
+  | 'token_unsealed'
   | 'ambiguous_target'
   | 'bad_request'
   | 'internal';
@@ -50,6 +54,9 @@ export type ActionKind =
   | 'clarify_target'
   | 'open_grant'
   | 'setup_grant_key'
+  | 'unlock_google'
+  | 'install_age'
+  | 'seal_token'
   | null;
 
 export interface CatalogEntry {
@@ -186,6 +193,35 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, CatalogEntry>> = {
     retryable: false,
     action: 'setup_grant_key',
     actionLabel: 'Создать ключ «G connect» в Secretive',
+  },
+  /**
+   * Токен Google под пальцем (D-24): в этом процессе Google ещё не открыт или час истёк.
+   * Повтор того же вызова не поможет — окно вызывает только `gc_unlock`, после строки
+   * человеку.
+   */
+  google_locked: {
+    title: 'Google закрыт для этой сессии',
+    retryable: false,
+    action: 'unlock_google',
+    actionLabel: 'Сказать человеку, что G connect попросит палец, и вызвать gc_unlock',
+  },
+  unlock_declined: {
+    title: 'Google не открыт: касания не было',
+    retryable: true,
+    action: 'unlock_google',
+    actionLabel: 'Открыть Google ещё раз, если человек согласен',
+  },
+  seal_tool_missing: {
+    title: 'Нет программ для шифрования токена',
+    retryable: false,
+    action: 'install_age',
+    actionLabel: 'Установить: brew install age age-plugin-se',
+  },
+  token_unsealed: {
+    title: 'Токен Google лежит открытым файлом',
+    retryable: false,
+    action: 'seal_token',
+    actionLabel: 'Владелец запускает gc seal в терминале',
   },
   plan_already_applied: {
     title: 'Этот план уже записан',
