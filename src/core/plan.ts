@@ -46,6 +46,8 @@ export interface PlanStructure {
   readonly count?: number;
   readonly title?: string;
   readonly anchor?: string;
+  /** Сверка записываемого содержимого — у таблицы, созданной со шапкой и строками (D-23). */
+  readonly content?: string;
 }
 
 export interface PlanShape {

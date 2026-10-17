@@ -185,6 +185,9 @@ export function snapshot(sheets: SheetSnapshot[] = [reportSheet()]): Spreadsheet
 export interface RecordedWrite {
   readonly range: string;
   readonly values: readonly (readonly CellValue[])[];
+  /** Только у updateValues: в какой файл и в каком режиме ввода. */
+  readonly id?: string;
+  readonly input?: 'user' | 'raw';
 }
 
 /** Фейковый клиент: запоминает записи, чтобы проверять, что dryRun действительно не пишет. */
@@ -380,11 +383,13 @@ export class FakeSheetsClient implements SheetsClient {
   }
 
   async updateValues(
-    _id: string,
+    id: string,
     range: string,
     values: readonly (readonly CellValue[])[],
+    input: 'user' | 'raw' = 'user',
   ): Promise<void> {
-    this.writes.push({ range, values });
+    // Куда и как — тоже факт записи: шапка новой таблицы уходит в ЕЁ id и текстом (RAW).
+    this.writes.push({ range, values, id, input });
   }
 
   async appendValues(

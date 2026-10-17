@@ -68,6 +68,7 @@ const SAMPLE: Record<string, unknown> = {
   style: { bold: true, fontSize: 12, color: '#112233' },
   namedStyle: 'HEADING_2',
   rows: 2,
+  asText: false,
   table: 1,
   tableWithCell: 'Иванов',
   rowWithCell: 'Иванов',
@@ -85,6 +86,8 @@ function sampleFor(op: OperationName): Record<string, unknown> {
   const special: Record<string, unknown> = {
     where: isDoc ? { textStartsWith: 'Составы' } : { Проект: 'G connect' },
     columns: op === 'insertTable' ? 3 : ['Статус'],
+    // У createSheet `rows` — строки новой таблицы, у insertTable — их число (D-23).
+    rows: op === 'createSheet' ? [['x.com', '2025-06-01']] : 2,
   };
   const sample: Record<string, unknown> = { op };
   for (const field of Object.keys(shapeOf(op))) {

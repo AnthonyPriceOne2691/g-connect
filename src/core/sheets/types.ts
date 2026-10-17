@@ -334,8 +334,16 @@ export interface SheetsClient {
    * десятков тысяч ячеек.
    */
   sheetTitles(id: string): Promise<readonly string[]>;
-  /** Запись значений в A1-диапазон; `values` — как ввёл бы человек. */
-  updateValues(id: string, range: string, values: readonly (readonly CellValue[])[]): Promise<void>;
+  /**
+   * Запись значений в A1-диапазон. `input: 'user'` (по умолчанию) — как ввёл бы человек:
+   * «2025-06-01» станет датой; `'raw'` — текстом, как есть (D-23, таблица со шапкой).
+   */
+  updateValues(
+    id: string,
+    range: string,
+    values: readonly (readonly CellValue[])[],
+    input?: 'user' | 'raw',
+  ): Promise<void>;
   appendValues(id: string, range: string, values: readonly (readonly CellValue[])[]): Promise<void>;
   /** Правки, которых нет в values-API: вид ячеек (§6.2), дальше — структурные (2.5b). */
   batchUpdate(id: string, requests: readonly SheetRequest[]): Promise<void>;

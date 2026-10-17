@@ -198,6 +198,86 @@ describe('создание в «Моём диске» (T7)', () => {
   });
 });
 
+describe('таблица со шапкой и строкой текстом (X7, T11)', () => {
+  const X7 = {
+    op: 'createSheet',
+    target: 'Мой диск',
+    name: 'Тест G connect',
+    columns: ['domain', 'period_start'],
+    rows: [['x.com', '2025-06-01']],
+  };
+
+  it('превью называет шапку и строку, код плана меняется вместе с содержимым', async () => {
+    const { deps, drive } = harness(granted());
+    const preview = (await callMcp(gcApply, X7, deps)).data as { notes: string[]; planId: string };
+    expect(preview.notes).toEqual(
+      expect.arrayContaining(['Шапка: domain | period_start', '  x.com | 2025-06-01']),
+    );
+    const other = (await callMcp(gcApply, { ...X7, rows: [['y.com', '2025-06-01']] }, deps))
+      .data as { planId: string };
+    expect(other.planId).not.toBe(preview.planId);
+    expect(drive.created).toHaveLength(0);
+  });
+
+  it('под разрешением — с первой фразы: файл в «Моём диске», шапка и строка текстом (RAW)', async () => {
+    const { deps, drive, client, journalled } = harness(granted());
+    const result = await callMcp(gcApply, { ...X7, dryRun: false }, deps);
+    expect((result.data as { status: string }).status).toBe('ok');
+    expect(drive.created[0]).toMatchObject({ name: 'Тест G connect', parentId: 'root' });
+    expect(client.writes).toEqual([
+      {
+        id: 'FILE1',
+        range: 'A1',
+        values: [
+          ['domain', 'period_start'],
+          ['x.com', '2025-06-01'],
+        ],
+        input: 'raw',
+      },
+    ]);
+    const notes = (result.data as { notes: string[] }).notes.join('\n');
+    expect(notes).toContain('https://drive.google.com/open?id=FILE1');
+    expect(notes).toContain('пишется сразу');
+    const undone = await callMcp(gcUndo, { target: 'Мой диск' }, deps);
+    expect((undone.data as { status: string }).status).toBe('ok');
+    expect(drive.trashed).toEqual(['FILE1']);
+    expect(journalled.at(-1)).toMatchObject({ op: 'undo', project: PROJECT });
+  });
+
+  it('сбой записи шапки не оставляет сироту без журнала: файл уходит в корзину', async () => {
+    const { deps, drive, journalled } = harness(granted());
+    const failing = new FakeSheetsClient(snapshot());
+    failing.updateValues = () => Promise.reject(new Error('квота'));
+    const result = await callMcp(
+      gcApply,
+      { ...X7, dryRun: false },
+      { ...deps, sheets: () => Promise.resolve(failing) },
+    );
+    expect(result.ok).toBe(false);
+    expect(drive.trashed).toEqual(['FILE1']);
+    expect(journalled).toHaveLength(0);
+  });
+
+  it('строка длиннее шапки — вопрос, а не догадка; файл не создаётся', async () => {
+    const { deps, drive } = harness(granted());
+    const result = await callMcp(
+      gcApply,
+      { ...X7, rows: [['x.com', '2025-06-01', 'лишнее']], dryRun: false },
+      deps,
+    );
+    expect(result.error).toMatchObject({ code: 'bad_request', cause: 'row_wider_than_header' });
+    expect(drive.created).toHaveLength(0);
+  });
+
+  it('содержимое сверх конверта (50 ячеек) — план и код, а не запись с первой фразы', async () => {
+    const { deps, drive } = harness(granted());
+    const rows = Array.from({ length: 30 }, (_, i) => [`site${i}.com`, '2025-06-01']);
+    const result = await callMcp(gcApply, { ...X7, rows, dryRun: false }, deps);
+    expect((result.data as { status: string }).status).toBe('confirm_required');
+    expect(drive.created).toHaveLength(0);
+  });
+});
+
 describe('откат видит только записи своего проекта (X10)', () => {
   /** Запись проекта OTHER: журнал и таблица общие — откат судит ту же таблицу, что писали. */
   const journalWithOther = async (): Promise<{

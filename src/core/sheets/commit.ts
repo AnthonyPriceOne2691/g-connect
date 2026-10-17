@@ -162,6 +162,7 @@ function planOf(
             ...(structural.to === undefined ? {} : { to: structural.to }),
             ...(structural.title === undefined ? {} : { title: structural.title }),
             ...(structural.anchor === undefined ? {} : { anchor: structural.anchor }),
+            ...(structural.content === undefined ? {} : { content: structural.content }),
           },
         }),
   };

@@ -244,7 +244,18 @@ const createFields = {
   ...commonFields,
 };
 
-export const createSheetOp = z.object({ op: z.literal('createSheet'), ...createFields });
+/**
+ * Таблица со шапкой и строками (D-23): запрос «создай таблицу с шапкой и строкой» ядро
+ * раньше выполнить не могло — в пустой лист шапку не вписать. Значения по умолчанию —
+ * текстом (RAW): дата, которую продиктовал человек, остаётся строкой, а не догадкой.
+ */
+export const createSheetOp = z.object({
+  op: z.literal('createSheet'),
+  ...createFields,
+  columns: z.array(z.string().min(1)).min(1).optional(),
+  rows: z.array(z.array(cellValue)).optional(),
+  asText: z.boolean().default(true),
+});
 export const createDocOp = z.object({ op: z.literal('createDoc'), ...createFields });
 export const createFolderOp = z.object({ op: z.literal('createFolder'), ...createFields });
 
