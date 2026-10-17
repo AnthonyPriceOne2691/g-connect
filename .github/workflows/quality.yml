@@ -5,9 +5,16 @@ on:
     branches: [main]
   pull_request:
 
+# Отмена устаревших прогонов той же ветки (CQG §8.3): из серии пушей осмыслен последний,
+# а каждый прежний держал раннеры на код, который уже неактуален.
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,7 +72,9 @@ jobs:
         if: always()
         run: npx vitest run
 
-      - name: Coverage (изменённый код)
+      # Отчёт покрытия, а не гейт: порога нет ни в vitest.config.ts, ни здесь. Прежнее имя
+      # «Coverage (изменённый код)» обещало суд, которого не было (STACK-ACCEPTANCE, остатки).
+      - name: Coverage (отчёт, порога нет)
         if: always()
         run: npx vitest run --coverage --reporter=dot
 
@@ -94,9 +103,46 @@ jobs:
         if: always()
         run: python3 scripts/lint/contour_doctor.py
 
-      # Мутационный гейт — только на PR: три минуты не влезают в бюджет коммита,
-      # но и жить без него нельзя: это единственный оракул на вопрос
-      # «утверждают ли тесты хоть что-нибудь» (CQG §3).
+  # Мутационный гейт — отдельной джобой, параллельно quality, и только на PR: это
+  # единственный оракул на вопрос «утверждают ли тесты хоть что-нибудь» (CQG §3).
+  #
+  # До 2026-10-17 здесь стоял `npx stryker run` по ВСЕМУ ядру без бюджета: 4993 мутанта
+  # и 22 минуты в сентябре, 45+ минут после уровня 3 (61 файл) — 85–90% времени PR.
+  # Теперь канонный гейт по ИЗМЕНЁННЫМ файлам ядра в маске stryker.config.json, четыре
+  # доли параллельно, бюджет 600 с на долю, «не просудил» — красное (поправка в
+  # scripts/lint/mutation_ts.sh, adapted.json). Полный прогон ядра — руками: `npx stryker run`.
+  mutation:
+    if: github.event_name == 'pull_request'
+    name: mutation (доля ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # дифф с веткой назначения
+
+      - name: Diff base (ветка назначения PR)
+        run: |
+          echo "BASE=origin/${{ github.base_ref }}" >> "$GITHUB_ENV"
+          echo "база диффа: origin/${{ github.base_ref }}"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install (clean clone)
+        run: npm ci
+
       - name: Мутационный гейт (тесты утверждают)
-        if: always() && github.event_name == 'pull_request'
-        run: npx stryker run
+        env:
+          LINT_TS_SRC: src
+          LINT_FE_DIR: .
+          MIN_KILLED: '60'
+          BUDGET_SEC: '600'
+          MUTATION_SHARD: ${{ matrix.shard }}/4
+        run: bash scripts/lint/check_mutation_gate.sh

@@ -6,10 +6,14 @@
   },
   ".github/workflows/quality.yml": {
     "reason": "TS-проект без backend/frontend: одна джоба на Node, шаги зовут npm/npx, а не venv и pip; свои шаги — проба собранного сервера по протоколу",
-    "changed": "джобы gates/delivery канона сведены в quality; установка — npm ci; Typecheck, Tests, Coverage — npx tsc/vitest; шаг probe (npm run build && node scripts/probe_mcp.mjs); delivery_check без --require-ci; шагов Canon payload selftest, OKF и smoke evals нет (вариант D, OKF не развёрнут). С канона 2.55 перенесён шаг «Diff base» (одна база на джобу, отказ вслух)"
+    "changed": "джобы gates/delivery канона сведены в quality; установка — npm ci; Typecheck, Tests, Coverage — npx tsc/vitest; шаг probe (npm run build && node scripts/probe_mcp.mjs); delivery_check без --require-ci; шагов Canon payload selftest, OKF и smoke evals нет (вариант D, OKF не развёрнут). С канона 2.55 перенесён шаг «Diff base» (одна база на джобу, отказ вслух). Своё ускорение 2026-10-17: concurrency с cancel-in-progress; мутации — отдельная джоба mutation на PR, четыре доли параллельно (MUTATION_SHARD), check_mutation_gate.sh с BUDGET_SEC=600 вместо npx stryker run по всему ядру (59 мин на PR #2)"
   },
   ".pre-commit-config.yaml": {
     "reason": "транспорт local и TS-гейты: значения LINT_* в entry каждого хука, python-хуки канона (ruff, mypy, AST-правила) не применимы — python-кода продукта нет",
     "changed": "хуки typecheck/eslint/prettier/tests на npx; check_grep_gate_ts.sh вместо check_grep_gate.sh; маска длины *.ts *.py *.mjs; у jscpd и complexity нет files: — идут на любом коммите, поэтому маски TS из cqg@2.53 не нужны. С канона 2.55 перенесён default_stages: [pre-commit] (cqg@2.47)"
+  },
+  "scripts/lint/mutation_ts.sh": {
+    "reason": "ПОЧИНКА канона, три дефекта TS-половины (2026-10-17, переданы в Prepare): (1) --mutate заменяет маску mutate конфига Stryker, и исключения проекта терялись — у G connect защитное src/core/env.ts; (2) «не просудил» выходил нулём, хотя python-половина с cqg@2.46 красная; (3) долей нет — PR на два десятка файлов ядра не судился за бюджет",
+    "changed": "ts_scope_filter (маска конфига JSON, порядок как у Stryker, удалённые файлы — мимо), ts_shard (MUTATION_SHARD=k/N), коды 1/2 у ts_stryker_setup и шагов, not_judged на исчерпанном бюджете, пропавшем отчёте и вердикте; «мутантов нет» — честное «судить нечего». Снять, когда канон починит у себя; оракул — tests/mutation-scope.test.ts"
   }
 }
