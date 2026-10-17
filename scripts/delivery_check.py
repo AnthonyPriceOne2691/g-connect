@@ -15,11 +15,13 @@ import argparse
 import re
 import sys
 from datetime import date
+from pathlib import Path
 
 from delivery_base import (ACTIVE, ARCHIVE, DELIVERY, ROOT,
                            field,
                            is_placeholder, read, read_json)
 from delivery_decisions import (permission_block)
+from delivery_diff import archived_in_diff
 from delivery_evidence import check_evidence
 from delivery_journals import check_journals
 from delivery_limits import check_limits
@@ -192,12 +194,28 @@ def check_preconditions(args, errors: list[str], warnings: list[str]) -> bool:
             "idle: нет delivery/active/STATUS.md — активной поставки нет (§2.3a). "
             "Начинаешь работу? Создай STATUS по шаблону A.2"
         )
-    else:
-        ctx = check_status_shape(status, args, errors, warnings)
-        check_evidence(status, args, errors, warnings, ctx)
-        check_journals(status, args, errors, warnings, ctx)
-        check_limits(status, args, errors, warnings, ctx)
+    # §2.3a: поставку, которую архивирует ЭТОТ дифф, судят те же разделы.
+    archived = archived_in_diff(getattr(args, "diff_base", None))
+    for home in ([ACTIVE] if status else []) + archived:
+        judge_delivery(home, args, errors, warnings)
     return True
+
+
+def judge_delivery(home: Path, args, errors: list[str], warnings: list[str]) -> None:
+    """Все разделы гейта над ОДНОЙ поставкой — на её фазе; у архивной путь в каждой строке."""
+    status = read(home / "STATUS.md")
+    tag = "" if home == ACTIVE else f"{home.relative_to(ROOT).as_posix()}: "
+    if tag:
+        print(f"судится поставка, которую архивирует этот дифф: {tag[:-2]} "
+              f"(phase={field(status, 'phase') or '?'})")
+    errs: list[str] = []
+    warns: list[str] = []
+    ctx = check_status_shape(status, args, errs, warns, home)
+    check_evidence(status, args, errs, warns, ctx)
+    check_journals(status, args, errs, warns, ctx)
+    check_limits(status, args, errs, warns, ctx)
+    errors.extend(tag + e for e in errs)
+    warnings.extend(tag + w for w in warns)
 
 
 def parse_args():

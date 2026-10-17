@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from delivery_base import (ACTIVE, ActiveCtx, field,
                            is_placeholder, read)
@@ -126,8 +127,9 @@ def check_risky_diff(status: str, args, phase: str, verify,
     check_model_surface(status, args, phase, verify, errors, warnings)
     # §3.4a. Зовётся БЕЗУСЛОВНО, не внутри соседа: красная черта не зависит
     # ни от модели, ни от объявленных runtime_paths — проект может не иметь
-    # ни того, ни другого и всё равно дотягиваться до необратимого.
-    for g in unsigned_irreversible_gaps(status):
+    # ни того, ни другого и всё равно дотягиваться до необратимого. Подпись
+    # лежит рядом с отчётом поставки: у архивной это `archive/<slug>/` (§2.3a).
+    for g in unsigned_irreversible_gaps(status, home=verify.parent):
         (errors if phase == "handoff" else warnings).append(
             f"необратимое без человека: {g}"
         )
@@ -283,8 +285,13 @@ def check_surface_breaker(status: str, phase: str, touched,
         )
 
 
-def check_status_shape(status: str, args, errors: list[str], warnings: list[str]) -> ActiveCtx:
-    """Фаза, класс и артефакты фазы. → контекст для остальных разделов."""
+def check_status_shape(status: str, args, errors: list[str], warnings: list[str],
+                       home: Path = ACTIVE) -> ActiveCtx:
+    """Фаза, класс и артефакты фазы. → контекст для остальных разделов.
+
+    `home` — каталог поставки: `active/` либо `archive/<slug>/`, которую
+    архивирует этот же дифф (§2.3a).
+    """
     allowed = {
         "specify",
         "plan",
@@ -315,11 +322,11 @@ def check_status_shape(status: str, args, errors: list[str], warnings: list[str]
     check_phase_and_class(raw_phase, raw_class, phase, klass, allowed,
                           errors, warnings)
 
-    spec = ACTIVE / "spec.md"
-    plan = ACTIVE / "plan.md"
-    tasks = ACTIVE / "tasks.md"
-    verify = ACTIVE / "verify-report.md"
-    eval_smoke = ACTIVE / "eval-smoke.md"
+    spec = home / "spec.md"
+    plan = home / "plan.md"
+    tasks = home / "tasks.md"
+    verify = home / "verify-report.md"
+    eval_smoke = home / "eval-smoke.md"
 
     check_required_artifacts(status, phase, klass, spec, plan, tasks, verify,
                              eval_smoke, implement_like, errors, warnings)
@@ -327,4 +334,4 @@ def check_status_shape(status: str, args, errors: list[str], warnings: list[str]
     check_risky_diff(status, args, phase, verify, errors, warnings)
 
 
-    return ActiveCtx(phase=phase, klass=klass, spec=spec, plan=plan, tasks=tasks, verify=verify, eval_smoke=eval_smoke, implement_like=implement_like)
+    return ActiveCtx(phase=phase, klass=klass, spec=spec, plan=plan, tasks=tasks, verify=verify, eval_smoke=eval_smoke, implement_like=implement_like, home=home)

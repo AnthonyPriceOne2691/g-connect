@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from delivery_base import (ACTIVE, ActiveCtx, field, is_placeholder,
+from delivery_base import (ActiveCtx, field, is_placeholder,
                            list_entries, read, unfilled, verdict_blocks)
 from delivery_artifact import (check_artifact_oracle,
                                check_weak_names_the_cheap_gap)
@@ -35,7 +35,7 @@ def check_diagnosis(status: str, ctx: ActiveCtx, kind: str, phase: str,
         "handoff",
     }:
         diag = field(status, "diagnosis")
-        diag_file = ACTIVE / "diagnosis.md"
+        diag_file = ctx.home / "diagnosis.md"
         if is_placeholder(diag):
             errors.append(
                 f"kind={kind.split()[0]} at verify+: missing diagnosis (§12.1) "
@@ -79,7 +79,7 @@ def check_escalation(status: str, ctx: ActiveCtx, phase: str,
         "нет",
         "n/a",
     }:
-        esc = ACTIVE / "escalation.md"
+        esc = ctx.home / "escalation.md"
         if not esc.is_file():
             errors.append(
                 f"blockers непусты ({blockers[:50]}), а active/escalation.md "
@@ -176,7 +176,7 @@ def check_decisions_format(status: str, args, ctx: ActiveCtx, klass: str, phase:
     implement_like = ctx.implement_like
     # --- §12.2: журнал решений. Проверяется ФОРМАТ: лента без альтернатив
     # неаудируема, а именно аудируемость — весь смысл файла.
-    dec_file = ACTIVE / "decisions.md"
+    dec_file = ctx.home / "decisions.md"
     late = phase in {"verify", "converge", "handoff"}
     if dec_file.is_file():
         good, bad = decision_lines(read(dec_file))

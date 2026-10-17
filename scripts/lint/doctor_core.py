@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -33,21 +34,27 @@ SKIP_WORDS = ("пропущен", "не судит", "не проверен", "�
 SUCCESS_WORDS = (": OK", "OK —", "OK -")
 
 
-def _block_after(text: str, marker: str, lang: str) -> str | None:
+def _block_after(text: str, marker: str, lang: str | None) -> str | None:
     """Первый блок ```lang после marker — с учётом ВЛОЖЕННЫХ фенсов.
 
     Наивная регулярка обрывается на первом же вложенном фенсе (шаблоны канона их
     содержат), и сравнение тел давало бы вечное «разошлось». Тот же построчный
     сканер, что blocks() в stack_selftest и block_after в сьюте канона.
+
+    `lang=None` — блок ЛЮБОГО языка: строгий `lang` чужой блок не отвергает, а
+    проскакивает (`"yaml"` у `eslint.config.js` давал `.pre-commit-config.yaml`).
+    Маркер — с начала строки: подстрокой он находился в докстринге `canon_configs`.
     """
-    if marker not in text:
+    hit = re.search(r"(?m)^" + re.escape(marker), text)
+    if hit is None:
         return None
+    opener = re.compile(re.escape(lang) if lang else r".+")
     out, depth, started = [], 0, False
-    for line in text.split(marker, 1)[1].splitlines():
+    for line in text[hit.end():].splitlines():
         if line.startswith("```"):
             info = line[3:].strip().lower()
             if not started:
-                if info == lang:
+                if opener.fullmatch(info):
                     started, depth = True, 1
                 continue
             if info:

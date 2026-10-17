@@ -129,8 +129,8 @@ halves=""
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/complexity_halves.sh"
 
-tmp=$(mktemp); errf=$(mktemp); tmp2=$(mktemp)
-trap 'rm -f "$tmp" "$errf" "$tmp2"' EXIT
+tmp=$(mktemp); errf=$(mktemp); tmp2=$(mktemp); ts_seen=$(mktemp)
+trap 'rm -f "$tmp" "$errf" "$tmp2" "$ts_seen"' EXIT
 current_counts >"$tmp" || exit 1
 
 if [[ "$MODE" == "--generate" ]]; then

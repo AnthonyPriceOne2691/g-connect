@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from delivery_base import (ACTIVE, ARCHIVE, BREAKER_EXCLUDE, ActiveCtx,
+from delivery_base import (ARCHIVE, BREAKER_EXCLUDE, ActiveCtx,
                            DEFAULT_BREAKERS, GENERATED_FILENAMES, field,
                            is_placeholder, read)
 from delivery_diff import applicable_lessons, diff_stats
@@ -47,7 +47,7 @@ def weak_ci_consequences(status: str, waivers: str, ctx: ActiveCtx,
     compensated = (
         bool(re.search(r"(?im)^\s*\**clean_clone_run\**\s*:\s*\S", read(verify)))
         and bool(field(status, "blockers").lower() not in {"", "none", "-"})
-        and (ACTIVE / "escalation.md").is_file()
+        and (ctx.home / "escalation.md").is_file()
     )
     if klass == "L" and not ci_waived and not compensated:
         errors.append(

@@ -13,15 +13,21 @@
 # Просмотренное считается по ОБЕИМ живым половинам. «Просмотрено N» — это
 # доказательство §6, и на fullstack-репо оно обязано складываться: иначе число
 # врёт в меньшую сторону ровно там, где вторая половина как раз работает.
+#
+# ⚠ Считается то, что СУДИЛ ИНСТРУМЕНТ, а не то, что угадала маска расширений
+# (поле portfolio-site 17.10): «просмотрено 7» при 23 записях eslint — 16 .astro
+# судились и несли находки в снимок, а в счёт не входили; .jsx/.cts без блока в
+# конфиге проекта — наоборот; неотслеживаемый файл судится и не считается.
+# TS — число записей того же JSON, по которому считаются нарушения (ts_counts
+# пишет его в $ts_seen); python — список файлов ruff при тех же настройках.
 count_seen() {
   local n=0 half
   if (( py_live )); then
-    half=$(git ls-files -- "$PY_SRC" 2>/dev/null | grep -cE "${LINT_SRC_EXT_RE:-\.py$}") || true
+    half=$("$RUFF" check --show-files -- "$PY_SRC" 2>/dev/null | grep -c .) || true
     n=$(( n + ${half:-0} ))
   fi
   if (( ts_live )); then
-    half=$(git ls-files -- "$TS_SRC" 2>/dev/null \
-             | grep -cE "${LINT_TS_EXT_RE:-\.(ts|tsx|js|jsx|mts|cts)$}") || true
+    half=$(cat "$ts_seen" 2>/dev/null) || true
     n=$(( n + ${half:-0} ))
   fi
   printf '%d' "$n"
@@ -114,7 +120,7 @@ ts_counts() {
     fi
     return 2
   fi
-  body=$(printf '%s' "$out" | TS_RULES="$TS_RULES" python3 -c '
+  body=$(printf '%s' "$out" | TS_RULES="$TS_RULES" TS_SEEN="$ts_seen" python3 -c '
 import json, os, sys
 raw = sys.stdin.read()
 try:
@@ -122,6 +128,9 @@ try:
 except Exception:
     sys.stderr.write("вывод eslint не разобран как JSON\n")
     raise SystemExit(3)
+# Знаменатель — ровно эти записи: один файл, который eslint разобрал, — одна запись.
+if os.environ.get("TS_SEEN"):
+    open(os.environ["TS_SEEN"], "w").write("%d" % len(data))
 # Правила ГЕЙТА, и считаются только они (свойство 4 в шапке). Пустой набор — не
 # фильтровать: порог задан проектом через LINT_TS_COMPLEXITY_RULES и разобрать его
 # нечем, а тихо обнулить счёт значило бы выдать непроверенное за чистое.

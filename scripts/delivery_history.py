@@ -86,14 +86,17 @@ def _branch_window(base: str | None) -> str:
 
 
 def _expectation_verdict(ex: str, test_paths: list[str],
-                         order: dict[str, int], window: str = "") -> str:
+                         order: dict[str, int], window: str = "",
+                         spec_paths: tuple[str, ...] = ("delivery/active/spec.md",)) -> str:
     """`after` | `unknown` | `""` — что история говорит про ОДИН id.
 
     Шов по данным: наружу блок отдавал только корзину, в которую лёг id, —
     `s_rev`/`t_rev` ниже не читает никто. Вердикт возвращается словом, а `continue`
     остаётся у вызывающего: выход через границу шва сменил бы смысл (было 41/12).
+    `spec_paths` — все пути спеки в окне: у архивной поставки она жила в
+    `active/` и уехала в `archive/<slug>/` (§2.3a), история знает оба.
     """
-    s_rev = _first_commit_with(ex, "delivery/active/spec.md", window=window)
+    s_rev = _first_commit_with(ex, *spec_paths, window=window)
     t_rev = _first_commit_with(ex, *test_paths, window=window)
     if not s_rev or not t_rev:
         return ""  # id ещё не в истории — поставка не закоммичена, не наше дело
@@ -129,7 +132,9 @@ def _expectation_warnings(after: list[str], unknown: list[str],
 
 
 def expectation_predates_tests(ex_ids: list[str], test_paths: list[str],
-                               base: str | None = None) -> list[str]:
+                               base: str | None = None,
+                               spec_paths: tuple[str, ...] = ("delivery/active/spec.md",)
+                               ) -> list[str]:
     """[(предупреждения)] — порядок «пример раньше теста» по истории ВЕТКИ.
 
     Возвращает предупреждения, а не ошибки: до первого живого проекта у нас нет
@@ -146,7 +151,7 @@ def expectation_predates_tests(ex_ids: list[str], test_paths: list[str],
     ids = list(dict.fromkeys(ex_ids))
     after, unknown = [], []
     for ex in ids:
-        verdict = _expectation_verdict(ex, test_paths, order, window)
+        verdict = _expectation_verdict(ex, test_paths, order, window, spec_paths)
         if verdict == "after":
             after.append(ex)
         elif verdict == "unknown":
