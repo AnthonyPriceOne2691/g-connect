@@ -25,12 +25,14 @@ import {
  * Набор прав MVP (§11.7). `forms.body.readonly` сознательно НЕ входит: лишний scope —
  * лишняя площадь. Следствие названо в плане: старый token.json не подойдёт, нужен
  * повторный вход, и человеку это надо сказать текстом, а не отдать как ошибку авторизации.
+ * `gmail.send` — только отправка, без чтения ящика: письма агентствам из таблицы продаж.
  */
 export const MVP_SCOPES = [
   'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/drive.file',
   'https://www.googleapis.com/auth/documents',
   'https://www.googleapis.com/auth/spreadsheets',
+  'https://www.googleapis.com/auth/gmail.send',
 ] as const;
 
 export const REDIRECT_PORT = 3333;

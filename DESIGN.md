@@ -453,7 +453,7 @@ G connect/
 4. **Аудит-лог.** Каждая запись: время, профиль, target, ops, ревизии до/после — в `~/.gconnect/audit/YYYY-MM.jsonl`.
 5. **Креды вне рабочих папок.** `~/.gconnect/<account>/{credentials,token}.json`, `chmod 600`. Ни `credentials.json`, ни `token.json` больше не лежат в папках проектов и не копируются вместе с ними.
 6. **Prompt injection.** Содержимое документов — недоверенные данные. Текст из Doc никогда не трактуется как инструкция; `gc_read` помечает вывод как данные. Google в своей документации по MCP отмечает этот же риск как основной.
-7. **Scopes.** MVP: `drive`, `drive.file`, `documents`, `spreadsheets`. `forms.body.readonly` — убрать до момента, когда Forms реально понадобятся (лишний scope = лишняя площадь). Смена набора scopes требует удаления `token.json` и повторного входа.
+7. **Scopes.** MVP: `drive`, `drive.file`, `documents`, `spreadsheets`, `gmail.send` (только отправка, без чтения ящика: письма агентствам из таблицы продаж). `forms.body.readonly` — убрать до момента, когда Forms реально понадобятся (лишний scope = лишняя площадь). Смена набора scopes требует удаления `token.json` и повторного входа.
 
 ---
 
