@@ -28,7 +28,14 @@ import { undoLast } from '../core/undo.js';
 
 export type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
 import type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
-import { applyHint, applyOptions, journalOf, maybeReport, writeRight } from './apply-support.js';
+import {
+  applyHint,
+  applyOptions,
+  journalOf,
+  maybeReport,
+  revisionOf,
+  writeRight,
+} from './apply-support.js';
 import { applyInput, operationOf } from './apply-schema.js';
 import { parseToolInput } from './boundary.js';
 import { gcGrant, grantSummary } from './grant-tool.js';
@@ -420,8 +427,8 @@ export const gcUndo: ToolDefinition = {
       account: deps.account,
       force: input.force,
       ...(input.record === undefined ? {} : { correlationId: input.record }),
-      currentRevision: await deps.revision(resolved.id),
-      readRevision: () => deps.revision(resolved.id),
+      currentRevision: await revisionOf(deps, resolved),
+      readRevision: () => revisionOf(deps, resolved),
       trash: async (fileId: string) => {
         const drive = await deps.drive();
         await drive.trash(fileId);

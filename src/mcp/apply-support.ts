@@ -32,6 +32,21 @@ export function journalOf(deps: ToolDeps): JournalSink {
   return project === undefined ? journal : (record) => journal({ ...record, project });
 }
 
+/**
+ * Ревизия цели — для журнала и сверки отката, а не для решения о записи. У папки ревизии
+ * таблицы нет вовсе: чтение её как таблицы — 404, и живой прогон 2026-10-17 упал так дважды
+ * — после создания файла (строка журнала потерялась) и в откате создания. Сбой чтения у
+ * таблицы тоже не роняет вызов: решение об откате принимается по ячейкам (§10.3).
+ */
+export async function revisionOf(deps: ToolDeps, resolved: ResolvedTarget): Promise<string | null> {
+  if (resolved.type === 'folder') return null;
+  try {
+    return await deps.revision(resolved.id);
+  } catch {
+    return null;
+  }
+}
+
 /** Право записи этого вызова (D-23): реестр или разрешение проекта — одна функция ядра. */
 export function writeRight(deps: ToolDeps, resolved: ResolvedTarget): Promise<WriteRight> {
   return authorizeWrite(resolved, () => deps.grant?.() ?? Promise.resolve(NO_GRANT));
@@ -51,9 +66,7 @@ export function applyOptions(
     journalSource: deps.journalSource,
     account: deps.account,
     alias: resolved.alias,
-    // У папки ревизии таблицы нет: чтение её как таблицы — 404 уже ПОСЛЕ создания файла
-    // (живой прогон 2026-10-17: таблица в «Моём диске» создана, а строка журнала — нет).
-    ...(resolved.type === 'folder' ? {} : { readRevision: () => deps.revision(resolved.id) }),
+    readRevision: () => revisionOf(deps, resolved),
     // Конверт цели (D-18): разбирается здесь, где решается запись, а не при чтении
     // реестра — битый конверт не должен ронять чтение. Судит по числу ячеек, которое
     // известно только после построения плана, поэтому колбэком.

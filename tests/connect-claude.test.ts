@@ -61,7 +61,13 @@ describe('connect_claude.sh — подключение ко всем проек�
     run('--apply');
     const calls = (await readFile(claudeLog, 'utf8')).trim().split('\n');
     expect(calls[0]).toBe('mcp remove g-connect --scope user');
-    expect(calls[1]).toMatch(
+    expect(calls[1]).toBe('mcp remove g-connect --scope local');
+    // X12: репозиторий G connect получает local-запись на свою dev-сборку `dist/`.
+    expect(calls[3]).toMatch(
+      /^mcp add --scope local --transport stdio g-connect --env GCONNECT_ACCOUNT=default -- \S*node .*\/dist\/mcp\/server\.js$/,
+    );
+    expect(calls[3]).not.toContain('stable');
+    expect(calls[2]).toMatch(
       /^mcp add --scope user --transport stdio g-connect --env GCONNECT_ACCOUNT=default -- \S*node .*stable\/dist\/mcp\/server\.js$/,
     );
     const s = await settings();
@@ -76,7 +82,7 @@ describe('connect_claude.sh — подключение ко всем проек�
     env = { ...env, GCONNECT_GRANT_KEY: 'irreversible' };
     run('--apply');
     const calls = (await readFile(claudeLog, 'utf8')).trim().split('\n');
-    expect(calls[1]).toContain(
+    expect(calls[2]).toContain(
       'g-connect --env GCONNECT_ACCOUNT=default --env GCONNECT_GRANT_KEY=irreversible --',
     );
   });
@@ -100,9 +106,10 @@ describe('connect_claude.sh — подключение ко всем проек�
     expect((await settings()).permissions.allow).toEqual(['Bash(ls)']);
     const memo = await readFile(join(home, '.claude', 'CLAUDE.md'), 'utf8');
     expect(memo).toBe('# Мои правила\n');
-    expect((await readFile(claudeLog, 'utf8')).trim().split('\n').at(-1)).toBe(
+    expect((await readFile(claudeLog, 'utf8')).trim().split('\n').slice(-2)).toEqual([
       'mcp remove g-connect --scope user',
-    );
+      'mcp remove g-connect --scope local',
+    ]);
   });
 
   it('стабильной сборки нет — отказ до любой правки', async () => {

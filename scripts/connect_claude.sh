@@ -3,8 +3,11 @@
 # T12, пример X1). Cursor и Codex не трогаются — решение владельца 2026-10-17.
 #
 # Что ставит, и всё — с резервной копией в ~/.claude/backups/g-connect-<время>/:
-#   1. сервер уровня пользователя `g-connect` → стабильная сборка (scripts/install_stable.sh);
-#      внутри репозитория G connect проектная `.mcp.json` выше по приоритету — там dev (X12);
+#   1. сервер уровня пользователя `g-connect` → стабильная сборка (scripts/install_stable.sh),
+#      и запись области local для САМОГО репозитория G connect → его dev-сборка `dist/` (X12).
+#      Проектная `.mcp.json` для этого не годится: неодобренная, она уступает пользовательской
+#      (замер 2026-10-17: `claude mcp list` в репозитории показал стабильную), а local
+#      выше обеих и действует только здесь;
 #   2. правило `mcp__g-connect__*` в permissions.allow ~/.claude/settings.json — инструменты
 #      зовутся без запроса прав (X1); запись всё равно идёт через превью, журнал и откат;
 #   3. памятку агентам в ~/.claude/CLAUDE.md — блоком между метками, повторный запуск его
@@ -22,6 +25,7 @@
 set -euo pipefail
 
 ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
 CLAUDE_HOME=${CLAUDE_HOME:-"$HOME/.claude"}
 CLAUDE_JSON=${CLAUDE_JSON:-"$HOME/.claude.json"}
 CLAUDE_BIN=${CLAUDE_BIN:-claude}
@@ -70,6 +74,7 @@ done
 printf 'резервные копии: %s\n' "$BACKUP"
 
 "$CLAUDE_BIN" mcp remove "$NAME" --scope user >/dev/null 2>&1 || true
+"$CLAUDE_BIN" mcp remove "$NAME" --scope local >/dev/null 2>&1 || true
 if [[ "$MODE" == connect ]]; then
   # `--env` принимает несколько значений подряд (`-e, --env <env...>`): имя сервера — ДО него,
   # а `--` закрывает список. Иначе имя уходит в переменные окружения — замер 2026-10-17:
@@ -77,6 +82,10 @@ if [[ "$MODE" == connect ]]; then
   "$CLAUDE_BIN" mcp add --scope user --transport stdio "$NAME" \
     --env GCONNECT_ACCOUNT=default ${KEY_ENV[@]+"${KEY_ENV[@]}"} -- "$NODE" "$SERVER" >/dev/null \
     || die "claude mcp add не удался — откат из $BACKUP"
+  # Область local привязана к каталогу вызова — скрипт стоит в корне репозитория (cd выше).
+  "$CLAUDE_BIN" mcp add --scope local --transport stdio "$NAME" \
+    --env GCONNECT_ACCOUNT=default ${KEY_ENV[@]+"${KEY_ENV[@]}"} -- "$NODE" "$ROOT/dist/mcp/server.js" \
+    >/dev/null || die "claude mcp add (local) не удался — откат из $BACKUP"
   edit connect "$SETTINGS" "$MEMO" "$RULE"
   printf '%sG connect подключён: новые сессии Claude Code в любом проекте видят mcp__g-connect__*.%s\n' \
     "$green" "$reset"
