@@ -62,7 +62,7 @@ describe('connect_claude.sh — подключение ко всем проек�
     const calls = (await readFile(claudeLog, 'utf8')).trim().split('\n');
     expect(calls[0]).toBe('mcp remove g-connect --scope user');
     expect(calls[1]).toMatch(
-      /^mcp add --scope user --transport stdio --env GCONNECT_ACCOUNT=default g-connect -- \S*node .*stable\/dist\/mcp\/server\.js$/,
+      /^mcp add --scope user --transport stdio g-connect --env GCONNECT_ACCOUNT=default -- \S*node .*stable\/dist\/mcp\/server\.js$/,
     );
     const s = await settings();
     expect(s.permissions.allow).toEqual(['Bash(ls)', 'mcp__g-connect__*']);
@@ -77,7 +77,7 @@ describe('connect_claude.sh — подключение ко всем проек�
     run('--apply');
     const calls = (await readFile(claudeLog, 'utf8')).trim().split('\n');
     expect(calls[1]).toContain(
-      '--env GCONNECT_ACCOUNT=default --env GCONNECT_GRANT_KEY=irreversible g-connect --',
+      'g-connect --env GCONNECT_ACCOUNT=default --env GCONNECT_GRANT_KEY=irreversible --',
     );
   });
 

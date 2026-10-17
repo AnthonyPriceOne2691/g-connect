@@ -71,8 +71,11 @@ printf 'резервные копии: %s\n' "$BACKUP"
 
 "$CLAUDE_BIN" mcp remove "$NAME" --scope user >/dev/null 2>&1 || true
 if [[ "$MODE" == connect ]]; then
-  "$CLAUDE_BIN" mcp add --scope user --transport stdio --env GCONNECT_ACCOUNT=default \
-    ${KEY_ENV[@]+"${KEY_ENV[@]}"} "$NAME" -- "$NODE" "$SERVER" >/dev/null \
+  # `--env` принимает несколько значений подряд (`-e, --env <env...>`): имя сервера — ДО него,
+  # а `--` закрывает список. Иначе имя уходит в переменные окружения — замер 2026-10-17:
+  # «Invalid environment variable format: g-connect», а фейк в тесте этого не видел (L23).
+  "$CLAUDE_BIN" mcp add --scope user --transport stdio "$NAME" \
+    --env GCONNECT_ACCOUNT=default ${KEY_ENV[@]+"${KEY_ENV[@]}"} -- "$NODE" "$SERVER" >/dev/null \
     || die "claude mcp add не удался — откат из $BACKUP"
   edit connect "$SETTINGS" "$MEMO" "$RULE"
   printf '%sG connect подключён: новые сессии Claude Code в любом проекте видят mcp__g-connect__*.%s\n' \
