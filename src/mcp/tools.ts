@@ -23,14 +23,22 @@ import { listProfiles, profileStatus } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
 import { readDoc } from './read-doc.js';
 import type { ApplyOutcome } from '../core/sheets/rows.js';
-import { assertWritable, resolveTarget, type RegistryEntry } from '../core/targets.js';
+import { resolveTarget, type RegistryEntry } from '../core/targets.js';
 import { undoLast } from '../core/undo.js';
 
 export type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
 import type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
-import { applyHint, applyOptions, maybeReport } from './apply-support.js';
+import {
+  applyHint,
+  applyOptions,
+  journalOf,
+  maybeReport,
+  revisionOf,
+  writeRight,
+} from './apply-support.js';
 import { applyInput, operationOf } from './apply-schema.js';
 import { parseToolInput } from './boundary.js';
+import { gcGrant, grantSummary } from './grant-tool.js';
 import { targetArg } from './target-arg.js';
 
 /** Общий разбор цели: реестр + ссылка. Здесь же решается, можно ли писать. */
@@ -103,10 +111,14 @@ export const gcTargets: ToolDefinition = {
         // живёт в warnings, срок access-токена человеку показывает `gc status`.
         ...(a.warnings.length > 0 ? { warnings: a.warnings } : {}),
       })),
+      // Право проекта (D-23) — рядом с правами целей: без него агент узнавал бы о нём по
+      // отказу записи, а человек не видел бы, до какого часа G connect открыт.
+      grant: await grantSummary(deps),
       note:
-        'Произвольная ссылка доступна только для чтения: право записи даёт реестр ' +
-        '(правило write.allowlist). Цель с конвертом (auto) пишется с первой фразы, ' +
-        'без кода плана; всё, что вне конверта, показывает план и требует код от человека.',
+        'Право записи даёт реестр (правило write.allowlist) или разрешение проекта ' +
+        '(write.grant): владелец открывает G connect касанием, gc_grant. Без него ' +
+        'произвольная ссылка — только для чтения. Цель с конвертом (auto) пишется с первой ' +
+        'фразы, без кода плана; всё, что вне конверта, показывает план и требует код от человека.',
     };
   },
 };
@@ -298,7 +310,7 @@ export const gcApply: ToolDefinition = {
     // получал «файл не найден» вместо «нет права записи» — нашла живая проба через
     // протокол, юнит-тесты вызывали обработчик и этого не видели.
     const resolved = await resolve(deps, operation.target);
-    if (operation.dryRun === false) assertWritable(resolved);
+    const right = operation.dryRun === false ? await writeRight(deps, resolved) : undefined;
 
     // Создание файла идёт до всякого чтения таблицы: у него нет ни листа, ни карты, а
     // цель — папка. Ветка ранняя намеренно — иначе `getSpreadsheet` на папке отказал бы
@@ -308,14 +320,14 @@ export const gcApply: ToolDefinition = {
       operation.op === 'createDoc' ||
       operation.op === 'createFolder'
     ) {
-      return runCreate(operation, resolved, deps);
+      return runCreate(operation, resolved, deps, right);
     }
 
     // Вид цели решает путь ДО чтения (P22): doc-операции идут в Docs API, и табличная
     // операция по документу отклоняется здесь, а не «файл не найден» из чужого API.
     assertTargetKind(operation, resolved);
     if (isDocOperation(operation)) {
-      return runDocApply(operation, resolved, deps);
+      return runDocApply(operation, resolved, deps, right);
     }
 
     const client = await deps.sheets();
@@ -326,7 +338,7 @@ export const gcApply: ToolDefinition = {
     );
     const data = buildSheetData(snapshot, wanted);
 
-    const options = applyOptions(deps, resolved, operation);
+    const options = applyOptions(deps, resolved, operation, right);
 
     const outcome: ApplyOutcome = await runOperation(client, data, operation, options);
 
@@ -377,7 +389,7 @@ function undoHint(outcome: Awaited<ReturnType<typeof undoLast>>): string | undef
   const parts = [
     ...(values === 0 ? [] : [`значения в ${values} ячейк(ах)`]),
     ...(formats === 0 ? [] : [`вид ${formats} ячейк(и)`]),
-    ...(outcome.structureUndone === undefined ? [] : [outcome.structureUndone]),
+    ...(outcome.structureUndone === undefined ? [] : [outcome.structureUndone.replace(/\.$/, '')]),
     // У отката документа ячеек нет: без этого поля подсказка велела агенту сказать
     // «вернулось — ничего» сразу после удалённой вставки (живой прогон 2026-10-02, LR3-6).
     ...(outcome.docUndone === undefined ? [] : [outcome.docUndone.replace(/\.$/, '')]),
@@ -401,7 +413,7 @@ export const gcUndo: ToolDefinition = {
   async handle(args, deps) {
     const input = z.object(undoInput).parse(args);
     const resolved = await resolve(deps, input.target);
-    assertWritable(resolved);
+    await writeRight(deps, resolved);
     if (resolved.type === 'doc') {
       const outcome = await runDocUndo(deps, resolved, input);
       return {
@@ -415,13 +427,14 @@ export const gcUndo: ToolDefinition = {
       account: deps.account,
       force: input.force,
       ...(input.record === undefined ? {} : { correlationId: input.record }),
-      currentRevision: await deps.revision(resolved.id),
-      readRevision: () => deps.revision(resolved.id),
+      currentRevision: await revisionOf(deps, resolved),
+      readRevision: () => revisionOf(deps, resolved),
       trash: async (fileId: string) => {
         const drive = await deps.drive();
         await drive.trash(fileId);
       },
-      journal: deps.journal,
+      ...(deps.project === undefined ? {} : { project: deps.project }),
+      journal: journalOf(deps),
     });
     return {
       ...outcome,
@@ -440,10 +453,11 @@ export const TOOLS: readonly ToolDefinition[] = [
   gcScan,
   gcApply,
   gcUndo,
+  gcGrant,
 ];
 
-/** Ровно шесть — это требование §3, а не совпадение. Тест сверяет. */
-export const EXPECTED_TOOL_COUNT = 6;
+/** Ровно семь — требование §3 с поправкой D-23 (седьмой — право, а не документ). Тест сверяет. */
+export const EXPECTED_TOOL_COUNT = 7;
 
 /**
  * Единый перехват на границе: наружу уходит payload ошибки, а не исключение и не

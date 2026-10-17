@@ -17,7 +17,8 @@ import { gcError } from '../core/errors.js';
 import { DOC_OPERATION_NAMES, type DocOperation, type Operation } from '../core/ops.js';
 import type { ResolvedTarget } from '../core/targets.js';
 import type { ToolDeps } from './deps.js';
-import { envelopeJudge } from './apply-support.js';
+import type { WriteRight } from '../core/write-right.js';
+import { envelopeJudge, journalOf } from './apply-support.js';
 
 export const isDocOperation = (operation: Operation): operation is DocOperation =>
   DOC_OPERATION_NAMES.includes(operation.op);
@@ -45,6 +46,7 @@ export async function runDocApply(
   operation: DocOperation,
   resolved: ResolvedTarget,
   deps: ToolDeps,
+  right?: WriteRight,
 ): Promise<DocApplyOutcome & { target: { id: string; alias: string | null } }> {
   // P19b: локальный источник картинки отклоняется ДО любого обращения к Google — и до
   // чтения документа тоже (находка читателя 2026-10-01: проверка стояла после get).
@@ -63,14 +65,14 @@ export async function runDocApply(
   }
   const options = {
     dryRun: operation.dryRun,
-    journal: deps.journal,
+    journal: journalOf(deps),
     journalSource: deps.journalSource,
     account: deps.account,
     alias: resolved.alias,
     ...(operation.confirm === undefined ? {} : { confirm: operation.confirm }),
     ...(operation.planId === undefined ? {} : { planId: operation.planId }),
     force: operation.force,
-    authorize: envelopeJudge(resolved),
+    authorize: envelopeJudge(resolved, right),
   };
   const outcome = await dispatchDocOperation(client, snapshot, operation, options);
   return { ...outcome, target: { id: resolved.id, alias: resolved.alias } };
@@ -167,7 +169,8 @@ export async function runDocUndo(
     account: deps.account,
     ...(input.force === undefined ? {} : { force: input.force }),
     ...(input.record === undefined ? {} : { correlationId: input.record }),
-    journal: deps.journal,
+    ...(deps.project === undefined ? {} : { project: deps.project }),
+    journal: journalOf(deps),
   });
 }
 

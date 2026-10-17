@@ -6,10 +6,11 @@
  * с чтения таблицы, а эта до чтения не доходит вовсе, потому что цель — папка.
  */
 
-import { createFile } from '../core/create-op.js';
+import { createFile, type CreateInput, type SheetContent } from '../core/create-op.js';
 import { gcError } from '../core/errors.js';
 import type { parseOperation } from '../core/ops.js';
-import type { ResolvedTarget } from '../core/targets.js';
+import { MY_DRIVE_ID, type ResolvedTarget } from '../core/targets.js';
+import type { WriteRight } from '../core/write-right.js';
 import { applyHint, applyOptions } from './apply-support.js';
 import type { ToolDeps } from './deps.js';
 
@@ -27,6 +28,7 @@ export async function runCreate(
   >,
   resolved: ResolvedTarget,
   deps: ToolDeps,
+  right?: WriteRight,
 ): Promise<unknown> {
   if (resolved.type !== 'folder' && resolved.alias !== null) {
     throw gcError('bad_request', {
@@ -36,23 +38,50 @@ export async function runCreate(
       cause: 'create_needs_folder',
     });
   }
-  const kind =
-    operation.op === 'createSheet' ? 'sheet' : operation.op === 'createDoc' ? 'doc' : 'folder';
   const outcome = await createFile(
     await deps.sheets(),
     await deps.drive(),
-    {
-      kind,
-      name: operation.name,
-      ...(resolved.type === 'folder'
-        ? { parentId: resolved.id, parentName: resolved.alias ?? resolved.id }
-        : {}),
-    },
-    applyOptions(deps, resolved, operation),
+    createInputOf(operation, resolved, right),
+    applyOptions(deps, resolved, operation, right),
   );
   return {
     ...outcome,
     target: { id: resolved.id, alias: resolved.alias },
     hint: applyHint(outcome),
+  };
+}
+
+type CreateOperation = Extract<
+  ReturnType<typeof parseOperation>,
+  { op: 'createSheet' | 'createDoc' | 'createFolder' }
+>;
+
+const KINDS = { createSheet: 'sheet', createDoc: 'doc', createFolder: 'folder' } as const;
+
+/** Вход создания из операции: вид, имя, папка, содержимое, право писать в созданное. */
+function createInputOf(
+  operation: CreateOperation,
+  resolved: ResolvedTarget,
+  right: WriteRight | undefined,
+): CreateInput {
+  const parentName = resolved.id === MY_DRIVE_ID ? 'Мой диск' : (resolved.alias ?? resolved.id);
+  const content = contentOf(operation);
+  return {
+    kind: KINDS[operation.op],
+    name: operation.name,
+    ...(resolved.type === 'folder' ? { parentId: resolved.id, parentName } : {}),
+    ...(content === undefined ? {} : { content }),
+    writable: right?.via === 'grant',
+  };
+}
+
+/** Шапка и строки — только у таблицы и только если названы (D-23, X7). */
+function contentOf(operation: CreateOperation): SheetContent | undefined {
+  if (operation.op !== 'createSheet') return undefined;
+  if (operation.columns === undefined && operation.rows === undefined) return undefined;
+  return {
+    ...(operation.columns === undefined ? {} : { columns: operation.columns }),
+    ...(operation.rows === undefined ? {} : { rows: operation.rows }),
+    asText: operation.asText,
   };
 }

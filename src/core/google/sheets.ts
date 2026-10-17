@@ -315,6 +315,7 @@ export class GoogleSheetsClient implements SheetsClient {
     id: string,
     range: string,
     values: readonly (readonly CellValue[])[],
+    input: 'user' | 'raw' = 'user',
   ): Promise<void> {
     try {
       await this.retry(() =>
@@ -322,8 +323,9 @@ export class GoogleSheetsClient implements SheetsClient {
           spreadsheetId: id,
           range,
           // USER_ENTERED: значение попадает так, как если бы его набрал человек —
-          // дата остаётся датой, а не строкой.
-          valueInputOption: 'USER_ENTERED',
+          // дата остаётся датой, а не строкой. RAW — текстом, как есть: для данных,
+          // которые человек продиктовал (шапка и строки новой таблицы, D-23).
+          valueInputOption: input === 'raw' ? 'RAW' : 'USER_ENTERED',
           requestBody: { values: values.map((row) => [...row]) },
         }),
       );

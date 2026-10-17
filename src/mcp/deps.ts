@@ -11,6 +11,7 @@ import type { z } from 'zod';
 import type { DocsClient } from '../core/docs/types.js';
 import type { DriveClient } from '../core/google/drive.js';
 import type { GcErrorPayload } from '../core/errors.js';
+import type { GrantKeys, GrantState } from '../core/grant/grants.js';
 import type { JournalSink, JournalSource } from '../core/journal.js';
 import type { SheetsClient } from '../core/sheets/types.js';
 import type { Registry } from '../core/targets.js';
@@ -25,6 +26,15 @@ export interface ToolDeps {
   readonly journalSource: JournalSource;
   /** Ревизия таблицы сейчас — нужна журналу и откату (§10.3). */
   revision(targetId: string): Promise<string | null>;
+  /**
+   * Проект сессии (`CLAUDE_PROJECT_DIR`, D-23). Нет — проекта нет: запись вне реестра
+   * невозможна, откат видит все записи (вызов человека из терминала).
+   */
+  readonly project?: string;
+  /** Действующее разрешение проекта. Нет функции — разрешения нет, право даёт только реестр. */
+  grant?(): Promise<GrantState>;
+  /** Ключи разрешения — для `gc_grant`: выдать касанием. */
+  readonly grantKeys?: GrantKeys;
 }
 
 export interface ToolResult {

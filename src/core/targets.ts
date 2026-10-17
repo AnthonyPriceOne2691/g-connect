@@ -57,6 +57,10 @@ const URL_PATTERNS: readonly { readonly re: RegExp; readonly type: TargetType }[
 /** ID файла Google: 20+ символов из безопасного алфавита, без пробелов и точек. */
 const BARE_ID = /^[A-Za-z0-9_-]{20,}$/;
 
+/** Корень «Моего диска» — id, который Drive API принимает вместо папки. */
+export const MY_DRIVE_ID = 'root';
+const MY_DRIVE_REFS: ReadonlySet<string> = new Set(['root', 'мой диск', 'my drive', 'my-drive']);
+
 export function parseTargetUrl(ref: string): { id: string; type: TargetType } | null {
   for (const { re, type } of URL_PATTERNS) {
     const match = re.exec(ref);
@@ -107,6 +111,12 @@ export function resolveTarget(ref: string, registry: Registry = { targets: [] })
       alias: entry.alias,
       entry,
     };
+  }
+
+  // «Мой диск» (D-23, T7): корень Drive — папка, куда создаёт файлы разрешение проекта.
+  // Права записи у неё нет, пока его не даст разрешение: она не в реестре.
+  if (MY_DRIVE_REFS.has(trimmed.toLowerCase())) {
+    return { id: MY_DRIVE_ID, type: 'folder', allow: 'read', alias: null, entry: null };
   }
 
   const fromUrl = parseTargetUrl(trimmed);

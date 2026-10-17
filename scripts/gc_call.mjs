@@ -9,6 +9,7 @@
  *   node scripts/gc_call.mjs gc_targets '{}'
  *   node scripts/gc_call.mjs gc_read '{"target":"doc-test","mode":"map"}'
  *   node scripts/gc_call.mjs gc_apply '{"target":"doc-test","op":"appendText","text":"…"}'
+ *   GC_SERVER="$(bash scripts/install_stable.sh --path)" CLAUDE_PROJECT_DIR=… node scripts/gc_call.mjs …
  *
  * Журнал — файловый в профиле, поэтому `gc_undo` отдельным вызовом видит записи прошлых.
  */
@@ -23,7 +24,10 @@ if (tool === undefined) {
 }
 const args = JSON.parse(rawArgs);
 
-const server = spawn('node', [`${ROOT}dist/mcp/server.js`], {
+// GC_SERVER — другой собранный сервер: живой прогон поставки cross-project гоняет СТАБИЛЬНУЮ
+// сборку (`scripts/install_stable.sh --path`) от имени соседнего проекта (CLAUDE_PROJECT_DIR).
+const SERVER = process.env.GC_SERVER ?? `${ROOT}dist/mcp/server.js`;
+const server = spawn('node', [SERVER], {
   env: { ...process.env, GCONNECT_ACCOUNT: process.env.GCONNECT_ACCOUNT ?? 'default' },
   stdio: ['pipe', 'pipe', 'pipe'],
 });

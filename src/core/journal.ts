@@ -188,6 +188,11 @@ export interface WriteRecord {
   readonly planId?: string;
   /** Для записи типа `undo` — correlationId той записи, которую откатили. */
   readonly undoOf?: string;
+  /**
+   * Проект сессии, из которой сделана запись (`CLAUDE_PROJECT_DIR`, D-23). По нему откат из
+   * проекта видит только свои записи. Нет поля — запись из терминала или до разрешений.
+   */
+  readonly project?: string;
 }
 
 /** Куда уходит запись журнала. */
@@ -210,12 +215,18 @@ export const noopJournal: JournalSink = () => Promise.resolve();
  * такая запись становилась неоткатываемой молча — `gc_undo` отвечал «откатывать нечего»
  * сразу после успешной вставки.
  */
-export function lastUndoable(records: readonly WriteRecord[]): WriteRecord | null {
+export function lastUndoable(
+  records: readonly WriteRecord[],
+  candidates: readonly WriteRecord[] = records,
+): WriteRecord | null {
+  // «Уже откачено» — по ВСЕЙ истории, кандидаты — только свои: откат записи проекта A,
+  // сделанный владельцем из терминала, не помечен проектом, и сессия A без полной истории
+  // откатила бы ту же запись второй раз.
   const undone = new Set(
     records.filter((r) => r.op === 'undo' && r.undoOf !== undefined).map((r) => r.undoOf),
   );
-  for (let i = records.length - 1; i >= 0; i -= 1) {
-    const record = records[i]!;
+  for (let i = candidates.length - 1; i >= 0; i -= 1) {
+    const record = candidates[i]!;
     if (record.op === 'undo') continue;
     if (undone.has(record.correlationId)) continue;
     // Запись без ячеек, геометрии И текста — превью-след, откатывать нечего. Проверка

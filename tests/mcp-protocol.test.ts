@@ -52,12 +52,12 @@ function harness() {
 const deps = (): ToolDeps => harness().deps;
 
 describe('обвязка: тесты говорят с тем же сервером, что и клиент', () => {
-  it('рукопожатие отдаёт шесть инструментов и правила', async () => {
+  it('рукопожатие отдаёт семь инструментов (седьмой — gc_grant, D-23) и правила', async () => {
     const session = await protocolSession(deps);
     try {
       const { tools } = await session.client.listTools();
       expect(tools.map((t) => t.name).sort()).toEqual(
-        ['gc_apply', 'gc_read', 'gc_scan', 'gc_search', 'gc_targets', 'gc_undo'].sort(),
+        ['gc_apply', 'gc_grant', 'gc_read', 'gc_scan', 'gc_search', 'gc_targets', 'gc_undo'].sort(),
       );
       expect(session.client.getInstructions() ?? '').toContain('конверт');
     } finally {

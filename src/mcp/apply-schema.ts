@@ -61,7 +61,25 @@ const docFields = {
   namedStyle: setParagraphStyleOp.shape.namedStyle
     .optional()
     .describe('setParagraphStyle: вид абзаца — обычный текст или заголовок'),
-  rows: z.number().int().positive().optional().describe('insertTable: число строк (1–50)'),
+  // Два смысла у одного имени, как у `columns`: число строк новой таблицы документа и
+  // строки новой таблицы Sheets (D-23). Только число — и строки отклонялись бы транспортом.
+  rows: z
+    .union([
+      z.number().int().positive(),
+      z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))),
+    ])
+    .optional()
+    .describe(
+      'insertTable: число строк (1–50); createSheet: строки новой таблицы — массивы значений ' +
+        'в порядке колонок шапки',
+    ),
+  asText: z
+    .boolean()
+    .optional()
+    .describe(
+      'createSheet: значения шапки и строк текстом (RAW), по умолчанию да — дата остаётся ' +
+        'строкой; false — как набрал бы человек',
+    ),
   table: z
     .number()
     .int()
@@ -149,7 +167,7 @@ export const applyInput = {
     .optional()
     .describe(
       'formatCells/findReplace: имена колонок, чей вид или текст правим; insertTable: ' +
-        'число колонок новой таблицы (1–10)',
+        'число колонок новой таблицы (1–10); createSheet: шапка новой таблицы',
     ),
   format: z
     .record(z.string(), z.unknown())
