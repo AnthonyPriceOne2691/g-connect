@@ -6,7 +6,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=kind=feature
 - **diagnosis:** n/a reason=kind=feature
-- **phase:** tasks
+- **phase:** implement
 - **builder:** agent:claude-opus-5-5
 - **verifier:** human:anton
 - **human_ok_spec:** yes (by=human:anton, at=2026-10-17) reason=ответ «Подписываю» на вопрос с вариантами, спека и план предъявлены вместе; решения владельца в спеке: «всё своё на срок», срок до 23:59 местного, Secretive и Touch ID, клиент только Claude Code
