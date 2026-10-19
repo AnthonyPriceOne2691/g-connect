@@ -76,7 +76,9 @@ async function restoreChanges(
   const restored: UndoOutcome['restored'][number][] = [];
   for (const change of [...record.changes].reverse()) {
     if (change.afterFormat === undefined) {
-      await client.updateValues(targetId, change.a1, [[change.before]]);
+      // «Было пусто» уходит пустой строкой: `null` values-API Google ПРОПУСКАЕТ (LR-2), и откат
+      // дозаписи отвечал ok, оставляя строку в листе (нашёл тест Q14 на фейке с семантикой Google).
+      await client.updateValues(targetId, change.a1, [[change.before ?? '']]);
       restored.push({ a1: change.a1, column: change.column, kind: 'value', value: change.before });
       continue;
     }

@@ -7,37 +7,46 @@
  * второй путь записи разъехался бы с первым первой же правкой.
  */
 
-import {
-  clarify,
-  columnQuestion,
-  finish,
-  guardColumn,
-  rowsUnderCondition,
-  type Prepared,
-} from './rows.js';
+import { clarify, columnQuestion, finish, guardColumn, type Prepared } from './rows.js';
 import { sameFormat } from './a1.js';
 import { needsClarification, resolveColumn } from '../resolver.js';
+import { selectedRows, type RowSelection } from './row-selection.js';
 import type { CellFormat, ColumnProfile, SheetData, SheetMap, SheetsClient } from './types.js';
 import type { ApplyOutcome, PlannedChange, RowOptions, RowValues } from './write-types.js';
 
 /**
- * Правка вида существующих ячеек (§6.1–6.2: Ctrl+B, Ctrl+I, Ctrl+U, выравнивание, фон).
- *
- * Значения не трогает вовсе — на это отдельный оракул, а не обещание в комментарии.
- * Адресация та же, что у `setCells`: строки по условию, колонки по именам.
+ * Правка вида по условию — прежний адрес вызова: строки выбирает `where`, как у `setCells`.
+ * Обёртка, а не копия: путь правки вида один — `formatRows`.
  */
-export async function formatCells(
+export const formatCells = (
   client: SheetsClient,
   data: SheetData,
   where: RowValues,
   columns: readonly string[],
   format: CellFormat,
   options: RowOptions = {},
+): Promise<ApplyOutcome> => formatRows(client, data, { where }, columns, format, options);
+
+/**
+ * Правка вида существующих ячеек (§6.1–6.2: Ctrl+B, Ctrl+I, Ctrl+U, выравнивание, фон).
+ *
+ * Значения не трогает вовсе — на это отдельный оракул, а не обещание в комментарии.
+ * Колонки — по именам; строки — ровно одним способом (Q13): условием, всем листом или
+ * номерами строк. Весь лист и пачка строк конверт не обходят: он судит ячейки плана, а их —
+ * до строк × колонок (ячейка, чей вид уже такой, в план не попадает).
+ */
+export async function formatRows(
+  client: SheetsClient,
+  data: SheetData,
+  selection: RowSelection,
+  columns: readonly string[],
+  format: CellFormat,
+  options: RowOptions = {},
 ): Promise<ApplyOutcome> {
   const map = data.map;
-  const selected = rowsUnderCondition(
+  const selected = selectedRows(
     data,
-    where,
+    selection,
     options,
     'Под условие не подошла ни одна строка — оформлять нечего.',
   );

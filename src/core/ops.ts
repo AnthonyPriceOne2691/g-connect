@@ -37,6 +37,7 @@ export * from './docs/ops.js';
 // Вид ячейки — своим модулем (D-26, Q12): у шрифта, кегля и формата числа свои отказы.
 import { cellFormat, FORMAT_FIELDS } from './format-fields.js';
 export { FORMAT_FIELDS };
+import { rowSelectionOf, rowSpanSchema } from './sheets/row-selection.js';
 import type { CellFormat } from './sheets/types.js';
 
 /** Значение ячейки, как его может прислать клиент. */
@@ -67,8 +68,13 @@ export const setCellsOp = z.object({
 
 export const formatCellsOp = z.object({
   op: z.literal('formatCells'),
-  /** Какие строки: то же условие, что у `setCells` — по ключу или по любой колонке. */
-  where: rowValues,
+  /**
+   * Какие строки — РОВНО одним способом (Q13, `rowSelectionOf`): `where` — то же условие, что у
+   * `setCells`; `allRows: true` — все строки данных листа; `rows` — номера строк листа.
+   */
+  where: rowValues.optional(),
+  allRows: z.boolean().optional(),
+  rows: rowSpanSchema.optional(),
   /** Какие колонки — по именам, а не по буквам: колонки переставляют (§5). */
   columns: z.array(z.string().min(1)).min(1),
   /**
@@ -411,6 +417,8 @@ export function parseOperation(input: unknown): Operation {
   const parsed = operationSchema.safeParse(input);
   if (parsed.success) {
     assertUsableRegex(parsed.data);
+    // Строки правки вида — ровно одним способом (Q13): отказ до Google, а не после чтения листа.
+    if (parsed.data.op === 'formatCells') rowSelectionOf(parsed.data);
     return parsed.data;
   }
   // «Unrecognized key strikethrough» говорит, чего НЕЛЬЗЯ, и молчит о том, что можно — агент

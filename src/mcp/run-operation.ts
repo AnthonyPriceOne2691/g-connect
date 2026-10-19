@@ -9,7 +9,8 @@
 
 import { appendRow, upsertRow, type ApplyOutcome } from '../core/sheets/rows.js';
 import { findReplace } from '../core/sheets/find-replace-op.js';
-import { formatCells } from '../core/sheets/format-op.js';
+import { formatRows } from '../core/sheets/format-op.js';
+import { rowSelectionOf } from '../core/sheets/row-selection.js';
 import { setCells } from '../core/sheets/set-cells-op.js';
 import { autoFill, copyRange, cutRange, duplicateSheet } from '../core/sheets/range-op.js';
 import {
@@ -78,8 +79,10 @@ const HANDLERS: {
     upsertRow(client, data, operation.key, operation.values, options),
   setCells: (client, data, operation, options) =>
     setCells(client, data, operation.where, operation.values, options),
+  // Строки — ровно одним способом (Q13): неверный выбор отказан ещё разбором ядра, здесь поля
+  // только сужаются до типа.
   formatCells: (client, data, operation, options) =>
-    formatCells(client, data, operation.where, operation.columns, operation.format, {
+    formatRows(client, data, rowSelectionOf(operation), operation.columns, operation.format, {
       ...options,
       includeHeader: operation.includeHeader,
     }),

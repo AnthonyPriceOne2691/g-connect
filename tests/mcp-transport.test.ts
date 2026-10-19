@@ -47,6 +47,7 @@ const SAMPLE: Record<string, unknown> = {
   values: { Статус: 'готово' },
   format: { bold: true },
   includeHeader: true,
+  allRows: true,
   find: 'Fluminense',
   replace: 'Fluminense FC',
   matchCase: true,
@@ -80,14 +81,21 @@ const SAMPLE: Record<string, unknown> = {
   endIndex: 9,
 };
 
+/** `rows` по операции; у остальных — число строк новой таблицы документа. */
+const ROWS_SAMPLE: Partial<Record<OperationName, unknown>> = {
+  createSheet: [['x.com', '2025-06-01']],
+  formatCells: { from: 3, to: 4 },
+};
+
 /** Поля, чей смысл зависит от вида цели: у документа `where` — селектор абзаца. */
 function sampleFor(op: OperationName): Record<string, unknown> {
   const isDoc = DOC_OPERATION_NAMES.includes(op);
   const special: Record<string, unknown> = {
     where: isDoc ? { textStartsWith: 'Составы' } : { Проект: 'G connect' },
     columns: op === 'insertTable' ? 3 : ['Статус'],
-    // У createSheet `rows` — строки новой таблицы, у insertTable — их число (D-23).
-    rows: op === 'createSheet' ? [['x.com', '2025-06-01']] : 2,
+    // У createSheet `rows` — строки новой таблицы, у insertTable — их число (D-23), у
+    // formatCells — номера строк листа (Q13).
+    rows: ROWS_SAMPLE[op] ?? 2,
   };
   const sample: Record<string, unknown> = { op };
   for (const field of Object.keys(shapeOf(op))) {
@@ -95,6 +103,26 @@ function sampleFor(op: OperationName): Record<string, unknown> {
     sample[field] = field in special ? special[field] : SAMPLE[field];
   }
   return sample;
+}
+
+/**
+ * Поля, из которых операция берёт РОВНО одно (Q13): строки правки вида выбирает `where`,
+ * `allRows` или `rows`. Образец со всеми тремя ядро законно отклонит, поэтому у такой операции
+ * образцов несколько — по одному на способ, — а «заполнены все поля» судит их объединение.
+ */
+const ONE_OF: Partial<Record<OperationName, readonly string[]>> = {
+  formatCells: ['where', 'allRows', 'rows'],
+};
+
+function samplesFor(op: OperationName): Record<string, unknown>[] {
+  const full = sampleFor(op);
+  const oneOf = ONE_OF[op];
+  if (oneOf === undefined) return [full];
+  return oneOf.map((kept) =>
+    Object.fromEntries(
+      Object.entries(full).filter(([field]) => field === kept || !oneOf.includes(field)),
+    ),
+  );
 }
 
 describe('схема транспорта gc_apply против ядра — по полям (живой прогон 2026-10-02)', () => {
@@ -111,23 +139,28 @@ describe('схема транспорта gc_apply против ядра — п�
   it('образец каждой операции заполняет ВСЕ её поля и сам проходит ядро', () => {
     // Оракул ниже пуст, если образец неполон или ядро его отклоняет: проверяем сам образец.
     for (const op of OPERATION_NAMES) {
-      const sample = sampleFor(op);
-      expect(Object.keys(sample).sort(), op).toEqual(Object.keys(shapeOf(op)).sort());
-      expect(Object.values(sample).includes(undefined), `${op}: поле без образца`).toBe(false);
-      const core = operationSchema.safeParse(sample);
-      expect(core.success, `${op}: ${core.success ? '' : core.error.message}`).toBe(true);
+      const samples = samplesFor(op);
+      const covered = [...new Set(samples.flatMap((sample) => Object.keys(sample)))].sort();
+      expect(covered, op).toEqual(Object.keys(shapeOf(op)).sort());
+      for (const sample of samples) {
+        expect(Object.values(sample).includes(undefined), `${op}: поле без образца`).toBe(false);
+        const core = operationSchema.safeParse(sample);
+        expect(core.success, `${op}: ${core.success ? '' : core.error.message}`).toBe(true);
+        expect(() => parseOperation(sample), op).not.toThrow();
+      }
     }
   });
 
   it('каждая операция ядра проходит транспорт без потерь: ядро получает тот же запрос', () => {
     for (const op of OPERATION_NAMES) {
-      const sample = sampleFor(op);
-      const carried = transport.safeParse(sample);
-      expect(carried.success, `${op}: транспорт отклонил — ${carried.error?.message ?? ''}`).toBe(
-        true,
-      );
-      // Тем же путём, что обработчик: поля транспорта сняты, ядро разбирает строго.
-      expect(operationOf(carried.data!), op).toEqual(parseOperation(sample));
+      for (const sample of samplesFor(op)) {
+        const carried = transport.safeParse(sample);
+        expect(carried.success, `${op}: транспорт отклонил — ${carried.error?.message ?? ''}`).toBe(
+          true,
+        );
+        // Тем же путём, что обработчик: поля транспорта сняты, ядро разбирает строго.
+        expect(operationOf(carried.data!), op).toEqual(parseOperation(sample));
+      }
     }
   });
 
