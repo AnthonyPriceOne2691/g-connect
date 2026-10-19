@@ -7,42 +7,43 @@
  */
 
 import { createFile, type CreateInput, type SheetContent } from '../core/create-op.js';
-import { gcError } from '../core/errors.js';
+import { assertCreateTarget, createParentOf, type CreateParent } from '../core/create-parent.js';
 import type { parseOperation } from '../core/ops.js';
-import { MY_DRIVE_ID, type ResolvedTarget } from '../core/targets.js';
+import type { ResolvedTarget } from '../core/targets.js';
 import type { WriteRight } from '../core/write-right.js';
-import { applyHint, applyOptions } from './apply-support.js';
+import { applyHint, applyOptions, writeRight } from './apply-support.js';
 import type { ToolDeps } from './deps.js';
 
+type CreateOperation = Extract<
+  ReturnType<typeof parseOperation>,
+  { op: 'createSheet' | 'createDoc' | 'createFolder' }
+>;
+
 /**
- * Создание файла или папки: цель — папка реестра, а не таблица.
+ * Создание файла или папки: цель — папка, а не таблица (D-26, Q20–Q22).
  *
- * Таблица целью быть не может: «создать рядом с этой таблицей» в Drive не выражается — у
- * файла один родитель, и его id мы бы всё равно спрашивали у Drive. Поэтому отказ прямой,
- * со списком того, что делать.
+ * Порядок несущий и закреплён тестами. Вид цели по реестру и ссылке — первым: отказ «не
+ * папка» не стоит ни запроса, ни касания. Право — до любого обращения к Google, как у всех
+ * записей. Вид голого ID — у Drive, до плана и до создания: прежде здесь цель без известного
+ * вида молча становилась корнем «Мой диск». Таблица целью быть не может: «создать рядом с
+ * этой таблицей» в Drive не выражается — у файла один родитель.
  */
 export async function runCreate(
-  operation: Extract<
-    ReturnType<typeof parseOperation>,
-    { op: 'createSheet' | 'createDoc' | 'createFolder' }
-  >,
+  operation: CreateOperation,
   resolved: ResolvedTarget,
   deps: ToolDeps,
-  right?: WriteRight,
 ): Promise<unknown> {
-  if (resolved.type !== 'folder' && resolved.alias !== null) {
-    throw gcError('bad_request', {
-      detail:
-        `Цель «${resolved.alias}» — не папка, а ${resolved.type}. Создавать можно в папке: ` +
-        'добавь папку в реестр целей с правом записи и назови её.',
-      cause: 'create_needs_folder',
-    });
-  }
+  assertCreateTarget(resolved);
+  const right = operation.dryRun === false ? await writeRight(deps, resolved) : undefined;
+  const parent = await createParentOf(resolved, () => deps.drive());
+  // Вид, который назвал Drive, — вид цели дальше по вызову: у папки ревизию таблицы не
+  // спрашивают (живой прогон 2026-10-17: чтение папки как таблицы — 404).
+  const folder: ResolvedTarget = { ...resolved, type: 'folder' };
   const outcome = await createFile(
     await deps.sheets(),
     await deps.drive(),
-    createInputOf(operation, resolved, right),
-    applyOptions(deps, resolved, operation, right),
+    createInputOf(operation, parent, right),
+    applyOptions(deps, folder, operation, right),
   );
   return {
     ...outcome,
@@ -51,25 +52,19 @@ export async function runCreate(
   };
 }
 
-type CreateOperation = Extract<
-  ReturnType<typeof parseOperation>,
-  { op: 'createSheet' | 'createDoc' | 'createFolder' }
->;
-
 const KINDS = { createSheet: 'sheet', createDoc: 'doc', createFolder: 'folder' } as const;
 
 /** Вход создания из операции: вид, имя, папка, содержимое, право писать в созданное. */
 function createInputOf(
   operation: CreateOperation,
-  resolved: ResolvedTarget,
+  parent: CreateParent,
   right: WriteRight | undefined,
 ): CreateInput {
-  const parentName = resolved.id === MY_DRIVE_ID ? 'Мой диск' : (resolved.alias ?? resolved.id);
   const content = contentOf(operation);
   return {
     kind: KINDS[operation.op],
     name: operation.name,
-    ...(resolved.type === 'folder' ? { parentId: resolved.id, parentName } : {}),
+    ...parent,
     ...(content === undefined ? {} : { content }),
     writable: right?.via === 'grant',
   };
