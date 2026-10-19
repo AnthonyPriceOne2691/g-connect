@@ -34,6 +34,9 @@ import {
 } from './docs/ops.js';
 
 export * from './docs/ops.js';
+// Вид ячейки — своим модулем (D-26, Q12): у шрифта, кегля и формата числа свои отказы.
+import { cellFormat, FORMAT_FIELDS } from './format-fields.js';
+export { FORMAT_FIELDS };
 import type { CellFormat } from './sheets/types.js';
 
 /** Значение ячейки, как его может прислать клиент. */
@@ -61,32 +64,6 @@ export const setCellsOp = z.object({
   values: rowValues,
   ...commonFields,
 });
-
-/**
- * Вид ячейки на внешней границе. `.strict()` не косметика: `{fontSize: 14}` должен
- * отклоняться С ПЕРЕЧИСЛЕНИЕМ допустимых полей (пример V11), а не проходить в никуда —
- * иначе агент будет уверен, что размер шрифта поменялся.
- */
-const cellFormat = z
-  .object({
-    bold: z.boolean().optional(),
-    italic: z.boolean().optional(),
-    underline: z.boolean().optional(),
-    align: z.enum(['left', 'center', 'right']).optional(),
-    background: z
-      .string()
-      .regex(/^#[0-9a-fA-F]{6}$/, 'цвет задаётся как #RRGGBB')
-      .optional(),
-  })
-  .strict();
-
-export const FORMAT_FIELDS: readonly string[] = [
-  'bold',
-  'italic',
-  'underline',
-  'align',
-  'background',
-];
 
 export const formatCellsOp = z.object({
   op: z.literal('formatCells'),
@@ -436,7 +413,7 @@ export function parseOperation(input: unknown): Operation {
     assertUsableRegex(parsed.data);
     return parsed.data;
   }
-  // «Unrecognized key fontSize» говорит, чего НЕЛЬЗЯ, и молчит о том, что можно — агент
+  // «Unrecognized key strikethrough» говорит, чего НЕЛЬЗЯ, и молчит о том, что можно — агент
   // после такого ответа угадывает. Список допустимых полей вида дописывается явно
   // (пример V11): узнать его иначе неоткуда, схема вида в `tools/list` вложенная.
   const aboutFormat = parsed.error.issues.some((issue) => issue.path[0] === 'format');

@@ -173,7 +173,9 @@ export const applyInput = {
     .record(z.string(), z.unknown())
     .optional()
     .describe(
-      'formatCells: bold, italic, underline, align (left|center|right), background #RRGGBB',
+      'formatCells: bold, italic, underline, align (left|center|right), background #RRGGBB, ' +
+        'fontFamily (Carlito), fontSize (целое 6–96), numberFormat {type, pattern} — ' +
+        'например {type: DATE, pattern: dd.mm.yyyy}',
     ),
   includeHeader: z
     .boolean()

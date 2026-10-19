@@ -6,7 +6,7 @@
  * разъехалась бы с первой молча — и разъезд был бы виден только на живой таблице.
  */
 
-import type { CellFormat, CellValue, SheetSnapshot } from './types.js';
+import type { CellFormat, CellValue, NumberFormat, SheetSnapshot } from './types.js';
 
 /** `Лист1!D3` → лист и индексы (1-based строка, 0-based колонка). `null` — не адрес. */
 export function parseA1(a1: string): { sheet: string; row: number; column: number } | null {
@@ -71,12 +71,26 @@ export function sameFormat(a: CellFormat | undefined, b: CellFormat | undefined)
  * Выравнивание и фон так не сворачиваются: у выравнивания значение по умолчанию зависит
  * от типа данных (числа Google равняет вправо), а белый фон — осознанный выбор, а не
  * «фона нет». Схлопывать их значило бы врать в другую сторону.
+ *
+ * `null` у шрифта, кегля и формата числа (D-26) — «сброшено к виду листа», то есть то же,
+ * что «не задано»: откат, сбросивший шрифт, оставляет ячейку такой, какой её прочтёт Google.
+ * Формат числа сравнивается по типу и шаблону — порядок его ключей вид не меняет.
  */
 export function formatKey(format: CellFormat | undefined): string {
   const entries = Object.entries(format ?? {}).filter(([key, value]) => {
-    if (value === undefined) return false;
+    if (value === undefined || value === null) return false;
     const isFlag = key === 'bold' || key === 'italic' || key === 'underline';
     return !(isFlag && value === false);
   });
-  return JSON.stringify(entries.sort(([x], [y]) => (x < y ? -1 : 1)));
+  const canonical = entries.map(([key, value]): readonly [string, unknown] => [
+    key,
+    key === 'numberFormat' ? numberFormatKey(value as NumberFormat) : value,
+  ]);
+  return JSON.stringify(canonical.sort(([x], [y]) => (x < y ? -1 : 1)));
 }
+
+/** Формат числа как пара «тип, шаблон»: `{pattern, type}` и `{type, pattern}` — один вид. */
+const numberFormatKey = (format: NumberFormat): readonly [string, string | null] => [
+  format.type,
+  format.pattern ?? null,
+];

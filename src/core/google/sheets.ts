@@ -8,13 +8,13 @@
 import { google, type drive_v3, type sheets_v4 } from 'googleapis';
 
 import { fromGoogleError, gcError } from '../errors.js';
-import { authorizedClient, makeRetry, rgbToHex, type RetryReporter } from './support.js';
+import { toFormat, toHex } from './cell-format.js';
+import { authorizedClient, makeRetry, type RetryReporter } from './support.js';
 import { toRequest } from './requests.js';
 import { rangesFor, withRowLimit } from './sheet-ranges.js';
 import { denyByRule, limitOf } from '../policy.js';
 import type {
   Cell,
-  CellFormat,
   CellValue,
   GridRange,
   ReadOptions,
@@ -60,45 +60,6 @@ function cellValue(cell: sheets_v4.Schema$CellData): CellValue {
     some(cell.formattedValue) ??
     null
   );
-}
-
-function toHex(color: sheets_v4.Schema$Color | undefined): string | undefined {
-  return color === undefined || color === null ? undefined : rgbToHex(color);
-}
-
-/** `LEFT|CENTER|RIGHT` из ответа → доменное выравнивание; всё остальное игнорируем. */
-function toAlign(value: string | null | undefined): CellFormat['align'] | undefined {
-  if (value === 'LEFT' || value === 'CENTER' || value === 'RIGHT') {
-    return value.toLowerCase() as CellFormat['align'];
-  }
-  return undefined;
-}
-
-/** Поле вида попадает в домен только когда задано явно: `undefined` и `false` — разное. */
-function flag(value: boolean | null | undefined): boolean | undefined {
-  return value === undefined || value === null ? undefined : value;
-}
-
-/**
- * Явный вид ячейки. Берётся `userEnteredFormat`, а НЕ `effectiveFormat`: второй показывает
- * и то, что пришло от темы или условного форматирования, — откатывать такое ядру нечем, а
- * показать в превью «было → станет» значило бы обещать правку чужого механизма.
- */
-function toFormat(cell: sheets_v4.Schema$CellData): CellFormat | undefined {
-  const format = cell.userEnteredFormat;
-  if (format === undefined || format === null) return undefined;
-  const text = format.textFormat ?? {};
-  const fields = {
-    bold: flag(text.bold),
-    italic: flag(text.italic),
-    underline: flag(text.underline),
-    align: toAlign(format.horizontalAlignment),
-    background: toHex(format.backgroundColor ?? undefined),
-  };
-  const out = Object.fromEntries(
-    Object.entries(fields).filter(([, value]) => value !== undefined),
-  ) as CellFormat;
-  return Object.keys(out).length === 0 ? undefined : out;
 }
 
 function toCell(cell: sheets_v4.Schema$CellData): Cell {
