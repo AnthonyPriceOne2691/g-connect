@@ -9,6 +9,7 @@
 
 import { gcError } from '../errors.js';
 import { detectDateFormat, withDateStyle } from './date-style.js';
+import { headerNotes } from './notes.js';
 import {
   columnLetter,
   type Cell,
@@ -286,7 +287,9 @@ export function buildSheetData(
       : { row: options.headerRow, reason: 'строка заголовков задана вызывающим', confident: true };
   const headerCells = rows[guess.row - 1] ?? [];
   const dataRows = rows.slice(guess.row);
-  const warnings: string[] = [];
+  // Заметки шапки — правила заполнения (Q24): предупреждение о них идёт первым, до записи.
+  const notes = headerNotes(rows, guess.row, { id: snapshot.id, sheet: sheet.title });
+  const warnings: string[] = [...notes.warnings];
 
   const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
   const columns: ColumnProfile[] = [];
@@ -329,6 +332,7 @@ export function buildSheetData(
       // Вид шапки и вид первой строки данных — только когда задан явно. Пустой объект в
       // карту не кладём: карта должна оставаться десятками строк, а не тысячами (§7).
       ...formatFields(headerCells[index]?.format, cells[0]?.format),
+      ...notes.column(index),
     });
   }
 
@@ -367,8 +371,6 @@ export function buildSheetData(
   const withData = withoutEmptyTail(dataRows);
   const allRows = withData.map((row) => rowToRecord(row, columns));
   const allFormats = withData.map((row) => formatsToRecord(row, columns));
-  const headerFormats = formatsToRecord(headerCells, columns);
-  const sampleRows = allRows.slice(0, SAMPLE_ROWS);
 
   const map: SheetMap = {
     spreadsheetId: snapshot.id,
@@ -384,11 +386,12 @@ export function buildSheetData(
     // Пустой колонке — вид дат листа или локали книги (Q15): первая дата в неё уходила как её
     // прислал агент. Записи строк выше берут только имена и индексы — вид дат им не нужен.
     columns: withDateStyle(columns, snapshot.locale),
-    sampleRows,
+    sampleRows: allRows.slice(0, SAMPLE_ROWS),
     otherSheets: snapshot.sheets
       .filter((s) => s.title !== sheet.title)
       .map((s) => ({ title: s.title, rowCount: s.rows.length })),
     ...(sheet.gridRows === undefined ? {} : { sheetRows: sheet.gridRows }),
+    ...notes.fields,
     // Снимок усечён по листу — значит список других листов НЕ полон, и молчать об этом
     // нельзя: пустой список читается как «других листов нет». Живой прогон 2026-09-04
     // получил `otherSheets: []` на книге из семи листов.
@@ -402,7 +405,12 @@ export function buildSheetData(
         : warnings,
   };
 
-  return { map, rows: allRows, formats: allFormats, headerFormats };
+  return {
+    map,
+    rows: allRows,
+    formats: allFormats,
+    headerFormats: formatsToRecord(headerCells, columns),
+  };
 }
 
 /** Префикс предупреждения о части листа — по нему `values` его не повторяет (D-26). */

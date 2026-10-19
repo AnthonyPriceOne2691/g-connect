@@ -9,7 +9,7 @@
 - **phase:** implement
 - **builder:** agent:claude-opus-5-5
 - **verifier:** human:anton
-- **human_ok_spec:** yes (by=human:anton, at=2026-10-19) reason=ответы «Всё сразу» (чтение) и «Да, запись первой» (объём Q1–Q7) на вопросы с вариантами; примеры — в вопросах; Q8–Q10 — ответ «Починить класс сейчас»; Q11–Q15 — ответ «Всё — в PR #9» (примеры — в описании варианта); Q16–Q19 — ответ «Всё, отдельным PR #11»; Q20–Q22 — ответ «Сейчас третьим агентом, PR #12»
+- **human_ok_spec:** yes (by=human:anton, at=2026-10-19) reason=ответы «Всё сразу» (чтение) и «Да, запись первой» (объём Q1–Q7) на вопросы с вариантами; примеры — в вопросах; Q8–Q10 — ответ «Починить класс сейчас»; Q11–Q15 — ответ «Всё — в PR #9» (примеры — в описании варианта); Q16–Q19 — ответ «Всё, отдельным PR #11»; Q20–Q22 — ответ «Сейчас третьим агентом, PR #12»; Q23–Q26 — ответ «Заметки сейчас, комментарии следом»
 - **human_ok_plan:** yes (by=human:anton, at=2026-10-19) reason=ответ «Подписываю» на вопрос с вариантами: план из семи слайсов, отклонённые альтернативы в plan.md; слайсы 8–9 — «В PR #9 к длинным листам»; слайсы 10–13 — «Всё — в PR #9» и слова «выделяй сразу два-три агента»; слайсы 14–15 — «Всё, отдельным PR #11» (два агента параллельно)
 - **shape-oracles:** cqg-deployed
 - **behavior-oracles:** tests-present (737 тестов; инструменты — через настоящий протокол)
@@ -19,12 +19,12 @@
 - **parallel_sessions:** merge-guard
 - **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
 - **blockers:** none
-- **waivers:** none reason=PR #12 (Q20–Q22: 666 строк, 8 файлов) — в пределах умолчаний; пределы PR #9–#11 — в spec.md «Решения владельца»
+- **waivers:** none reason=PR #13 (Q23–Q26: 534 строки, 9 файлов) — в пределах умолчаний; пределы PR #9–#11 — в spec.md «Решения владельца»
 - **new_dependency:** none
 - **runtime_paths:** src/core/google/
   <!-- шов Google целиком: размер листа из метаданных, диапазон '<лист>', окно строк, маски полей вида (сброс null), копия формата строки, локаль книги — отказ виден только живьём -->
 - **irreversible_surfaces:** none reason=запись по-прежнему через превью, предусловие и журнал с откатом; поставка убирает затирание, а не добавляет запись; вид ячеек — тоже с откатом (вид дописанной строки после отката остаётся на пустой строке — названо)
-- **model_surface:** src/policy/rules.md,src/policy/rules.json,src/mcp/tools.ts,src/mcp/read-values.ts,src/core/ops.ts,src/core/format-fields.ts,src/mcp/apply-schema.ts
+- **model_surface:** src/policy/rules.md,src/policy/rules.json,src/mcp/tools.ts,src/mcp/read-values.ts,src/core/ops.ts,src/core/format-fields.ts,src/mcp/apply-schema.ts,src/core/sheets/notes.ts
   <!-- агенту уйдут: fromRow, truncated с sheetRows и nextFromRow, предупреждение карты о части листа, отказ write.full-sheet; withFormat и formats, поля вида fontFamily/fontSize/numberFormat, allRows и rows у formatCells, заметки о виде дат и оформлении дописанной строки -->
 - **rule_enforcers:** src/policy/rules.json
 - **canon_drift_waiver:** no

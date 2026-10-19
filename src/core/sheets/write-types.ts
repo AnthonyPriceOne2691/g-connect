@@ -140,7 +140,10 @@ export interface ApplyOutcome {
   readonly changes: readonly PlannedChange[];
   /** Ступень 4 резолвера: что именно мы поняли по-своему (§8.2). */
   readonly assumptions: readonly string[];
-  /** Нормализации значений — «3ч» → 3, приведение регистра. */
+  /**
+   * Нормализации значений — «3ч» → 3, приведение регистра; правило из заметки шапки задетой
+   * колонки (Q26) — «у колонки «Оценка» в шапке заметка: «…»».
+   */
   readonly notes: readonly string[];
   readonly questions: readonly Question[];
   /**
