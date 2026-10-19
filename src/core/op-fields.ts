@@ -1,6 +1,7 @@
 /**
  * Общие поля операций на внешней границе — модуль-низ: их читают и табличные схемы
- * (`ops.ts`), и документные (`docs/ops.ts`), а две копии разъехались бы молча (L21).
+ * (`ops.ts`), и документные (`docs/ops.ts`), а две копии разъехались бы молча (L21). Здесь же
+ * разбор поля, пришедшего строкой JSON (`orJsonText`): его делят ядро и схема транспорта.
  */
 
 import { z } from 'zod';
@@ -29,3 +30,29 @@ export const commonFields = {
   /** Ревизия, на которой строилась карта: защита от гонки с живой правкой. */
   expectRevision: z.string().min(1).optional(),
 };
+
+/**
+ * Поле формой — или той же формой строкой JSON (D-26, Q19). Клиент со старой схемой `gc_apply`
+ * в кэше шлёт строкой форму, которой та схема не знала: после Reconnect у сессии, выравнивавшей
+ * «Реестр инфраструктуры», `rows: {from, to}` пришёл строкой, и ядро ответило «rows: Expected
+ * object, received string».
+ *
+ * Строка разбирается и судится ТОЙ ЖЕ схемой, что форма: не JSON — отказ с названием, не та
+ * форма — отказ самой схемы, а не новое молчаливое принятие. Разбор — `preprocess`, поэтому в
+ * `tools/list` строка не появляется: модель видит прежние формы, строка — запасной путь клиента.
+ */
+export function orJsonText<T extends z.ZodTypeAny>(schema: T) {
+  return z.preprocess((value, ctx) => {
+    if (typeof value !== 'string') return value;
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'строка не разбирается как JSON',
+        fatal: true,
+      });
+      return z.NEVER;
+    }
+  }, schema);
+}

@@ -1,12 +1,14 @@
 /**
- * Какие строки правит вид (D-26, Q13): ровно один способ — условие, весь лист или номера строк.
+ * Какие строки правит вид (D-26, Q13, Q17): ровно один способ — условие, весь лист, номера строк
+ * или одна строка шапки.
  *
  * Владелец выравнивал шрифт и даты «Реестра инфраструктуры» на семи вкладках, а `formatCells`
- * выбирал строки только условием `where` — выровнять лист целиком было нечем. Отдельным
- * модулем от `format-op.ts`, потому что выбор судится дважды: на границе, ДО обращения к
- * Google (`parseOperation`, урок L11: дорогой отказ — тоже дефект), и в ядре — по прочитанному
- * листу, где известны границы данных. Правило «ровно один способ» обязано быть одним текстом в
- * обоих местах, а не двумя копиями.
+ * выбирал строки только условием `where` — выровнять лист целиком было нечем. Потом в
+ * «Аккаунтах» у заголовков B2–D2 не оказалось фона шапки, а `includeHeader` красил шапку вместе
+ * с данными — оформить одну шапку было нечем (Q17). Отдельным модулем от `format-op.ts`, потому
+ * что выбор судится дважды: на границе, ДО обращения к Google (`parseOperation`, урок L11:
+ * дорогой отказ — тоже дефект), и в ядре — по прочитанному листу, где известны границы данных.
+ * Правило «ровно один способ» обязано быть одним текстом в обоих местах, а не двумя копиями.
  */
 
 import { z } from 'zod';
@@ -30,20 +32,27 @@ export const rowSpanSchema = z
   .object({ from: z.number().int().positive(), to: z.number().int().positive() })
   .strict();
 
-/** Способ выбрать строки — ровно один, и держит это тип, а не договорённость. */
+/**
+ * Способ выбрать строки — ровно один, и держит это тип, а не договорённость. `headerOnly` — одна
+ * строка шапки (`map.headerRow`); строка над ней (название таблицы) не адресуется ни одним.
+ */
 export type RowSelection =
-  { readonly where: RowValues } | { readonly allRows: true } | { readonly rows: RowSpan };
+  | { readonly where: RowValues }
+  | { readonly allRows: true }
+  | { readonly rows: RowSpan }
+  | { readonly headerOnly: true };
 
 /** Поля выбора, как их несёт операция с внешней границы: любое может отсутствовать. */
 export interface RowSelectionFields {
   readonly where?: RowValues | undefined;
   readonly allRows?: boolean | undefined;
   readonly rows?: RowSpan | undefined;
+  readonly headerOnly?: boolean | undefined;
 }
 
 const WAYS =
   'where — условие на строки, allRows: true — все строки данных листа, rows: {from, to} — ' +
-  'номера строк листа (включительно)';
+  'номера строк листа (включительно), headerOnly: true — только строка шапки';
 
 /**
  * Поля операции → способ выбора строк или отказ `bad_request`. Ни одного способа — отказ, а не
@@ -55,6 +64,7 @@ export function rowSelectionOf(fields: RowSelectionFields): RowSelection {
     ...(fields.where === undefined ? [] : [{ where: fields.where }]),
     ...(fields.allRows === true ? [{ allRows: true as const }] : []),
     ...(fields.rows === undefined ? [] : [{ rows: fields.rows }]),
+    ...(fields.headerOnly === true ? [{ headerOnly: true as const }] : []),
   ];
   const [only] = chosen;
   if (only === undefined || chosen.length > 1) {
@@ -120,7 +130,8 @@ const spanText = (first: number, last: number): string =>
 
 /**
  * Номера вне строк данных — отказ с границами данных: агент видит карту по первым 500 строкам
- * (D-26) и номер последней строки может не знать — ответ называет её сам.
+ * (D-26) и номер последней строки может не знать — ответ называет её сам. Задета шапка — ответ
+ * называет, чем её оформить (Q17): строки над ней не адресует ни один способ.
  */
 function assertWithinData(span: RowSpan, bounds: DataBounds, map: SheetMap): void {
   if (span.from >= bounds.first && span.to <= bounds.last) return;
@@ -128,7 +139,10 @@ function assertWithinData(span: RowSpan, bounds: DataBounds, map: SheetMap): voi
     detail:
       `rows: ${spanText(span.from, span.to)} — за пределами строк данных листа «${map.sheet}»: ` +
       `данные — ${spanText(bounds.first, bounds.last)}. Ни одной правки не сделано.` +
-      (span.from <= map.headerRow ? ' Шапку оформляет includeHeader: true.' : ''),
+      (span.from <= map.headerRow
+        ? ' Шапку оформляет headerOnly: true — одну, без строк данных — или includeHeader: true ' +
+          'вместе со строками.'
+        : ''),
     cause: 'rows_outside_data',
   });
 }
@@ -140,6 +154,7 @@ const numbers = (first: number, last: number): number[] =>
  * Номера выбранных строк листа или готовый отказ. Условие идёт прежним путём (`setCells` и
  * правка вида отвечают на «какие строки трогаем» одной функцией); весь лист и номера строк —
  * по границе данных. Пустой лист — вопрос, а не `no_change`: «вид уже такой» там было бы ложью.
+ * Шапке строки данных не нужны: лист из одной шапки оформляется (Q17).
  */
 export function selectedRows(
   data: SheetData,
@@ -153,6 +168,7 @@ export function selectedRows(
   }
   const map = data.map;
   assertRevision(map, options);
+  if ('headerOnly' in selection) return { rows: [map.headerRow] };
   const bounds = dataBounds(data);
   if (bounds === null) {
     const question = {

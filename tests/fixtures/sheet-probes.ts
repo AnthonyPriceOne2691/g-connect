@@ -91,10 +91,17 @@ export const sheetProbes: Record<string, () => Promise<void>> = {
   },
 
   // Ни одного способа, два сразу и пустое условие — отказ ДО обращения к Google (урок L11):
-  // «все строки» говорятся только явным `allRows: true` (Q13).
+  // «все строки» говорятся только явным `allRows: true` (Q13). Четвёртый способ — одна строка
+  // шапки (Q17): с любым другим — тоже два сразу.
   'write.format-rows-explicit': async () => {
     const base = { op: 'formatCells', columns: ['Имя'], format: { bold: true } };
-    for (const fields of [{}, { where: { Имя: 'строка 1' }, allRows: true }, { where: {} }]) {
+    const refused = [
+      {},
+      { where: { Имя: 'строка 1' }, allRows: true },
+      { where: {} },
+      { headerOnly: true, rows: { from: 2, to: 3 } },
+    ];
+    for (const fields of refused) {
       expect(thrownBy(() => parseOperation({ ...base, ...fields }))).toMatchObject({
         payload: { code: 'bad_request' },
       });
@@ -114,6 +121,14 @@ export const sheetProbes: Record<string, () => Promise<void>> = {
       { bold: true },
     );
     expect(preview.changes.map((change) => change.a1)).toEqual(['Лист!A2', 'Лист!A3', 'Лист!A4']);
+    const header = await formatRows(
+      new FakeSheetsClient(snapshot),
+      buildSheetData(snapshot),
+      { headerOnly: true },
+      ['Имя'],
+      { bold: true },
+    );
+    expect(header.changes.map((change) => change.a1)).toEqual(['Лист!A1']);
   },
 
   // Вид дописанной строки — копией формата строки над ней, ДО значений, и превью это называет
