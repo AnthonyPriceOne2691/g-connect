@@ -19,7 +19,7 @@
 - **parallel_sessions:** merge-guard
 - **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
 - **blockers:** none
-- **waivers:** none reason=PR #11 (Q16–Q19) — в пределах умолчаний; пределы PR #9 и PR #10 — в spec.md «Решения владельца»
+- **waivers:** max_loc_diff=1300 max_files_touched=25 reason=ответ «Да: 1300 строк, 25 файлов» на вопрос с вариантами — PR #11 (Q16–Q19: 1254 строки, 22 файла относительно PR #10; продукт 170, тесты 1084) by=human:anton at=2026-10-19
 - **new_dependency:** none
 - **runtime_paths:** src/core/google/
   <!-- шов Google целиком: размер листа из метаданных, диапазон '<лист>', окно строк, маски полей вида (сброс null), копия формата строки, локаль книги — отказ виден только живьём -->
