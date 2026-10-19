@@ -9,10 +9,11 @@
  */
 
 import { chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { profilesHome } from '../env.js';
 import { gcError } from '../errors.js';
+import { grantPhrase, profileLabel } from '../profile-names.js';
 import { grantText, newGrant, parseGrantText, projectKey, type GrantDocument } from './document.js';
 import { verifySignature } from './ssh.js';
 
@@ -53,12 +54,17 @@ interface StoredGrant {
   readonly signature: string;
 }
 
-export function grantsDir(): string {
-  return join(profilesHome(), 'grants');
+/**
+ * Разрешения профиля (D-25): у каждого профиля свой каталог, файл — на пару «проект,
+ * профиль». Раньше файл лежал на проект, и разрешение второго профиля затирало первое.
+ * Прежний `grants/<проект>.json` не читается никем: мигрировать нечего — срок до 23:59.
+ */
+export function grantsDir(account: string): string {
+  return join(profilesHome(), 'grants', account);
 }
 
-function grantFile(project: string): string {
-  return join(grantsDir(), `${projectKey(project)}.json`);
+function grantFile(project: string, account: string): string {
+  return join(grantsDir(account), `${projectKey(project)}.json`);
 }
 
 const none = (reason: GrantRefusal, detail: string, expiredAt?: string): GrantState =>
@@ -78,10 +84,13 @@ async function signatureHolds(stored: StoredGrant, publicKey: string): Promise<b
   return ok;
 }
 
-async function readStored(project: string): Promise<StoredGrant | 'absent' | 'malformed'> {
+async function readStored(
+  project: string,
+  account: string,
+): Promise<StoredGrant | 'absent' | 'malformed'> {
   let raw: string;
   try {
-    raw = await readFile(grantFile(project), 'utf8');
+    raw = await readFile(grantFile(project, account), 'utf8');
   } catch {
     return 'absent';
   }
@@ -112,16 +121,21 @@ export async function currentGrant(
       'клиент не назвал проект сессии (нет CLAUDE_PROJECT_DIR) — только чтение',
     );
   }
-  const signed = await signedText(keys, project);
+  const signed = await signedText(keys, project, account);
   return typeof signed === 'string' ? judgeContent(signed, project, account, now) : signed;
 }
 
 /** Фаза первая — файл и подпись. Текст отдаётся дальше, только если подпись сошлась. */
-async function signedText(keys: GrantKeys, project: string): Promise<string | GrantState> {
-  const stored = await readStored(project);
-  if (stored === 'absent') return none('no_grant', `для проекта ${project} G connect не открыт`);
+async function signedText(
+  keys: GrantKeys,
+  project: string,
+  account: string,
+): Promise<string | GrantState> {
+  const stored = await readStored(project, account);
+  if (stored === 'absent')
+    return none('no_grant', `для проекта ${project} ${profileLabel(account)} не открыт`);
   if (stored === 'malformed')
-    return none('malformed', 'файл разрешения повреждён — открой G connect заново');
+    return none('malformed', `файл разрешения повреждён — ${grantPhrase(account)} заново`);
   const publicKey = await keys.signerKey();
   if (publicKey === undefined) {
     return none(
@@ -138,7 +152,7 @@ async function signedText(keys: GrantKeys, project: string): Promise<string | Gr
 function judgeContent(text: string, project: string, account: string, now: Date): GrantState {
   const grant = parseGrantText(text);
   if (grant === undefined)
-    return none('malformed', 'текст разрешения не той формы — открой G connect заново');
+    return none('malformed', `текст разрешения не той формы — ${grantPhrase(account)} заново`);
   if (grant.project !== project)
     return none('other_project', `разрешение выдано проекту ${grant.project}`);
   if (grant.account !== account)
@@ -178,18 +192,21 @@ export async function issueGrant(
   }
   // `mode` у mkdir и writeFile действует только при СОЗДАНИИ: подложенный заранее файл с
   // правами 644 их бы сохранил. Права ставятся явно в обоих случаях.
-  await mkdir(grantsDir(), { recursive: true, mode: 0o700 });
-  await chmod(grantsDir(), 0o700);
-  await writeFile(grantFile(project), `${JSON.stringify({ text, signature })}\n`, { mode: 0o600 });
-  await chmod(grantFile(project), 0o600);
+  const dir = grantsDir(account);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dirname(dir), 0o700);
+  await chmod(dir, 0o700);
+  const file = grantFile(project, account);
+  await writeFile(file, `${JSON.stringify({ text, signature })}\n`, { mode: 0o600 });
+  await chmod(file, 0o600);
   return grant;
 }
 
-/** Отозвать разрешение проекта; `false` — его и не было. */
-export async function revokeGrant(project: string): Promise<boolean> {
-  const stored = await readStored(project);
+/** Отозвать разрешение проекта у профиля; `false` — его и не было. */
+export async function revokeGrant(project: string, account: string): Promise<boolean> {
+  const stored = await readStored(project, account);
   if (stored === 'absent') return false;
-  await rm(grantFile(project), { force: true });
+  await rm(grantFile(project, account), { force: true });
   return true;
 }
 
@@ -211,13 +228,15 @@ export async function listGrants(
 ): Promise<GrantListing[]> {
   let names: string[];
   try {
-    names = (await readdir(grantsDir())).filter((name) => name.endsWith('.json'));
+    names = (await readdir(grantsDir(account))).filter((name) => name.endsWith('.json'));
   } catch {
     return [];
   }
   const listing: GrantListing[] = [];
   for (const name of names) {
-    const project = projectOf(await readFile(join(grantsDir(), name), 'utf8').catch(() => ''));
+    const project = projectOf(
+      await readFile(join(grantsDir(account), name), 'utf8').catch(() => ''),
+    );
     if (project === undefined) {
       listing.push({ project: `(файл ${name})`, expires: null, state: 'malformed' });
       continue;

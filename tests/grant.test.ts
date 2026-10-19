@@ -8,9 +8,9 @@
  */
 
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import fc from 'fast-check';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -67,9 +67,9 @@ const sign = async (
   });
 
 const plant = async (project: string, text: string, signature: string): Promise<void> => {
-  await mkdir(grantsDir(), { recursive: true });
+  await mkdir(grantsDir('default'), { recursive: true });
   await writeFile(
-    join(grantsDir(), `${projectKey(project)}.json`),
+    join(grantsDir('default'), `${projectKey(project)}.json`),
     JSON.stringify({ text, signature }),
   );
 };
@@ -136,9 +136,9 @@ describe('выдача и проверка (X3)', () => {
     const grant = await issueGrant(fileKeys(owner), PROJECT_A, 'default', NOON);
     const state = await currentGrant(fileKeys(owner), PROJECT_A, 'default', NOON);
     expect(state).toEqual({ state: 'granted', grant });
-    const file = join(grantsDir(), `${projectKey(PROJECT_A)}.json`);
+    const file = join(grantsDir('default'), `${projectKey(PROJECT_A)}.json`);
     expect((await stat(file)).mode & 0o777).toBe(0o600);
-    expect((await stat(grantsDir())).mode & 0o777).toBe(0o700);
+    expect((await stat(grantsDir('default'))).mode & 0o777).toBe(0o700);
     expect(await readFile(file, 'utf8')).not.toContain('token');
   });
 
@@ -171,11 +171,11 @@ describe('выдача и проверка (X3)', () => {
 
   it('отзыв снимает разрешение; повторный отзыв — «его и не было»', async () => {
     await issueGrant(fileKeys(owner), PROJECT_A, 'default', NOON);
-    expect(await revokeGrant(PROJECT_A)).toBe(true);
+    expect(await revokeGrant(PROJECT_A, 'default')).toBe(true);
     expect(await currentGrant(fileKeys(owner), PROJECT_A, 'default', NOON)).toMatchObject({
       reason: 'no_grant',
     });
-    expect(await revokeGrant(PROJECT_A)).toBe(false);
+    expect(await revokeGrant(PROJECT_A, 'default')).toBe(false);
   });
 
   it('проекта нет (клиент не передал CLAUDE_PROJECT_DIR) — только чтение', async () => {
@@ -235,8 +235,11 @@ describe('чужой проект, чужой профиль, истёкший �
     expect(await currentGrant(fileKeys(owner), PROJECT_B, 'default', NOON)).toMatchObject({
       reason: 'no_grant',
     });
-    const moved = await readFile(join(grantsDir(), `${projectKey(PROJECT_A)}.json`), 'utf8');
-    await writeFile(join(grantsDir(), `${projectKey(PROJECT_B)}.json`), moved);
+    const moved = await readFile(
+      join(grantsDir('default'), `${projectKey(PROJECT_A)}.json`),
+      'utf8',
+    );
+    await writeFile(join(grantsDir('default'), `${projectKey(PROJECT_B)}.json`), moved);
     expect(await currentGrant(fileKeys(owner), PROJECT_B, 'default', NOON)).toMatchObject({
       reason: 'other_project',
     });
@@ -244,6 +247,14 @@ describe('чужой проект, чужой профиль, истёкший �
 
   it('разрешение профиля default не открывает другой профиль', async () => {
     await issueGrant(fileKeys(owner), PROJECT_A, 'default', NOON);
+    // У другого профиля свой каталог (D-25): файла там нет.
+    expect(await currentGrant(fileKeys(owner), PROJECT_A, 'work', NOON)).toMatchObject({
+      reason: 'no_grant',
+    });
+    // Скопированный в каталог другого профиля файл: подпись цела, профиль в тексте — чужой.
+    const name = `${projectKey(PROJECT_A)}.json`;
+    await mkdir(grantsDir('work'), { recursive: true });
+    await copyFile(join(grantsDir('default'), name), join(grantsDir('work'), name));
     expect(await currentGrant(fileKeys(owner), PROJECT_A, 'work', NOON)).toMatchObject({
       reason: 'other_account',
     });
@@ -270,7 +281,7 @@ describe('список разрешений машины (gc grant)', () => {
     await issueGrant(fileKeys(owner), PROJECT_A, 'default', NOON);
     const foreign = grantText(newGrant(PROJECT_B, 'default', NOON));
     await plant(PROJECT_B, foreign, await sign(stranger, foreign));
-    await writeFile(join(grantsDir(), 'broken.json'), '{not json');
+    await writeFile(join(grantsDir('default'), 'broken.json'), '{not json');
     const listing = await listGrants(fileKeys(owner), 'default', NOON);
     expect(listing).toHaveLength(3);
     expect(listing).toEqual(
@@ -345,5 +356,47 @@ describe('ключ из агента (путь Secretive на настоящем
     ).rejects.toMatchObject({
       payload: { code: 'grant_key_missing' },
     });
+  });
+});
+
+describe('два профиля рядом: разрешение на пару «проект, профиль» (D-25)', () => {
+  it('W4: разрешение рабочего не трогает личное в том же проекте — и отзыв тоже', async () => {
+    const personal = await issueGrant(fileKeys(owner), PROJECT_A, 'default', NOON);
+    const work = await issueGrant(fileKeys(owner), PROJECT_A, 'work', NOON);
+    expect(await currentGrant(fileKeys(owner), PROJECT_A, 'default', NOON)).toEqual({
+      state: 'granted',
+      grant: personal,
+    });
+    expect(await currentGrant(fileKeys(owner), PROJECT_A, 'work', NOON)).toEqual({
+      state: 'granted',
+      grant: work,
+    });
+    expect(await revokeGrant(PROJECT_A, 'work')).toBe(true);
+    expect(await currentGrant(fileKeys(owner), PROJECT_A, 'default', NOON)).toMatchObject({
+      state: 'granted',
+    });
+    expect(await currentGrant(fileKeys(owner), PROJECT_A, 'work', NOON)).toMatchObject({
+      reason: 'no_grant',
+    });
+    expect((await listGrants(fileKeys(owner), 'default', NOON)).map((g) => g.project)).toEqual([
+      PROJECT_A,
+    ]);
+  });
+
+  it('W6: файл прежней раскладки (на проект) не открывает запись ни одному профилю', async () => {
+    const grant = newGrant(PROJECT_A, 'default', NOON);
+    const text = grantText(grant);
+    const root = dirname(grantsDir('default'));
+    await mkdir(root, { recursive: true });
+    await writeFile(
+      join(root, `${projectKey(PROJECT_A)}.json`),
+      JSON.stringify({ text, signature: await sign(owner, text) }),
+    );
+    for (const account of ['default', 'work']) {
+      expect(await currentGrant(fileKeys(owner), PROJECT_A, account, NOON)).toMatchObject({
+        state: 'none',
+        reason: 'no_grant',
+      });
+    }
   });
 });

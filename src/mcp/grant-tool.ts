@@ -13,6 +13,7 @@ import { z } from 'zod';
 
 import { gcError } from '../core/errors.js';
 import { issueGrant, revokeGrant, type GrantState } from '../core/grant/grants.js';
+import { grantPhrase, profileLabel } from '../core/profile-names.js';
 import type { ToolDeps, ToolDefinition } from './deps.js';
 
 /** Что агент видит о праве проекта — в `gc_targets` и в ответах `gc_grant`. */
@@ -25,8 +26,9 @@ export interface GrantSummary {
 
 type GrantRefusalState = Exclude<GrantState, { state: 'granted' }>['reason'];
 
-const OPEN_ADVICE =
-  'записи вне реестра нет: попроси владельца сказать «открой G connect» и приложить палец';
+/** Фраза — своего профиля (D-25): «открой G connect» у личного, «… (work)» у другого. */
+const openAdvice = (account: string): string =>
+  `записи вне реестра нет: попроси владельца сказать «${grantPhrase(account)}» и приложить палец`;
 
 export async function grantSummary(deps: ToolDeps): Promise<GrantSummary> {
   if (deps.project === undefined || deps.grant === undefined) {
@@ -42,10 +44,14 @@ export async function grantSummary(deps: ToolDeps): Promise<GrantSummary> {
       project: deps.project,
       state: 'granted',
       expires: state.grant.expires,
-      detail: `G connect открыт для этого проекта до ${state.grant.expires}: свои таблицы и документы пишутся через превью, журнал и откат`,
+      detail: `${profileLabel(deps.account)} открыт для этого проекта до ${state.grant.expires}: свои таблицы и документы пишутся через превью, журнал и откат`,
     };
   }
-  return { project: deps.project, state: state.reason, detail: `${state.detail}; ${OPEN_ADVICE}` };
+  return {
+    project: deps.project,
+    state: state.reason,
+    detail: `${state.detail}; ${openAdvice(deps.account)}`,
+  };
 }
 
 const grantInput = {
@@ -53,7 +59,8 @@ const grantInput = {
     .enum(['open', 'status', 'revoke'])
     .default('status')
     .describe(
-      'open — выдать касанием (ТОЛЬКО когда владелец сам сказал «открой G connect»); ' +
+      'open — выдать касанием (ТОЛЬКО когда владелец сам сказал «открой G connect»; у ' +
+        'другого профиля — с его именем: «открой G connect (work)»); ' +
         'status — показать; revoke — отозвать',
     ),
 };
@@ -63,7 +70,8 @@ export const gcGrant: ToolDefinition = {
   title: 'Разрешение проекта касанием пальца',
   description:
     'Разрешение ЭТОГО проекта писать в свои таблицы и документы вне реестра — до 23:59. ' +
-    'open — только по просьбе владельца («открой G connect»): macOS покажет Touch ID, палец ' +
+    'open — только по просьбе владельца («открой G connect», у другого профиля — с его ' +
+    'именем): macOS покажет Touch ID, палец ' +
     'подписывает разрешение, ожидание до 60 с. Не вызывай open сам, чтобы обойти needs_grant. ' +
     'status — что сейчас; revoke — отозвать досрочно.',
   input: grantInput,
@@ -79,7 +87,7 @@ export const gcGrant: ToolDefinition = {
       });
     }
     if (action === 'revoke') {
-      const revoked = await revokeGrant(project);
+      const revoked = await revokeGrant(project, deps.account);
       return { status: revoked ? 'revoked' : 'nothing_to_revoke', project };
     }
     const now = await grantSummary(deps);
@@ -92,7 +100,7 @@ export const gcGrant: ToolDefinition = {
       project,
       expires: grant.expires,
       hint:
-        `Скажи владельцу: G connect открыт для проекта ${project} до ${grant.expires}. ` +
+        `Скажи владельцу: ${profileLabel(deps.account)} открыт для проекта ${project} до ${grant.expires}. ` +
         'Неразрушающее — с первой фразы через превью и журнал, разрушающее — его фразой.',
     };
   },

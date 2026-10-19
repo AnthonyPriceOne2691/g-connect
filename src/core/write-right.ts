@@ -13,6 +13,7 @@ import { gcError } from './errors.js';
 import type { GrantDocument } from './grant/document.js';
 import type { GrantState } from './grant/grants.js';
 import { denyByRule } from './policy.js';
+import { grantPhrase } from './profile-names.js';
 import type { ResolvedTarget } from './targets.js';
 
 export type WriteRight =
@@ -25,6 +26,7 @@ export type WriteRight =
 export async function authorizeWrite(
   target: ResolvedTarget,
   grantOf: () => Promise<GrantState>,
+  account: string,
 ): Promise<WriteRight> {
   if (target.allow === 'write') return { via: 'registry' };
   if (target.entry !== null) {
@@ -39,7 +41,7 @@ export async function authorizeWrite(
   throw gcError('needs_grant', {
     detail:
       `Цель ${target.id} не в реестре: писать в неё можно по разрешению проекта, а его нет — ` +
-      `${grant.detail}. Попроси владельца сказать «открой G connect» и приложить палец; ` +
+      `${grant.detail}. Попроси владельца сказать «${grantPhrase(account)}» и приложить палец; ` +
       'разрешение не подписывается агентом и не выпрашивается в обход.',
     cause: grant.reason,
   });

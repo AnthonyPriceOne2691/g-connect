@@ -49,7 +49,7 @@ export async function revisionOf(deps: ToolDeps, resolved: ResolvedTarget): Prom
 
 /** Право записи этого вызова (D-23): реестр или разрешение проекта — одна функция ядра. */
 export function writeRight(deps: ToolDeps, resolved: ResolvedTarget): Promise<WriteRight> {
-  return authorizeWrite(resolved, () => deps.grant?.() ?? Promise.resolve(NO_GRANT));
+  return authorizeWrite(resolved, () => deps.grant?.() ?? Promise.resolve(NO_GRANT), deps.account);
 }
 
 /** Опции записи из разобранной операции. Вынесено: в обработчике копило сложность. */

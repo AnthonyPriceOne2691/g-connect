@@ -13,6 +13,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MVP_SCOPES } from '../src/core/auth.js';
 import { gcCommand, grantPhrase, serverName, unlockLine } from '../src/core/profile-names.js';
 import { profileDir, writeSealedToken } from '../src/core/profiles.js';
+import type { ResolvedTarget } from '../src/core/targets.js';
+import { authorizeWrite } from '../src/core/write-right.js';
 import { tokenForClients, tokenVault, type TokenVault } from '../src/core/token/vault.js';
 import type { ToolDeps } from '../src/mcp/tools.js';
 import { FakeDriveClient } from './fixtures/drive.js';
@@ -164,6 +166,39 @@ describe('два профиля рядом: сервер называет сво
     } finally {
       await work.close();
     }
+  });
+
+  it('W4: фраза разрешения — своего профиля: «открой G connect (work)», у личного прежняя', async () => {
+    const none = () =>
+      Promise.resolve({ state: 'none' as const, reason: 'no_grant' as const, detail: 'нет' });
+    const project = '/Users/someone/Documents/Ahrefs cases';
+    const work = await protocolSession({ ...depsOf('work'), project, grant: none });
+    const personal = await protocolSession({ ...depsOf('default'), project, grant: none });
+    try {
+      const workGrant = ((await work.call('gc_targets', {})).data as { grant: { detail: string } })
+        .grant;
+      expect(workGrant.detail).toContain('«открой G connect (work)»');
+      const ownGrant = (
+        (await personal.call('gc_targets', {})).data as { grant: { detail: string } }
+      ).grant;
+      expect(ownGrant.detail).toContain('«открой G connect»');
+    } finally {
+      await work.close();
+      await personal.close();
+    }
+    // Отказ записи вне реестра называет ту же фразу — ею агент просит владельца.
+    const unlisted = {
+      id: 'X',
+      alias: null,
+      entry: null,
+      allow: 'read',
+    } as unknown as ResolvedTarget;
+    await expect(authorizeWrite(unlisted, none, 'work')).rejects.toMatchObject({
+      payload: {
+        code: 'needs_grant',
+        detail: expect.stringContaining('«открой G connect (work)»'),
+      },
+    });
   });
 
   it('W10: личный профиль звучит как до D-25 — имя, строка, фраза и команда слово в слово', async () => {

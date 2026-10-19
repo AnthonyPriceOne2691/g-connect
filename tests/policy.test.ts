@@ -118,7 +118,9 @@ const probes: Record<string, () => Promise<void>> = {
     const readOnly = resolveTarget('ref', {
       targets: [{ alias: 'ref', id: 'REFONLY000000000000000000', type: 'sheet', allow: 'read' }],
     });
-    await expect(authorizeWrite(readOnly, () => Promise.resolve(GRANTED))).rejects.toMatchObject({
+    await expect(
+      authorizeWrite(readOnly, () => Promise.resolve(GRANTED), 'default'),
+    ).rejects.toMatchObject({
       payload: { code: 'policy_denied', cause: 'write.allowlist' },
     });
   },
@@ -127,12 +129,16 @@ const probes: Record<string, () => Promise<void>> = {
   'write.grant': async () => {
     const unlisted = resolveTarget('UNLISTED000000000000000');
     const none: GrantState = { state: 'none', reason: 'no_grant', detail: 'нет разрешения' };
-    await expect(authorizeWrite(unlisted, () => Promise.resolve(none))).rejects.toMatchObject({
+    await expect(
+      authorizeWrite(unlisted, () => Promise.resolve(none), 'default'),
+    ).rejects.toMatchObject({
       payload: { code: 'needs_grant', cause: 'no_grant' },
     });
-    expect(await authorizeWrite(unlisted, () => Promise.resolve(GRANTED))).toMatchObject({
-      via: 'grant',
-    });
+    expect(await authorizeWrite(unlisted, () => Promise.resolve(GRANTED), 'default')).toMatchObject(
+      {
+        via: 'grant',
+      },
+    );
   },
 
   // D-23: подложенный файл разрешения с чужой подписью не открывает ничего.
@@ -155,9 +161,9 @@ const probes: Record<string, () => Promise<void>> = {
       ['-Y', 'sign', '-f', stranger.file, '-n', 'g-connect-grant'],
       { input: text, encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
     );
-    await mkdir(grantsDir(), { recursive: true });
+    await mkdir(grantsDir('default'), { recursive: true });
     await writeFile(
-      join(grantsDir(), `${projectKey(project)}.json`),
+      join(grantsDir('default'), `${projectKey(project)}.json`),
       JSON.stringify({ text, signature }),
     );
     const keys = {
