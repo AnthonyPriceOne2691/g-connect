@@ -24,7 +24,7 @@
 - **runtime_paths:** src/core/google/
   <!-- шов Google целиком: размер листа из метаданных, диапазон '<лист>', окно строк, маски полей вида (сброс null), копия формата строки, локаль книги — отказ виден только живьём -->
 - **irreversible_surfaces:** none reason=запись по-прежнему через превью, предусловие и журнал с откатом; поставка убирает затирание, а не добавляет запись; вид ячеек — тоже с откатом (вид дописанной строки после отката остаётся на пустой строке — названо)
-- **model_surface:** src/policy/rules.md,src/policy/rules.json,src/mcp/tools.ts,src/mcp/read-values.ts,src/core/ops.ts
+- **model_surface:** src/policy/rules.md,src/policy/rules.json,src/mcp/tools.ts,src/mcp/read-values.ts,src/core/ops.ts,src/core/format-fields.ts,src/mcp/apply-schema.ts
   <!-- агенту уйдут: fromRow, truncated с sheetRows и nextFromRow, предупреждение карты о части листа, отказ write.full-sheet; withFormat и formats, поля вида fontFamily/fontSize/numberFormat, allRows и rows у formatCells, заметки о виде дат и оформлении дописанной строки -->
 - **rule_enforcers:** src/policy/rules.json
 - **canon_drift_waiver:** no
