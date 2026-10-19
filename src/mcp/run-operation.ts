@@ -79,7 +79,7 @@ const HANDLERS: {
     upsertRow(client, data, operation.key, operation.values, options),
   setCells: (client, data, operation, options) =>
     setCells(client, data, operation.where, operation.values, options),
-  // Строки — ровно одним способом (Q13): неверный выбор отказан ещё разбором ядра, здесь поля
+  // Строки — ровно одним способом (Q13, Q17): неверный выбор отказан ещё разбором ядра, здесь поля
   // только сужаются до типа.
   formatCells: (client, data, operation, options) =>
     formatRows(client, data, rowSelectionOf(operation), operation.columns, operation.format, {

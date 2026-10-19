@@ -70,11 +70,14 @@ export function sameFormat(a: CellFormat | undefined, b: CellFormat | undefined)
  *
  * Выравнивание и фон так не сворачиваются: у выравнивания значение по умолчанию зависит
  * от типа данных (числа Google равняет вправо), а белый фон — осознанный выбор, а не
- * «фона нет». Схлопывать их значило бы врать в другую сторону.
+ * «фона нет»: белая заливка прячет сетку листа (Q16). Схлопывать их значило бы врать в другую
+ * сторону. «Фона нет» — это `null`, на границе — слово `"none"`.
  *
- * `null` у шрифта, кегля и формата числа (D-26) — «сброшено к виду листа», то есть то же,
- * что «не задано»: откат, сбросивший шрифт, оставляет ячейку такой, какой её прочтёт Google.
- * Формат числа сравнивается по типу и шаблону — порядок его ключей вид не меняет.
+ * `null` у шрифта, кегля, формата числа, фона и цвета текста (D-26, Q16, Q18) — «сброшено к виду
+ * листа», то есть то же, что «не задано»: откат, сбросивший поле, оставляет ячейку такой, какой
+ * её прочтёт Google. Формат числа сравнивается по типу и шаблону — порядок его ключей вид не
+ * меняет; цвет — без регистра: `#FFFFFF` агента и `#ffffff`, каким Google отдаёт цвет при чтении,
+ * — один вид, иначе откат такой записи всегда упирался бы в «вид изменили после записи».
  */
 export function formatKey(format: CellFormat | undefined): string {
   const entries = Object.entries(format ?? {}).filter(([key, value]) => {
@@ -84,9 +87,16 @@ export function formatKey(format: CellFormat | undefined): string {
   });
   const canonical = entries.map(([key, value]): readonly [string, unknown] => [
     key,
-    key === 'numberFormat' ? numberFormatKey(value as NumberFormat) : value,
+    comparable(key, value),
   ]);
   return JSON.stringify(canonical.sort(([x], [y]) => (x < y ? -1 : 1)));
+}
+
+/** Значение поля вида для сравнения: формат числа — парой «тип, шаблон», цвет — без регистра. */
+function comparable(key: string, value: unknown): unknown {
+  if (key === 'numberFormat') return numberFormatKey(value as NumberFormat);
+  if (key === 'background' || key === 'textColor') return (value as string).toLowerCase();
+  return value;
 }
 
 /** Формат числа как пара «тип, шаблон»: `{pattern, type}` и `{type, pattern}` — один вид. */

@@ -8,6 +8,7 @@
 
 import { z } from 'zod';
 
+import { orJsonText } from '../core/op-fields.js';
 import {
   OPERATION_NAMES,
   parseOperation,
@@ -64,13 +65,15 @@ const docFields = {
     .describe('setParagraphStyle: вид абзаца — обычный текст или заголовок'),
   // Три смысла у одного имени, как у `columns`: число строк новой таблицы документа, строки
   // новой таблицы Sheets (D-23) и номера строк правки вида (Q13). Без любой из форм транспорт
-  // отклонял бы её до ядра.
-  rows: z
-    .union([
+  // отклонял бы её до ядра. Строка JSON разбирается тем же `orJsonText`, что в ядре (Q19): клиент
+  // со старой схемой шлёт форму строкой, а в `tools/list` строки нет — модель видит три формы.
+  rows: orJsonText(
+    z.union([
       z.number().int().positive(),
       z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))),
       rowSpanSchema,
-    ])
+    ]),
+  )
     .optional()
     .describe(
       'insertTable: число строк (1–50); createSheet: строки новой таблицы — массивы значений ' +
@@ -177,21 +180,33 @@ export const applyInput = {
     .record(z.string(), z.unknown())
     .optional()
     .describe(
-      'formatCells: bold, italic, underline, align (left|center|right), background #RRGGBB, ' +
+      'formatCells: bold, italic, underline, align (left|center|right), background #RRGGBB ' +
+        'или "none" (без заливки), textColor #RRGGBB или "none" (цвет листа), ' +
         'fontFamily (Carlito), fontSize (целое 6–96), numberFormat {type, pattern} — ' +
         'например {type: DATE, pattern: dd.mm.yyyy}',
     ),
   includeHeader: z
     .boolean()
     .optional()
-    .describe('formatCells: заодно поправить ячейку заголовка этих колонок'),
+    .describe(
+      'formatCells: заодно поправить ячейку заголовка этих колонок — вместе со строками ' +
+        'данных; только шапку — headerOnly: true',
+    ),
   allRows: z
     .boolean()
     .optional()
     .describe(
       'formatCells: все строки данных листа — от строки после шапки до последней строки с ' +
-        'данными; строки выбирает ровно одно из where, allRows, rows. Конверт судит ячейки ' +
-        'плана (до строк × колонок): длинный лист — пачками rows',
+        'данными; строки выбирает ровно одно из where, allRows, rows, headerOnly. Конверт ' +
+        'судит ячейки плана (до строк × колонок): длинный лист — пачками rows',
+    ),
+  headerOnly: z
+    .boolean()
+    .optional()
+    .describe(
+      'formatCells: только строка шапки — ячейки заголовков названных колонок, без строк ' +
+        'данных (фон или шрифт шапки). Строка над шапкой, например название таблицы, не ' +
+        'адресуется',
     ),
   find: z
     .string()

@@ -48,6 +48,7 @@ const SAMPLE: Record<string, unknown> = {
   format: { bold: true },
   includeHeader: true,
   allRows: true,
+  headerOnly: true,
   find: 'Fluminense',
   replace: 'Fluminense FC',
   matchCase: true,
@@ -106,12 +107,13 @@ function sampleFor(op: OperationName): Record<string, unknown> {
 }
 
 /**
- * Поля, из которых операция берёт РОВНО одно (Q13): строки правки вида выбирает `where`,
- * `allRows` или `rows`. Образец со всеми тремя ядро законно отклонит, поэтому у такой операции
- * образцов несколько — по одному на способ, — а «заполнены все поля» судит их объединение.
+ * Поля, из которых операция берёт РОВНО одно (Q13, Q17): строки правки вида выбирает `where`,
+ * `allRows`, `rows` или `headerOnly`. Образец со всеми четырьмя ядро законно отклонит, поэтому у
+ * такой операции образцов несколько — по одному на способ, — а «заполнены все поля» судит их
+ * объединение.
  */
 const ONE_OF: Partial<Record<OperationName, readonly string[]>> = {
-  formatCells: ['where', 'allRows', 'rows'],
+  formatCells: ['where', 'allRows', 'rows', 'headerOnly'],
 };
 
 function samplesFor(op: OperationName): Record<string, unknown>[] {

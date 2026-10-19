@@ -44,6 +44,14 @@
     `src/core/values.ts`): Q15.
 13. **Сведение и verify** (ведущий): ветки — в `fix/long-sheets`, гейты, мутации долями, правила
     и D-26, отчёт; живой прогон (слайс 7) — с Q11–Q15.
+
+PR #11 (Q16–Q19) — два агента параллельно от `380d507`, сводит ведущий в `feat/cell-fills` поверх PR #10:
+
+14. **Заливка и цвет текста** (агент D; `types.ts` `CellFormat`, `format-fields.ts`, шов
+    `cell-format.ts` и `requests.ts`, `a1.ts`, `undo.ts`, `html.ts`): `background: "none"` и
+    `textColor`; у Google — по два поля (цвет и стиль), запись и сброс — обоих (Q16, Q18).
+15. **Только шапка и `rows` строкой** (агент E; `row-selection.ts`, `ops.ts`, `format-op.ts`,
+    `run-operation.ts`, `apply-schema.ts`): `headerOnly: true`; строка JSON — той же схемой (Q17, Q19).
 7. **Живой прогон**: своя таблица в 600 строк (создание и строки — по разрешению проекта и
    коду плана владельца), `appendRow`, `upsertRow` по ключу ниже 500-й, откат, чтение
    `values`/`fromRow`/карта; «Агентства» — только чтение. Таблица — в корзину.

@@ -472,6 +472,7 @@ describe('V11 — вид на границе инструмента', () => {
       'fontFamily',
       'fontSize',
       'numberFormat',
+      'textColor',
     ]) {
       expect(text, field).toContain(field);
     }

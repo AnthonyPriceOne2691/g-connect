@@ -204,11 +204,28 @@ function withFormat(data: SpreadsheetSnapshot, request: FormatRequest): Spreadsh
   const row = rows[request.row - 1];
   if (row === undefined) return data;
   const cell = row[request.column] ?? { value: null };
-  row[request.column] = { ...cell, format: { ...cell.format, ...request.format } };
+  const format = mergedFormat(cell.format, request.format);
+  row[request.column] = {
+    value: cell.value,
+    ...(cell.formula === undefined ? {} : { formula: cell.formula }),
+    ...(format === undefined ? {} : { format }),
+  };
   return {
     ...data,
     sheets: data.sheets.map((s) => (s.sheetId === request.sheetId ? { ...s, rows } : s)),
   };
+}
+
+type Format = FormatRequest['format'];
+
+/**
+ * Вид после правки — как его прочтёт Google: сброс `null` (поле в маске без значения) значит
+ * «поля нет», а не «поле null», и ячейка без единого поля вида читается без вида вовсе. Раньше
+ * фейк хранил `null`, и оракул на сброс видел то, чего Google не вернёт (замечание агента A).
+ */
+function mergedFormat(current: Format | undefined, patch: Format): Format | undefined {
+  const fields = Object.entries({ ...current, ...patch }).filter(([, value]) => value !== null);
+  return fields.length === 0 ? undefined : Object.fromEntries(fields);
 }
 
 /**
