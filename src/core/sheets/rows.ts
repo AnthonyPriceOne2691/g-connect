@@ -12,8 +12,10 @@ import { normalizeValue } from '../values.js';
 import {
   columnLetter,
   type ColumnProfile,
+  type CopyPasteRequest,
   type SheetData,
   type SheetMap,
+  type SheetRequest,
   type SheetsClient,
 } from './types.js';
 import {
@@ -55,11 +57,18 @@ export const finish = (
   prepared: Prepared,
   options: RowOptions,
   op: OperationKind,
+  /** Запросы вида, которые уходят ДО значений: копия оформления дописанной строки (Q14). */
+  layout: readonly SheetRequest[] = [],
 ): Promise<ApplyOutcome> =>
   finishWrite(client, contextOf(map), changes, prepared, options, op, {
     // Ячеечная правка приносит своё применение и своё предусловие тем же способом, что
     // структурная: контур записи один, а формы правки различаются ровно этими двумя.
-    apply: (c) => writeCells(c, map, changes),
+    apply: async (c) => {
+      // Вид — до значений, и порядок не косметика: отказ копии не оставит в листе строку с
+      // данными без вида, а отказ значений оставит пустую оформленную строку — она безвредна.
+      if (layout.length > 0) await c.batchUpdate(map.spreadsheetId, layout);
+      await writeCells(c, map, changes);
+    },
     precondition: (c) => assertBeforeValues(c, map, changes),
   });
 
@@ -281,7 +290,49 @@ export async function appendRow(
     after: value,
   }));
 
-  return finish(client, map, changes, prepared, options, 'appendRow');
+  const layout = changes.length === 0 ? null : layoutFromAbove(map, rowNumber, data.rows.length);
+  if (layout === null) return finish(client, map, changes, prepared, options, 'appendRow');
+  // Копию вида называет план: человек видит её в превью, а не узнаёт по виду листа.
+  const note = `оформление строки ${rowNumber} — как у строки ${rowNumber - 1}`;
+  const named: Prepared = { ...prepared, notes: [...prepared.notes, note] };
+  return finish(client, map, changes, named, options, 'appendRow', [layout]);
+}
+
+/**
+ * Вид дописанной строки — как у строки над ней (D-26, Q14).
+ *
+ * values-API пишет только значения, и строка, дописанная ниже оформленных строк шаблона,
+ * получала шрифт листа по умолчанию: «Реестр инфраструктуры» владелец выравнивал руками на
+ * семи вкладках. Копия — один `copyPaste` с `PASTE_FORMAT`: источник — последняя строка данных,
+ * получатель — новая строка, колонки — ширина таблицы, от первой до последней колонки карты.
+ * Строки данных над новой нет (лист из одной шапки) — копии нет: шапка оформлена иначе.
+ *
+ * Названная непокрытость: откат дозаписи возвращает ЗНАЧЕНИЯ, а скопированный вид остаётся
+ * на опустевшей строке — журнал хранит ячейки правки, а не прежний вид строки, и вернуть
+ * «как было» нечем. Строка без значений данными не считается, и следующая дозапись встанет
+ * в неё же с тем же видом.
+ */
+function layoutFromAbove(
+  map: SheetMap,
+  rowNumber: number,
+  rowsAbove: number,
+): CopyPasteRequest | null {
+  if (rowsAbove === 0 || map.columns.length === 0) return null;
+  const indices = map.columns.map((column) => column.index);
+  const first = Math.min(...indices);
+  const line = (row: number) => ({
+    row,
+    column: first,
+    rowCount: 1,
+    columnCount: Math.max(...indices) - first + 1,
+  });
+  return {
+    kind: 'copyPaste',
+    sheetId: map.sheetId,
+    source: line(rowNumber - 1),
+    destination: line(rowNumber),
+    paste: 'format',
+  };
 }
 
 /**

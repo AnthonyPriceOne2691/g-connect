@@ -112,6 +112,10 @@ const readInput = {
     .positive()
     .optional()
     .describe('Таблица, mode=values: с какой строки листа читать (номер строки, как в Google)'),
+  withFormat: z
+    .boolean()
+    .default(false)
+    .describe('Таблица, mode=values: вид ячеек по строкам (formats), чтобы найти отличающиеся'),
   tab: z.string().min(1).optional().describe('Документ: таб по заголовку; без него — единственный'),
   fromParagraph: z
     .number()
@@ -129,7 +133,8 @@ export const gcRead: ToolDefinition = {
     'границы данных, имена колонок с типами и допустимыми значениями; у документа — табы, ' +
     'оглавление с № абзацев и таблицы. mode=values читает строки таблицы окном: до 5000 за ' +
     'вызов, fromRow — с какой строки; truncated: true — строки дальше есть, продолжай с ' +
-    'nextFromRow. mode=text — абзацы документа.',
+    'nextFromRow; withFormat: true — вид ячеек по строкам, чтобы найти отличающиеся. ' +
+    'mode=text — абзацы документа.',
   input: readInput,
   async handle(args, deps) {
     // Обработчик разбирает вход САМ: схема транспорта не единственная граница —

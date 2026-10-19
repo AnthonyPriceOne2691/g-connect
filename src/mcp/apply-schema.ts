@@ -15,6 +15,7 @@ import {
   type Operation,
   type OperationName,
 } from '../core/ops.js';
+import { rowSpanSchema } from '../core/sheets/row-selection.js';
 import { targetArg } from './target-arg.js';
 
 /**
@@ -61,17 +62,20 @@ const docFields = {
   namedStyle: setParagraphStyleOp.shape.namedStyle
     .optional()
     .describe('setParagraphStyle: вид абзаца — обычный текст или заголовок'),
-  // Два смысла у одного имени, как у `columns`: число строк новой таблицы документа и
-  // строки новой таблицы Sheets (D-23). Только число — и строки отклонялись бы транспортом.
+  // Три смысла у одного имени, как у `columns`: число строк новой таблицы документа, строки
+  // новой таблицы Sheets (D-23) и номера строк правки вида (Q13). Без любой из форм транспорт
+  // отклонял бы её до ядра.
   rows: z
     .union([
       z.number().int().positive(),
       z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))),
+      rowSpanSchema,
     ])
     .optional()
     .describe(
       'insertTable: число строк (1–50); createSheet: строки новой таблицы — массивы значений ' +
-        'в порядке колонок шапки',
+        'в порядке колонок шапки; formatCells: {from, to} — номера строк листа включительно, ' +
+        'внутри строк данных (пачка под конверт)',
     ),
   asText: z
     .boolean()
@@ -152,9 +156,9 @@ export const applyInput = {
     .describe(
       'Таблица: условие отбора строк для setCells, formatCells, findReplace, insertRows, ' +
         'deleteRows и moveRows — ключ строки или значение любой колонки; пустое условие у ' +
-        'удаления и перемещения отклоняется. Документ: селектор абзаца, ровно один ключ из ' +
-        'paragraphIndex (№ из mode=map), textStartsWith, textContains, firstParagraph, ' +
-        'lastParagraph',
+        'formatCells, удаления и перемещения отклоняется. Документ: селектор абзаца, ровно ' +
+        'один ключ из paragraphIndex (№ из mode=map), textStartsWith, textContains, ' +
+        'firstParagraph, lastParagraph',
     ),
   values: z
     .record(z.string(), z.unknown())
@@ -173,12 +177,22 @@ export const applyInput = {
     .record(z.string(), z.unknown())
     .optional()
     .describe(
-      'formatCells: bold, italic, underline, align (left|center|right), background #RRGGBB',
+      'formatCells: bold, italic, underline, align (left|center|right), background #RRGGBB, ' +
+        'fontFamily (Carlito), fontSize (целое 6–96), numberFormat {type, pattern} — ' +
+        'например {type: DATE, pattern: dd.mm.yyyy}',
     ),
   includeHeader: z
     .boolean()
     .optional()
     .describe('formatCells: заодно поправить ячейку заголовка этих колонок'),
+  allRows: z
+    .boolean()
+    .optional()
+    .describe(
+      'formatCells: все строки данных листа — от строки после шапки до последней строки с ' +
+        'данными; строки выбирает ровно одно из where, allRows, rows. Конверт судит ячейки ' +
+        'плана (до строк × колонок): длинный лист — пачками rows',
+    ),
   find: z
     .string()
     .min(1)

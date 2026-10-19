@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { limitOf } from '../policy.js';
 import { profilesRoot } from '../profiles.js';
 import type { ApplyOutcome, PlannedChange, Question } from '../sheets/rows.js';
-import type { CellFormat } from '../sheets/types.js';
+import type { CellFormat, NumberFormat } from '../sheets/types.js';
 
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -82,6 +82,21 @@ const ALIGN_WORDS: Record<'left' | 'center' | 'right', string> = {
 const yesNo = (value: boolean | undefined, yes: string, no: string): string | null =>
   value === undefined ? null : value ? yes : no;
 
+/**
+ * Шрифт, кегль и формат числа (D-26): «шрифт Carlito», «кегль 10», «формат DATE dd.mm.yyyy».
+ * `null` — сброс к виду листа (слово отката), и человек читает именно это, а не «—».
+ */
+const named = <T>(
+  value: T | null | undefined,
+  word: (v: T) => string,
+  reset: string,
+): string | null => (value === undefined ? null : value === null ? reset : word(value));
+
+const numberFormatWords = (format: NumberFormat): string =>
+  format.pattern === undefined
+    ? `формат ${format.type}`
+    : `формат ${format.type} ${format.pattern}`;
+
 function formatWords(format: CellFormat | undefined): string {
   if (format === undefined) return '—';
   const words = [
@@ -90,6 +105,9 @@ function formatWords(format: CellFormat | undefined): string {
     yesNo(format.underline, 'подчёркнутый', 'без подчёркивания'),
     format.align === undefined ? null : ALIGN_WORDS[format.align],
     format.background === undefined ? null : `фон ${format.background}`,
+    named(format.fontFamily, (family) => `шрифт ${family}`, 'шрифт листа'),
+    named(format.fontSize, (size) => `кегль ${size}`, 'кегль листа'),
+    named(format.numberFormat, numberFormatWords, 'формат числа листа'),
   ].filter((word): word is string => word !== null);
   return words.length === 0 ? '—' : words.join(', ');
 }

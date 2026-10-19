@@ -10,7 +10,13 @@
 
 import type { sheets_v4 } from 'googleapis';
 
-import type { DomainRange, FormatRequest, PasteKind, SheetRequest } from '../sheets/types.js';
+import type {
+  CellFormat,
+  DomainRange,
+  FormatRequest,
+  PasteKind,
+  SheetRequest,
+} from '../sheets/types.js';
 
 /**
  * Доменный запрос → запрос библиотеки. Единственное место такого перевода (§2, гейт
@@ -168,17 +174,36 @@ function toDimensionRange(request: {
   };
 }
 
-/** Доменная правка вида → запрос библиотеки. */
+/**
+ * Поле вида → путь в маске Google. Таблицей, как `MAPPERS`: это соответствие, а не логика, и
+ * пропущенное поле TypeScript не пустит — без пути в маске правка ушла бы в никуда.
+ */
+const FORMAT_MASKS: Readonly<Record<keyof CellFormat, string>> = {
+  bold: 'userEnteredFormat.textFormat.bold',
+  italic: 'userEnteredFormat.textFormat.italic',
+  underline: 'userEnteredFormat.textFormat.underline',
+  fontFamily: 'userEnteredFormat.textFormat.fontFamily',
+  fontSize: 'userEnteredFormat.textFormat.fontSize',
+  align: 'userEnteredFormat.horizontalAlignment',
+  background: 'userEnteredFormat.backgroundColor',
+  numberFormat: 'userEnteredFormat.numberFormat',
+};
+
+/** Поля `textFormat` — у Google они вложены, у домена лежат рядом с остальными. */
+const TEXT_KEYS = ['bold', 'italic', 'underline', 'fontFamily', 'fontSize'] as const;
+
+/**
+ * Доменная правка вида → запрос библиотеки.
+ *
+ * Маска — из ЗАДАННЫХ полей, и `null` (сброс, слово отката, D-26) в ней тоже есть, а в теле
+ * его нет: поле в маске без значения Google сбрасывает к виду листа. Иначе откат шрифта, которого
+ * до правки не было, нечем было бы записать — нейтрального шрифта, как `bold: false`, нет.
+ */
 function toRepeatCell(request: FormatRequest): sheets_v4.Schema$Request {
   const { format } = request;
-  const textFields = (['bold', 'italic', 'underline'] as const).filter(
+  const keys = (Object.keys(FORMAT_MASKS) as (keyof CellFormat)[]).filter(
     (key) => format[key] !== undefined,
   );
-  const fields = [
-    ...textFields.map((key) => `userEnteredFormat.textFormat.${key}`),
-    ...(format.align === undefined ? [] : ['userEnteredFormat.horizontalAlignment']),
-    ...(format.background === undefined ? [] : ['userEnteredFormat.backgroundColor']),
-  ];
   return {
     repeatCell: {
       range: {
@@ -188,23 +213,28 @@ function toRepeatCell(request: FormatRequest): sheets_v4.Schema$Request {
         startColumnIndex: request.column,
         endColumnIndex: request.column + 1,
       },
-      cell: {
-        userEnteredFormat: {
-          ...(textFields.length === 0
-            ? {}
-            : {
-                textFormat: Object.fromEntries(textFields.map((key) => [key, format[key]])),
-              }),
-          ...(format.align === undefined
-            ? {}
-            : { horizontalAlignment: format.align.toUpperCase() }),
-          ...(format.background === undefined
-            ? {}
-            : { backgroundColor: fromHex(format.background) }),
-        },
-      },
-      fields: fields.join(','),
+      cell: { userEnteredFormat: toUserEnteredFormat(format) },
+      fields: keys.map((key) => FORMAT_MASKS[key]).join(','),
     },
+  };
+}
+
+/** Тело правки вида: только поля со значением — `undefined` и `null` в тело не идут. */
+function toUserEnteredFormat(format: CellFormat): sheets_v4.Schema$CellFormat {
+  const textFormat = Object.fromEntries(
+    TEXT_KEYS.flatMap((key) => {
+      const value = format[key];
+      return value === undefined || value === null ? [] : [[key, value] as const];
+    }),
+  );
+  const { numberFormat } = format;
+  return {
+    ...(Object.keys(textFormat).length === 0 ? {} : { textFormat }),
+    ...(format.align === undefined ? {} : { horizontalAlignment: format.align.toUpperCase() }),
+    ...(format.background === undefined ? {} : { backgroundColor: fromHex(format.background) }),
+    ...(numberFormat === undefined || numberFormat === null
+      ? {}
+      : { numberFormat: { ...numberFormat } }),
   };
 }
 

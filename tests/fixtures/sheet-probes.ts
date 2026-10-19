@@ -8,9 +8,12 @@ import type { drive_v3, sheets_v4 } from 'googleapis';
 import { expect } from 'vitest';
 
 import { GoogleSheetsClient, WRITE_MAX_SHEET_ROWS } from '../../src/core/google/sheets.js';
+import { parseOperation } from '../../src/core/ops.js';
 import { limitOf } from '../../src/core/policy.js';
+import { formatRows } from '../../src/core/sheets/format-op.js';
 import { buildSheetData } from '../../src/core/sheets/map.js';
-import type { Cell } from '../../src/core/sheets/types.js';
+import { appendRow } from '../../src/core/sheets/rows.js';
+import type { Cell, CellValue, SheetRequest } from '../../src/core/sheets/types.js';
 import { readValues } from '../../src/mcp/read-values.js';
 import { FakeSheetsClient } from './sheet.js';
 
@@ -86,4 +89,88 @@ export const sheetProbes: Record<string, () => Promise<void>> = {
     expect(WRITE_MAX_SHEET_ROWS).toBe(limitOf('write.max-sheet-rows', -1));
     expect(WRITE_MAX_SHEET_ROWS).toBeGreaterThan(0);
   },
+
+  // Ни одного способа, два сразу и пустое условие — отказ ДО обращения к Google (урок L11):
+  // «все строки» говорятся только явным `allRows: true` (Q13).
+  'write.format-rows-explicit': async () => {
+    const base = { op: 'formatCells', columns: ['Имя'], format: { bold: true } };
+    for (const fields of [{}, { where: { Имя: 'строка 1' }, allRows: true }, { where: {} }]) {
+      expect(thrownBy(() => parseOperation({ ...base, ...fields }))).toMatchObject({
+        payload: { code: 'bad_request' },
+      });
+    }
+    const snapshot = longSnapshot(3);
+    // Ядро держит то же само, без границы: прямой вызов с пустым условием — отказ.
+    await expect(
+      formatRows(new FakeSheetsClient(snapshot), buildSheetData(snapshot), { where: {} }, ['Имя'], {
+        bold: true,
+      }),
+    ).rejects.toMatchObject({ payload: { code: 'bad_request', cause: 'empty_condition' } });
+    const preview = await formatRows(
+      new FakeSheetsClient(snapshot),
+      buildSheetData(snapshot),
+      { allRows: true },
+      ['Имя'],
+      { bold: true },
+    );
+    expect(preview.changes.map((change) => change.a1)).toEqual(['Лист!A2', 'Лист!A3', 'Лист!A4']);
+  },
+
+  // Вид дописанной строки — копией формата строки над ней, ДО значений, и превью это называет
+  // (Q14): отказ копии не оставит в листе строку с данными шрифтом по умолчанию.
+  'write.append-inherits-format': async () => {
+    const snapshot = {
+      id: 'SHEET',
+      title: 'Т',
+      sheets: [
+        {
+          title: 'Лист',
+          sheetId: 1,
+          rows: [[cell('Имя')], [{ value: 'строка 1', format: { fontFamily: 'Carlito' } }]],
+        },
+      ],
+    };
+    const preview = await appendRow(new Ordered(snapshot), buildSheetData(snapshot), {
+      Имя: 'строка 2',
+    });
+    expect(preview.notes).toContain('оформление строки 3 — как у строки 2');
+    const client = new Ordered(snapshot);
+    await appendRow(
+      client,
+      buildSheetData(snapshot),
+      { Имя: 'строка 2' },
+      { dryRun: false, authorize: () => ({ authorized: true }) as const },
+    );
+    expect(client.order).toEqual(['copyPaste:format', 'values']);
+  },
 };
+
+/** Ошибка вызова — или `null`, если вызов прошёл: отказ сверяется по полезной нагрузке. */
+function thrownBy(call: () => unknown): unknown {
+  try {
+    call();
+  } catch (error) {
+    return error;
+  }
+  return null;
+}
+
+/** Фейк, который помнит порядок запросов: вид и значения — разными вызовами Google. */
+class Ordered extends FakeSheetsClient {
+  readonly order: string[] = [];
+
+  override async batchUpdate(id: string, requests: readonly SheetRequest[]): Promise<void> {
+    this.order.push(
+      ...requests.map((r) => (r.kind === 'copyPaste' ? `copyPaste:${r.paste}` : r.kind)),
+    );
+    await super.batchUpdate(id, requests);
+  }
+
+  override async batchUpdateValues(
+    id: string,
+    cells: readonly { readonly range: string; readonly value: CellValue }[],
+  ): Promise<void> {
+    this.order.push('values');
+    await super.batchUpdateValues(id, cells);
+  }
+}

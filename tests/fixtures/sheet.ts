@@ -300,6 +300,24 @@ function withSort(data: SpreadsheetSnapshot, request: SortRangeRequest): Spreads
   };
 }
 
+/**
+ * Ячейка получателя после вставки — как вставляет Google (`pasteType`): `all` — ячейка целиком,
+ * `values` — только значение, без формулы и вида; `format` — только вид, значение и формула
+ * получателя остаются. Раньше фейк копировал ячейку целиком при любом `paste`, и копия вида
+ * строки над дописанной (Q14) тащила бы в новую строку и значения строки выше.
+ */
+function pasted(from: Cell, to: Cell, paste: CopyPasteRequest['paste']): Cell {
+  if (paste === 'all') return { ...from };
+  if (paste === 'values') {
+    return { value: from.value, ...(to.format === undefined ? {} : { format: to.format }) };
+  }
+  return {
+    value: to.value,
+    ...(to.formula === undefined ? {} : { formula: to.formula }),
+    ...(from.format === undefined ? {} : { format: from.format }),
+  };
+}
+
 /** Перенос прямоугольника: копирование, вырезание и автозаполнение по образцу. */
 function withPaste(
   data: SpreadsheetSnapshot,
@@ -320,7 +338,8 @@ function withPaste(
           while (rows.length <= targetRow) rows.push([]);
           const row = rows[targetRow] as Cell[];
           while (row.length <= destination.column + dc) row.push({ value: null });
-          row[destination.column + dc] = { ...from };
+          const paste = request.kind === 'autoFill' ? 'all' : request.paste;
+          row[destination.column + dc] = pasted(from, row[destination.column + dc]!, paste);
         }
       }
       if (request.kind === 'cutPaste') {
@@ -523,7 +542,11 @@ export class MutableSheetsClient implements SheetsClient {
       while (rows.length <= rowIndex) rows.push([]);
       const row = rows[rowIndex] as Cell[];
       while (row.length <= columnIndex) row.push({ value: null });
-      row[columnIndex] = written;
+      // Значение — не вид: Google пишет значение и оставляет оформление ячейки как было. Фейк
+      // заменял ячейку целиком, и вид, скопированный в дописанную строку до значений (Q14),
+      // пропадал бы на первой же записи значения.
+      const format = row[columnIndex]?.format;
+      row[columnIndex] = format === undefined ? written : { ...written, format };
       return { ...sheet, rows };
     });
     this.data = { ...this.data, sheets: next };
