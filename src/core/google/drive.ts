@@ -10,8 +10,7 @@ import { google, type drive_v3 } from 'googleapis';
 
 import { fromGoogleError, gcError } from '../errors.js';
 import { limitOf } from '../policy.js';
-import { withRetry } from '../retry.js';
-import type { RetryReporter } from './support.js';
+import { authorizedClient, makeRetry, type RetryReporter } from './support.js';
 
 export type SearchScope = 'myDrive' | 'sharedWithMe' | 'sharedDrives' | 'folder';
 
@@ -154,13 +153,30 @@ export interface CreatedFile {
   readonly url: string;
 }
 
+/** Файл по ID глазами Drive: тип — по `mimeType` из ответа, а не по виду ссылки. */
+export interface DriveFile {
+  readonly id: string;
+  readonly name: string;
+  readonly type: FoundFile['type'];
+  /** Как тип назвал Drive: у `other` это единственное, что можно сказать человеку. */
+  readonly mimeType: string;
+}
+
 export interface DriveClient {
   search(query: SearchQuery): Promise<SearchResult>;
   /**
-   * Создать пустой файл или папку. `parentId` не задан — файл ложится в корень «Мой
-   * диск»: у Drive у файла ровно один родитель, и множественные не поддерживаются.
+   * Тип и имя файла по ID (D-26, Q20): у голого ID тип неизвестен, и создание спрашивает
+   * Drive, папка ли это. Нет файла или нет доступа — ошибка Drive (`not_found`, `forbidden`),
+   * а не пустой ответ.
    */
-  create(kind: CreateKind, name: string, parentId?: string): Promise<CreatedFile>;
+  fileKind(id: string): Promise<DriveFile>;
+  /**
+   * Создать пустой файл или папку в папке `parentId` — она названа ВСЕГДА (D-26, Q22): без
+   * родителя Drive молча кладёт файл в корень «Мой диск», и так голый ID папки общего диска
+   * создал папку в корне (весть portfolio-site-38). Корень — только явный `root`. У файла в
+   * Drive ровно один родитель, множественные не поддерживаются.
+   */
+  create(kind: CreateKind, name: string, parentId: string): Promise<CreatedFile>;
   /**
    * В корзину, а не насовсем. `files.delete` уничтожает безвозвратно и вместе со всем
    * содержимым папки — такого инструмента у агента не будет.
@@ -175,31 +191,51 @@ export const CREATE_MIME: Record<CreateKind, string> = {
   folder: 'application/vnd.google-apps.folder',
 };
 
+export interface GoogleDriveClientOptions {
+  readonly accessToken: string;
+  /** Сообщает о повторе, чтобы наверху можно было показать «попытка 2 из 3». */
+  readonly onRetry?: RetryReporter;
+  /**
+   * Внедрённый API — шов судится на форме ответа Google, как у таблиц и документов (урок
+   * L28): фейк `DriveClient` целиком параметров запроса не видит, а без `supportsAllDrives`
+   * папка общего диска для Drive не существует.
+   */
+  readonly api?: drive_v3.Drive;
+}
+
 export class GoogleDriveClient implements DriveClient {
   private readonly drive: drive_v3.Drive;
+  private readonly retry: ReturnType<typeof makeRetry>;
 
-  /** Повторы — только у поиска: создание и корзина не идемпотентны, их не повторяют. */
-  constructor(
-    accessToken: string,
-    private readonly onRetry?: RetryReporter,
-  ) {
-    const auth = new google.auth.OAuth2();
-    auth.setCredentials({ access_token: accessToken });
-    this.drive = google.drive({ version: 'v3', auth });
+  /** Повторы — только у чтения: создание и корзина не идемпотентны, их не повторяют. */
+  constructor(options: GoogleDriveClientOptions) {
+    this.drive =
+      options.api ?? google.drive({ version: 'v3', auth: authorizedClient(options.accessToken) });
+    this.retry = makeRetry(options.onRetry);
   }
 
-  async create(kind: CreateKind, name: string, parentId?: string): Promise<CreatedFile> {
+  async fileKind(id: string): Promise<DriveFile> {
+    try {
+      // `supportsAllDrives` обязателен: без него файл общего диска Drive не отдаёт (404), и
+      // папка общего диска выглядела бы «нет доступа» — там и жила папка из вести.
+      const { data } = await this.retry(() =>
+        this.drive.files.get({ fileId: id, fields: 'id,name,mimeType', supportsAllDrives: true }),
+      );
+      const mimeType = data.mimeType ?? '';
+      return { id, name: data.name ?? id, type: MIME[mimeType] ?? 'other', mimeType };
+    } catch (error) {
+      throw fromGoogleError(error, `Drive не отдал файл ${id}.`);
+    }
+  }
+
+  async create(kind: CreateKind, name: string, parentId: string): Promise<CreatedFile> {
     try {
       // `fields` обязателен: по умолчанию Drive отдаёт минимум, и ссылки в ответе не
       // будет — человек получил бы «создано» без возможности открыть.
       const response = await this.drive.files.create({
         supportsAllDrives: true,
         fields: 'id,name,mimeType,webViewLink',
-        requestBody: {
-          name,
-          mimeType: CREATE_MIME[kind],
-          ...(parentId === undefined ? {} : { parents: [parentId] }),
-        },
+        requestBody: { name, mimeType: CREATE_MIME[kind], parents: [parentId] },
       });
       const file = response.data;
       if (file.id === undefined || file.id === null) {
@@ -230,10 +266,7 @@ export class GoogleDriveClient implements DriveClient {
   async search(query: SearchQuery): Promise<SearchResult> {
     const limit = clampLimit(query.limit);
     try {
-      const response = await withRetry(
-        () => this.drive.files.list(listParams(query, limit)),
-        this.onRetry === undefined ? {} : { onRetry: this.onRetry },
-      );
+      const response = await this.retry(() => this.drive.files.list(listParams(query, limit)));
 
       const all = (response.data.files ?? []).map(toFoundFile);
       // «Общие диски» означает именно их: файл без driveId живёт на личном Диске,

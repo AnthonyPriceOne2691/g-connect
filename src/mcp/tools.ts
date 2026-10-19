@@ -266,24 +266,25 @@ export const gcApply: ToolDefinition = {
   parseInput: (args) => args,
   async handle(args, deps) {
     const operation = operationOf(args);
-
-    // Право проверяется ДО любого обращения к Google. Порядок не косметика: при
-    // обратном порядке запрос на запись в чужой файл сначала лез в сеть, и человек
-    // получал «файл не найден» вместо «нет права записи» — нашла живая проба через
-    // протокол, юнит-тесты вызывали обработчик и этого не видели.
     const resolved = await resolve(deps, operation.target);
-    const right = operation.dryRun === false ? await writeRight(deps, resolved) : undefined;
 
     // Создание файла идёт до всякого чтения таблицы: у него нет ни листа, ни карты, а
     // цель — папка. Ветка ранняя намеренно — иначе `getSpreadsheet` на папке отказал бы
-    // «файл не найден» вместо понятного ответа.
+    // «файл не найден» вместо понятного ответа. Право она спрашивает сама, после вида цели
+    // по реестру и ссылке: отказ «не папка» не должен стоить касания (D-26, Q21).
     if (
       operation.op === 'createSheet' ||
       operation.op === 'createDoc' ||
       operation.op === 'createFolder'
     ) {
-      return runCreate(operation, resolved, deps, right);
+      return runCreate(operation, resolved, deps);
     }
+
+    // Право проверяется ДО любого обращения к Google. Порядок не косметика: при
+    // обратном порядке запрос на запись в чужой файл сначала лез в сеть, и человек
+    // получал «файл не найден» вместо «нет права записи» — нашла живая проба через
+    // протокол, юнит-тесты вызывали обработчик и этого не видели.
+    const right = operation.dryRun === false ? await writeRight(deps, resolved) : undefined;
 
     // Вид цели решает путь ДО чтения (P22): doc-операции идут в Docs API, и табличная
     // операция по документу отклоняется здесь, а не «файл не найден» из чужого API.

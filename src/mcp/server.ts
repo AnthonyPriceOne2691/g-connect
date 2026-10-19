@@ -106,7 +106,7 @@ function deps(call?: CallContext): ToolDeps {
     google: VAULT,
     sheets: async () => new GoogleSheetsClient({ accessToken: await token(), onRetry }),
     docs: async () => new GoogleDocsClient({ accessToken: await token(), onRetry }),
-    drive: async () => new GoogleDriveClient(await token(), onRetry),
+    drive: async () => new GoogleDriveClient({ accessToken: await token(), onRetry }),
     registry: () => loadRegistry(ACCOUNT),
     journal: fileJournal,
     journalSource: fileJournalSource,

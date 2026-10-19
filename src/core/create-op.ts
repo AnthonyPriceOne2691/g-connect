@@ -13,6 +13,8 @@
  * разрешение проекта (D-23): тогда и «Мой диск». Без разрешения созданный файл права записи
  * не получает — в реестре его нет (`write.allowlist`), и это осознанно: иначе агент мог бы
  * расширять себе доступ созданием. Под разрешением он пишется тем же разрешением, до срока.
+ *
+ * Куда создавать, решает `create-parent.ts` (D-26): папка названа всегда, корень — только явно.
  */
 
 import { createHash } from 'node:crypto';
@@ -41,9 +43,15 @@ const WHAT: Record<CreateKind, string> = {
 export interface CreateInput {
   readonly kind: CreateKind;
   readonly name: string;
-  /** В какой папке создавать. Не задана — корень «Мой диск». */
-  readonly parentId?: string;
-  readonly parentName?: string;
+  /**
+   * В какой папке создавать — названа ВСЕГДА (D-26, Q22). Раньше незаданная значила корень
+   * «Мой диск», и голый ID папки уходил туда молча; корень теперь — только явный `root`.
+   */
+  readonly parentId: string;
+  /** Как папку назвать человеку в плане: «Мой диск», алиас реестра, имя от Drive. */
+  readonly parentName: string;
+  /** Как ядро поняло цель (голый ID — папка «…» по ответу Drive), — в `assumptions` ответа. */
+  readonly assumptions: readonly string[];
   /** Шапка и строки новой таблицы (D-23); только у `sheet`. */
   readonly content?: SheetContent;
   /** Созданный файл пишется сразу — разрешение проекта открывает свои файлы до срока. */
@@ -123,9 +131,10 @@ export async function createFile(
     throw gcError('bad_request', { detail: 'Имя создаваемого файла не может быть пустым.' });
   }
   const { structural, content, cells } = createPlan(input, name);
-  // Контекст записи для файла, которого ещё нет: цель — папка (или корень), «лист» — имя.
+  // Контекст записи для файла, которого ещё нет: цель — папка, «лист» — имя. Под id папки
+  // идут и код плана, и строка журнала: `gc_undo` по той же цели её и находит (Q20).
   const context: WriteContext = {
-    targetId: input.parentId ?? 'root',
+    targetId: input.parentId,
     sheet: name,
     sheetId: 0,
     revisionId: null,
@@ -133,7 +142,11 @@ export async function createFile(
   // Ссылка и id появляются только по факту записи: до неё их не существует, и обещать
   // их в плане значило бы обещать то, чего ещё нет.
   const created: { id?: string; url?: string } = {};
-  const prepared = { ...empty(), notes: content === undefined ? [] : contentNotes(content) };
+  const prepared = {
+    ...empty(),
+    assumptions: [...input.assumptions],
+    notes: content === undefined ? [] : contentNotes(content),
+  };
   const outcome = await finishWrite(sheets, context, [], prepared, options, 'createFile', {
     structural,
     // Конверт судит ЗАПИСЫВАЕМЫЕ ячейки: таблица на двести строк с первой фразы мимо
@@ -156,8 +169,6 @@ function createPlan(
   input: CreateInput,
   name: string,
 ): { structural: StructuralPlan; content: SheetContent | undefined; cells: number } {
-  const where =
-    input.parentName ?? (input.parentId === undefined ? 'корень «Мой диск»' : input.parentId);
   const cells = assertContent(input.content);
   const content = cells > 0 ? input.content : undefined;
   return {
@@ -165,7 +176,7 @@ function createPlan(
       kind: 'createFile',
       sheet: name,
       title: name,
-      anchor: `${WHAT[input.kind]} «${name}» в ${where}`,
+      anchor: `${WHAT[input.kind]} «${name}» в ${input.parentName}`,
       ...(content === undefined ? {} : { content: contentDigest(content) }),
     },
     content,
