@@ -8,6 +8,7 @@
  */
 
 import { gcError } from '../errors.js';
+import { detectDateFormat, withDateStyle } from './date-style.js';
 import {
   columnLetter,
   type Cell,
@@ -107,18 +108,6 @@ function inferEnum(
   if (unique.size > ENUM_MAX_UNIQUE || nonEmpty.length < ENUM_MIN_REPEAT * unique.size) return null;
   if (nonEmpty.some((v) => v.length > ENUM_MAX_LENGTH)) return null;
   return [...new Set(nonEmpty)];
-}
-
-/** Формат даты берётся у самой колонки: писать «2026-09-01» в колонку с «01.09.2026» — порча. */
-function detectDateFormat(values: readonly string[]): 'iso' | 'dotted' | null {
-  let iso = 0;
-  let dotted = 0;
-  for (const v of values) {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) iso += 1;
-    else if (/^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/.test(v)) dotted += 1;
-  }
-  if (iso === 0 && dotted === 0) return null;
-  return iso >= dotted ? 'iso' : 'dotted';
 }
 
 interface HeaderGuess {
@@ -392,7 +381,9 @@ export function buildSheetData(
     headerRowConfident: guess.confident,
     usedRange,
     dataRowCount,
-    columns,
+    // Пустой колонке — вид дат листа или локали книги (Q15): первая дата в неё уходила как её
+    // прислал агент. Записи строк выше берут только имена и индексы — вид дат им не нужен.
+    columns: withDateStyle(columns, snapshot.locale),
     sampleRows,
     otherSheets: snapshot.sheets
       .filter((s) => s.title !== sheet.title)

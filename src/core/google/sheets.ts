@@ -260,6 +260,8 @@ export function toSpreadsheetSnapshot(
     id,
     title: data.properties?.title ?? 'Таблица',
     ...(revisionId === undefined ? {} : { revisionId }),
+    // Локаль книги — вид дат для колонки без своих дат (Q15): «ru_RU» — 19.10.2026, а не ISO.
+    ...(data.properties?.locale ? { locale: data.properties.locale } : {}),
     ...(partial ? { partial: true } : {}),
     sheets,
   };
