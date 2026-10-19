@@ -7,12 +7,18 @@
 export type CellValue = string | number | boolean | null;
 
 /**
- * Вид ячейки — только то, что требует паритет с горячими клавишами (§6.1–6.2): Ctrl+B,
- * Ctrl+I, Ctrl+U, Ctrl+Shift+E/L/R и цвет фона.
+ * Вид ячейки — паритет с горячими клавишами (§6.1–6.2): Ctrl+B, Ctrl+I, Ctrl+U,
+ * Ctrl+Shift+E/L/R и цвет фона; с D-26 (Q11, Q12) — гарнитура, кегль и формат числа: без них
+ * дописанные строки «Реестра инфраструктуры» нельзя было ни увидеть, ни выровнять.
  *
  * Поля опциональны и означают «задано явно». Ячейка может ВЫГЛЯДЕТЬ жирной из-за темы или
  * условного форматирования, и тогда здесь будет пусто: ядро судит и откатывает только
  * явный формат ячейки, и это названо в спеке непокрытостью, а не спрятано.
+ *
+ * `null` у гарнитуры, кегля и формата числа — «сбросить к виду листа по умолчанию». Так откат
+ * возвращает ячейку, где поле не было задано: нейтрального значения, как `bold: false`, у
+ * них нет — шрифт листа по умолчанию у каждой книги свой. Снаружи (`gc_apply`) `null` не
+ * принимается: это слово отката, а не правки.
  */
 export interface CellFormat {
   readonly bold?: boolean;
@@ -21,6 +27,22 @@ export interface CellFormat {
   readonly align?: 'left' | 'center' | 'right';
   /** Цвет фона как его вводит человек: `#RRGGBB`. */
   readonly background?: string;
+  /** Гарнитура, как её называет Google: `Carlito`, `Arial`. */
+  readonly fontFamily?: string | null;
+  /** Кегль в пунктах. */
+  readonly fontSize?: number | null;
+  /** Формат числа или даты: тип Google и шаблон — `DATE` и `dd.mm.yyyy`. */
+  readonly numberFormat?: NumberFormat | null;
+}
+
+/** Типы формата числа Google (`NumberFormat.type`), без `NUMBER_FORMAT_TYPE_UNSPECIFIED`. */
+export type NumberFormatType =
+  'TEXT' | 'NUMBER' | 'PERCENT' | 'CURRENCY' | 'DATE' | 'TIME' | 'DATE_TIME' | 'SCIENTIFIC';
+
+export interface NumberFormat {
+  readonly type: NumberFormatType;
+  /** Шаблон Google: `dd.mm.yyyy`, `#,##0.00`. Без шаблона Google берёт вид типа по локали. */
+  readonly pattern?: string;
 }
 
 export interface Cell {
@@ -103,6 +125,11 @@ export interface SpreadsheetSnapshot {
   readonly rowLimit?: number;
   readonly title: string;
   readonly revisionId?: string;
+  /**
+   * Локаль книги, как её отдаёт Google (`ru_RU`, `en_US`). Нужна колонке без своих дат: первая
+   * дата в неё пишется видом дат листа, а если их нет — видом локали (Q15), а не ISO.
+   */
+  readonly locale?: string;
   readonly sheets: readonly SheetSnapshot[];
 }
 
@@ -115,7 +142,10 @@ export interface ColumnProfile {
   /** 0-based индекс внутри строки. */
   readonly index: number;
   readonly type: ColumnType;
-  /** Как в колонке записаны даты — чтобы писать в том же виде, а не в своём. */
+  /**
+   * Как в колонке записаны даты — чтобы писать в том же виде, а не в своём. У колонки без
+   * своих дат (пустой) — вид дат листа, а без них — вид локали книги (Q15); `null` — вида нет.
+   */
   readonly dateFormat: 'iso' | 'dotted' | null;
   /** Допустимые значения: из dataValidation таблицы либо выведенные по факту. */
   readonly enumValues: readonly string[] | null;
