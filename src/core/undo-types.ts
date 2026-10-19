@@ -16,7 +16,9 @@ export type NothingToUndoReason =
   /** Запись по id уже откачена: второй откат вернул бы состояние, которого не выбирали. */
   | 'already_undone'
   /** Записи по цели есть, но все — других проектов (D-23): их откатывают их сессии. */
-  | 'only_other_projects';
+  | 'only_other_projects'
+  /** Своих записей по цели нет, последняя — другого профиля (D-25): её откатывает его сервер. */
+  | 'only_other_profiles';
 
 export interface UndoOptions {
   readonly account?: string;

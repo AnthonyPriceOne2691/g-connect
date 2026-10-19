@@ -27,6 +27,7 @@ import { fakeSealer } from './fixtures/sealing.js';
 import { buildSheetData } from '../src/core/sheets/map.js';
 import type { WriteRecord } from '../src/core/journal.js';
 import { docProbes } from './fixtures/doc-probes.js';
+import { profileProbes } from './fixtures/profile-probes.js';
 import { tokenProbes } from './fixtures/token-probes.js';
 import { FakeDocsClient, buildDoc, p as docParagraph } from './fixtures/doc.js';
 import { readDoc } from '../src/mcp/read-doc.js';
@@ -76,6 +77,7 @@ const GRANTED: GrantState = {
 const probes: Record<string, () => Promise<void>> = {
   ...docProbes,
   ...tokenProbes,
+  ...profileProbes,
   // D-22: опечатка в НЕОБЯЗАТЕЛЬНОМ поле раньше исчезала молча — вставка уходила в конец
   // таба вместо раздела. Теперь отказ с названием поля и подсказкой, до всякой правки.
   'input.no-silent-drop': async () => {
@@ -118,7 +120,9 @@ const probes: Record<string, () => Promise<void>> = {
     const readOnly = resolveTarget('ref', {
       targets: [{ alias: 'ref', id: 'REFONLY000000000000000000', type: 'sheet', allow: 'read' }],
     });
-    await expect(authorizeWrite(readOnly, () => Promise.resolve(GRANTED))).rejects.toMatchObject({
+    await expect(
+      authorizeWrite(readOnly, () => Promise.resolve(GRANTED), 'default'),
+    ).rejects.toMatchObject({
       payload: { code: 'policy_denied', cause: 'write.allowlist' },
     });
   },
@@ -127,12 +131,16 @@ const probes: Record<string, () => Promise<void>> = {
   'write.grant': async () => {
     const unlisted = resolveTarget('UNLISTED000000000000000');
     const none: GrantState = { state: 'none', reason: 'no_grant', detail: 'нет разрешения' };
-    await expect(authorizeWrite(unlisted, () => Promise.resolve(none))).rejects.toMatchObject({
+    await expect(
+      authorizeWrite(unlisted, () => Promise.resolve(none), 'default'),
+    ).rejects.toMatchObject({
       payload: { code: 'needs_grant', cause: 'no_grant' },
     });
-    expect(await authorizeWrite(unlisted, () => Promise.resolve(GRANTED))).toMatchObject({
-      via: 'grant',
-    });
+    expect(await authorizeWrite(unlisted, () => Promise.resolve(GRANTED), 'default')).toMatchObject(
+      {
+        via: 'grant',
+      },
+    );
   },
 
   // D-23: подложенный файл разрешения с чужой подписью не открывает ничего.
@@ -155,9 +163,9 @@ const probes: Record<string, () => Promise<void>> = {
       ['-Y', 'sign', '-f', stranger.file, '-n', 'g-connect-grant'],
       { input: text, encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] },
     );
-    await mkdir(grantsDir(), { recursive: true });
+    await mkdir(grantsDir('default'), { recursive: true });
     await writeFile(
-      join(grantsDir(), `${projectKey(project)}.json`),
+      join(grantsDir('default'), `${projectKey(project)}.json`),
       JSON.stringify({ text, signature }),
     );
     const keys = {
@@ -821,8 +829,9 @@ describe('правила как механизм (D-12)', () => {
     // 40-е — write.named-confirm-bound-to-plan (поправка D-20), 41-е — docs.objects-not-destroyed,
     // 42-е — docs.suggestions-not-edited, 43-е — input.no-silent-drop (D-22); 44–46 —
     // write.grant, grant.signature, undo.own-project (D-23, разрешение проекта касанием);
-    // 47–48 — token.sealed-at-rest, google.unlock-only-tool (D-24, токен под пальцем).
-    expect(policyRules()).toHaveLength(48);
+    // 47–48 — token.sealed-at-rest, google.unlock-only-tool (D-24, токен под пальцем);
+    // 49–50 — grant.per-profile, undo.own-profile (D-25, два профиля рядом).
+    expect(policyRules()).toHaveLength(50);
   });
 
   it('rules.md называет ровно списки ядра: конверт и подтверждение названием', () => {

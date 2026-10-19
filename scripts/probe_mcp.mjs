@@ -94,6 +94,11 @@ try {
   });
   check('initialize отвечает', init.result?.serverInfo?.name === 'g-connect', init.result?.serverInfo?.version);
   check('instructions непустые', (init.result?.instructions ?? '').length > 1000);
+  // D-25: профиль сервера — первой строкой: клиент показывает агенту только начало инструкций.
+  check(
+    'instructions начинаются с профиля сервера',
+    (init.result?.instructions ?? '').split('\n')[0].includes('Этот сервер — профиль «'),
+  );
   server.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
 
   const tools = await send('tools/list', {});

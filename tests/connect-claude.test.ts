@@ -11,6 +11,8 @@ import { join } from 'node:path';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { serverName } from '../src/core/profile-names.js';
+
 let home: string;
 let claudeLog: string;
 let env: Record<string, string>;
@@ -119,5 +121,101 @@ describe('connect_claude.sh — подключение ко всем проек�
     env = { ...env, GCONNECT_STABLE_HOME: join(home, 'nowhere') };
     expect(() => run('--apply')).toThrow(/стабильной сборки нет/);
     expect((await settings()).permissions.allow).toEqual(['Bash(ls)']);
+  });
+});
+
+describe('connect_claude.sh — два профиля рядом (D-25)', () => {
+  const profilesHome = (): string => join(home, 'gconnect');
+  const withProfiles = async (...names: string[]): Promise<void> => {
+    for (const name of names) await mkdir(join(profilesHome(), name), { recursive: true });
+    env = { ...env, GCONNECT_HOME: profilesHome() };
+  };
+  const calls = async (): Promise<string[]> =>
+    (await readFile(claudeLog, 'utf8')).trim().split('\n');
+  const memo = (): Promise<string> => readFile(join(home, '.claude', 'CLAUDE.md'), 'utf8');
+
+  it('W1: --profiles=default,work — по серверу на профиль, user и local, правило на каждый', async () => {
+    await withProfiles('work');
+    env = { ...env, GCONNECT_GRANT_KEY: 'irreversible' };
+    run('--profiles=default,work', '--apply');
+    const adds = (await calls()).filter((c) => c.startsWith('mcp add'));
+    expect(adds).toHaveLength(4);
+    expect(adds[0]).toContain(
+      '--scope user --transport stdio g-connect --env GCONNECT_ACCOUNT=default --env GCONNECT_GRANT_KEY=irreversible --',
+    );
+    expect(adds[2]).toContain(
+      '--scope user --transport stdio g-connect-work --env GCONNECT_ACCOUNT=work --env GCONNECT_GRANT_KEY=irreversible --',
+    );
+    expect(adds[3]).toMatch(
+      /--scope local .* g-connect-work .* -- \S*node .*\/dist\/mcp\/server\.js$/,
+    );
+    expect((await settings()).permissions.allow).toEqual([
+      'Bash(ls)',
+      'mcp__g-connect__*',
+      'mcp__g-connect-work__*',
+    ]);
+  });
+
+  it('W1: показ со списком подсказывает команду с тем же списком — иначе подключится один личный', async () => {
+    await withProfiles('work');
+    expect(run('--profiles=default,work')).toContain(
+      'Сделать: scripts/connect_claude.sh --profiles=default,work --apply',
+    );
+    expect(run()).toContain('Сделать: scripts/connect_claude.sh --apply');
+  });
+
+  it('W9: памятка называет оба сервера и правило выбора — без адресов и названий файлов', async () => {
+    await withProfiles('work');
+    run('--profiles=default,work', '--apply');
+    const text = await memo();
+    expect(text).toContain('`mcp__g-connect__*` — профиль default');
+    expect(text).toContain('`mcp__g-connect-work__*` — профиль work');
+    expect(text).toContain('Не знаешь, чей файл, —\n  спроси человека');
+    expect(text).toContain('«G connect (work) попросит палец…»');
+    expect(text).not.toMatch(/@|docs\.google|spreadsheets\//);
+    expect(text.match(/g-connect:begin/g)).toHaveLength(1);
+  });
+
+  it('W8: --disconnect --apply снимает оба сервера (user и local), оба правила и памятку', async () => {
+    await withProfiles('work');
+    await writeFile(join(home, '.claude', 'CLAUDE.md'), '# Мои правила\n');
+    run('--profiles=default,work', '--apply');
+    run('--disconnect', '--apply');
+    const removes = (await calls()).slice(-4);
+    expect(removes).toEqual([
+      'mcp remove g-connect --scope user',
+      'mcp remove g-connect --scope local',
+      'mcp remove g-connect-work --scope user',
+      'mcp remove g-connect-work --scope local',
+    ]);
+    expect((await settings()).permissions.allow).toEqual(['Bash(ls)']);
+    expect(await memo()).toBe('# Мои правила\n');
+  });
+
+  it('W10: без списка — один g-connect, памятка без профилей, как до D-25', async () => {
+    run('--apply');
+    expect((await calls()).filter((c) => c.includes('g-connect-'))).toEqual([]);
+    const text = await memo();
+    expect(text).toContain('Инструменты `mcp__g-connect__*` есть в каждом проекте');
+    expect(text).not.toContain('профиль default');
+  });
+
+  it('опечатка, дубль, неизвестный профиль, список при отключении — отказ до любой правки', async () => {
+    await withProfiles('work');
+    expect(() => run('--profiles=default,Work', '--apply')).toThrow(/строчная латиница/);
+    expect(() => run('--profiles=work,work', '--apply')).toThrow(/назван дважды/);
+    expect(() => run('--profiles=default,ghost', '--apply')).toThrow(/профиля «ghost» нет/);
+    expect(() => run('--disconnect', '--profiles=work', '--apply')).toThrow(/список профилей/);
+    expect((await settings()).permissions.allow).toEqual(['Bash(ls)']);
+    await expect(readFile(claudeLog, 'utf8')).rejects.toThrow();
+  });
+
+  it('имя сервера у скрипта и у ядра — одно правило (L21)', async () => {
+    await withProfiles('work', 'team-2');
+    run('--profiles=default,work,team-2', '--apply');
+    const registered = (await calls())
+      .filter((c) => c.startsWith('mcp add --scope user'))
+      .map((c) => c.split(' ')[6]);
+    expect(registered).toEqual(['default', 'work', 'team-2'].map(serverName));
   });
 });

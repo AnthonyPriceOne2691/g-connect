@@ -176,13 +176,15 @@ async function listCommand(keys: Keys): Promise<void> {
 }
 
 async function revokeAll(keys: Keys): Promise<void> {
-  for (const g of await listGrants(keys, ACCOUNT)) await revokeGrant(g.project);
+  for (const g of await listGrants(keys, ACCOUNT)) await revokeGrant(g.project, ACCOUNT);
   console.log('Все разрешения отозваны.');
 }
 
 async function revokeOne(project: string): Promise<void> {
   console.log(
-    (await revokeGrant(project)) ? `Отозвано: ${project}` : `Разрешения не было: ${project}`,
+    (await revokeGrant(project, ACCOUNT))
+      ? `Отозвано: ${project}`
+      : `Разрешения не было: ${project}`,
   );
 }
 

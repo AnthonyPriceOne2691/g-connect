@@ -12,14 +12,13 @@
 
 import { z } from 'zod';
 
-import { envelopeSummary } from './envelope-view.js';
 import { gcError, isGcError } from '../core/errors.js';
 import type { SearchQuery } from '../core/google/drive.js';
 import { runOperation } from './run-operation.js';
 import { runCreate } from './run-create.js';
 import { assertTargetKind, isDocOperation, runDocApply, runDocUndo } from './run-doc-operation.js';
 import { asData, limitOf, policyText, policyRules } from '../core/policy.js';
-import { listProfiles, profileStatus } from '../core/profiles.js';
+import { DEFAULT_ACCOUNT } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
 import { readDoc } from './read-doc.js';
 import type { ApplyOutcome } from '../core/sheets/rows.js';
@@ -38,9 +37,13 @@ import {
 } from './apply-support.js';
 import { applyInput, operationOf } from './apply-schema.js';
 import { parseToolInput } from './boundary.js';
-import { gcGrant, grantSummary } from './grant-tool.js';
-import { gcUnlock, googleSummary } from './unlock-tool.js';
+import { gcGrant } from './grant-tool.js';
+import { gcTargets, profileIntro } from './targets-tool.js';
+import { gcUnlock } from './unlock-tool.js';
 import { targetArg } from './target-arg.js';
+
+// `gc_targets` живёт в своём модуле (D-25); прежний адрес импорта — здесь.
+export { gcTargets };
 
 /** Общий разбор цели: реестр + ссылка. Здесь же решается, можно ли писать. */
 async function resolve(deps: ToolDeps, target: string) {
@@ -76,55 +79,6 @@ const readSheet = async (deps: ToolDeps, target: string, sheet?: string, headerR
   );
   const data = buildSheetData(snapshot, wanted);
   return { resolved, client, data };
-};
-
-export const gcTargets: ToolDefinition = {
-  name: 'gc_targets',
-  title: 'Доступные цели',
-  description:
-    'Что агенту разрешено читать и во что писать: цели из реестра с алиасами и правами, ' +
-    'плюс состояние подключённых аккаунтов Google. Секретов не отдаёт.',
-  input: {},
-  async handle(_args, deps) {
-    const registry = await deps.registry();
-    const accounts = await Promise.all((await listProfiles()).map((a) => profileStatus(a)));
-    return {
-      targets: registry.targets.map((t) => ({
-        alias: t.alias,
-        id: t.id,
-        type: t.type,
-        allow: t.allow ?? 'read',
-        sheet: t.sheet ?? null,
-        headerRow: t.headerRow ?? null,
-        key: t.key ?? null,
-        // Конверт цели (D-18) виден там же, где права: иначе агент узнавал бы о нём
-        // только по факту записи, а человек — никогда. Битый конверт называется здесь
-        // же — это ответ на «почему по этой цели просят код».
-        auto: envelopeSummary(t.auto, t.alias, t.type),
-      })),
-      accounts: accounts.map((a) => ({
-        account: a.account,
-        state: a.state,
-        scopes: a.scopes.length,
-        // `expiresAt` (срок access-токена, час) агенту НЕ отдаём: в живом прогоне B13
-        // он был прочитан как «срок входа истёк 1 сентября», и агент посоветовал
-        // перелогиниться при refreshAgeDays=0 и пустых warnings. Актуальное про доступ
-        // живёт в warnings, срок access-токена человеку показывает `gc status`.
-        ...(a.warnings.length > 0 ? { warnings: a.warnings } : {}),
-      })),
-      // Право проекта (D-23) — рядом с правами целей: без него агент узнавал бы о нём по
-      // отказу записи, а человек не видел бы, до какого часа G connect открыт.
-      grant: await grantSummary(deps),
-      // Доступ к Google (D-24) — рядом с правом: «закрыт» здесь, а не ошибкой первого запроса.
-      google: googleSummary(deps),
-      note:
-        'Google открывается касанием на час (gc_unlock, после строки человеку). ' +
-        'Право записи даёт реестр (правило write.allowlist) или разрешение проекта ' +
-        '(write.grant): владелец открывает G connect касанием, gc_grant. Без него ' +
-        'произвольная ссылка — только для чтения. Цель с конвертом (auto) пишется с первой ' +
-        'фразы, без кода плана; всё, что вне конверта, показывает план и требует код от человека.',
-    };
-  },
 };
 
 const readInput = {
@@ -486,10 +440,16 @@ export async function runTool(
   }
 }
 
-/** Справка о правилах для `instructions` сервера: собирается из rules.md, а не копируется. */
-export function serverInstructions(): string {
+/**
+ * Справка о правилах для `instructions` сервера: собирается из rules.md, а не копируется.
+ * Профиль сервера — первой строкой (D-25): клиент показывает агенту только начало
+ * инструкций (~5 тыс. знаков из 23 тыс., замер 2026-10-19).
+ */
+export function serverInstructions(account: string = DEFAULT_ACCOUNT): string {
   const rules = policyRules();
   return [
+    profileIntro(account),
+    '',
     policyText(),
     '',
     '---',

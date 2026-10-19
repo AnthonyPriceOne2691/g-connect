@@ -32,6 +32,7 @@ import { GoogleDocsClient } from '../core/google/docs.js';
 import { GoogleSheetsClient } from '../core/google/sheets.js';
 import type { RetryReporter } from '../core/google/support.js';
 import { policyText } from '../core/policy.js';
+import { serverName } from '../core/profile-names.js';
 import { loadRegistry } from '../core/targets.js';
 import { findAgeTools } from '../core/token/age.js';
 import { profileSealer, profileUnsealer } from '../core/token/sealing.js';
@@ -161,11 +162,14 @@ const asCallResult = (result: ToolResult) => ({
  * ошибок. Здесь вход судит `runTool` (`boundary.ts`), и любой отказ — наш объект.
  */
 export function createServer(makeDeps: (call?: CallContext) => ToolDeps = deps): Server {
+  // Профиль — из тех же зависимостей, что выбирают токен (D-25, урок L6): имя сервера и
+  // первая строка инструкций не могут назвать один профиль, пока вызовы идут от другого.
+  const { account } = makeDeps();
   const server = new Server(
-    { name: 'g-connect', version: '0.1.0' },
+    { name: serverName(account), version: '0.1.0' },
     {
       // Правила уходят клиенту вместе с рукопожатием: агент видит их до первого вызова.
-      instructions: serverInstructions(),
+      instructions: serverInstructions(account),
       capabilities: { tools: {}, resources: {} },
     },
   );
