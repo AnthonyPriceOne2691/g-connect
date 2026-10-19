@@ -104,11 +104,11 @@
     },
     {
       "id": "read.max-rows",
-      "title": "Чтение ограничено по строкам, а усечение помечается",
+      "title": "Чтение ограничено по строкам за вызов, а усечение помечается: truncated, строк листа и строка продолжения (D-26)",
       "kind": "limit",
-      "value": 500,
-      "enforced_in": "src/core/google/sheets.ts (DEFAULT_MAX_ROWS)",
-      "probe": "чтение без maxRows берёт не больше значения правила"
+      "value": 5000,
+      "enforced_in": "src/mcp/read-values.ts (readValues)",
+      "probe": "gc_read mode=values на листе длиннее предела → столько строк, сколько предел, truncated: true и nextFromRow"
     },
     {
       "id": "content.is-data",
@@ -370,6 +370,21 @@
       "kind": "deny",
       "enforced_in": "src/core/undo-shared.ts (pickUndoRecord)",
       "probe": "откат по id записи другого профиля → policy_denied undo.own-profile; последняя по цели — чужого профиля → nothing_to_undo only_other_profiles"
+    },
+    {
+      "id": "write.full-sheet",
+      "title": "Запись считается по всему листу: частичный снимок для записи не берётся, лист больше предела — отказ, а не расчёт по части (D-26)",
+      "kind": "deny",
+      "enforced_in": "src/core/google/sheets.ts (getSpreadsheet)",
+      "probe": "лист со строками сетки больше write.max-sheet-rows → policy_denied write.full-sheet до чтения сетки; лист в пределах — читается целиком"
+    },
+    {
+      "id": "write.max-sheet-rows",
+      "title": "Предел листа, который запись читает целиком (строк сетки)",
+      "kind": "limit",
+      "value": 50000,
+      "enforced_in": "src/core/google/sheets.ts (WRITE_MAX_SHEET_ROWS)",
+      "probe": "предел шва берётся из правила, а не из числа в коде"
     }
   ]
 }

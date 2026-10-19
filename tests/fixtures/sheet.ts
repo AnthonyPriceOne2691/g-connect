@@ -21,6 +21,8 @@ import type {
   SheetSnapshot,
   SheetsClient,
   SpreadsheetSnapshot,
+  ReadOptions,
+  RowWindow,
 } from '../../src/core/sheets/types.js';
 
 const cell = (value: CellValue, formula?: string): Cell =>
@@ -364,22 +366,77 @@ function withDimension(
   };
 }
 
+/**
+ * Как Google (D-26): лёгкое чтение — первые `maxRows` строк листа и размер сетки в
+ * `gridRows`; без `maxRows` — лист целиком. Раньше фейк отдавал лист целиком при любом
+ * диапазоне, и потолок чтения в 500 строк не видел ни один тест (урок L23).
+ */
+export function readAsGoogle(
+  data: SpreadsheetSnapshot,
+  options: ReadOptions = {},
+): SpreadsheetSnapshot {
+  const { sheet, maxRows } = options;
+  if (sheet === undefined || maxRows === undefined) return data;
+  return {
+    ...data,
+    rowLimit: maxRows,
+    sheets: data.sheets.map((s) =>
+      s.title === sheet
+        ? { ...s, rows: s.rows.slice(0, maxRows), gridRows: s.gridRows ?? s.rows.length }
+        : s,
+    ),
+  };
+}
+
+/** Окно строк, как отдаёт Google: подряд с `fromRow`, без хвоста пустых строк. */
+export function windowAsGoogle(
+  data: SpreadsheetSnapshot,
+  sheet: string,
+  fromRow: number,
+  count: number,
+): RowWindow {
+  const found = data.sheets.find((s) => s.title === sheet);
+  const rows = (found?.rows ?? []).slice(fromRow - 1, fromRow - 1 + count);
+  let last = rows.length;
+  while (
+    last > 0 &&
+    (rows[last - 1] ?? []).every((cell) => cell.value === null || cell.value === '')
+  )
+    last -= 1;
+  return { rows: rows.slice(0, last), gridRows: found?.gridRows ?? found?.rows.length ?? 0 };
+}
+
 export class FakeSheetsClient implements SheetsClient {
   readonly writes: RecordedWrite[] = [];
   readonly appends: RecordedWrite[] = [];
   readonly formatWrites: SheetRequest[] = [];
+  /** Сколько ячеек ушло каждым запросом batchUpdateValues (Q10: строка — одним запросом). */
+  readonly batches: number[] = [];
   private data: SpreadsheetSnapshot;
 
   constructor(data: SpreadsheetSnapshot = snapshot()) {
     this.data = data;
   }
 
-  async getSpreadsheet(): Promise<SpreadsheetSnapshot> {
-    return this.data;
+  async getSpreadsheet(_id?: string, options?: ReadOptions): Promise<SpreadsheetSnapshot> {
+    return readAsGoogle(this.data, options);
+  }
+
+  async readRows(_id: string, sheet: string, fromRow: number, count: number): Promise<RowWindow> {
+    return windowAsGoogle(this.data, sheet, fromRow, count);
   }
 
   async sheetTitles(): Promise<readonly string[]> {
     return this.data.sheets.map((sheet) => sheet.title);
+  }
+
+  async batchUpdateValues(
+    id: string,
+    cells: readonly { readonly range: string; readonly value: CellValue }[],
+  ): Promise<void> {
+    // Один запрос — одна запись в журнале запросов; ячейки — как прежде, по одной.
+    this.batches.push(cells.length);
+    for (const cell of cells) await this.updateValues(id, cell.range, [[cell.value]]);
   }
 
   async updateValues(
@@ -423,12 +480,23 @@ export class MutableSheetsClient implements SheetsClient {
     this.data = data;
   }
 
-  async getSpreadsheet(): Promise<SpreadsheetSnapshot> {
-    return this.data;
+  async getSpreadsheet(_id?: string, options?: ReadOptions): Promise<SpreadsheetSnapshot> {
+    return readAsGoogle(this.data, options);
+  }
+
+  async readRows(_id: string, sheet: string, fromRow: number, count: number): Promise<RowWindow> {
+    return windowAsGoogle(this.data, sheet, fromRow, count);
   }
 
   async sheetTitles(): Promise<readonly string[]> {
     return this.data.sheets.map((sheet) => sheet.title);
+  }
+
+  async batchUpdateValues(
+    id: string,
+    cells: readonly { readonly range: string; readonly value: CellValue }[],
+  ): Promise<void> {
+    for (const cell of cells) await this.updateValues(id, cell.range, [[cell.value]]);
   }
 
   async updateValues(

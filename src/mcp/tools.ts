@@ -17,10 +17,11 @@ import type { SearchQuery } from '../core/google/drive.js';
 import { runOperation } from './run-operation.js';
 import { runCreate } from './run-create.js';
 import { assertTargetKind, isDocOperation, runDocApply, runDocUndo } from './run-doc-operation.js';
-import { asData, limitOf, policyText, policyRules } from '../core/policy.js';
+import { limitOf, policyText, policyRules } from '../core/policy.js';
 import { DEFAULT_ACCOUNT } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
 import { readDoc } from './read-doc.js';
+import { readValues } from './read-values.js';
 import type { ApplyOutcome } from '../core/sheets/rows.js';
 import { resolveTarget, type RegistryEntry } from '../core/targets.js';
 import { undoLast } from '../core/undo.js';
@@ -73,13 +74,18 @@ const readSheet = async (deps: ToolDeps, target: string, sheet?: string, headerR
   const resolved = await resolve(deps, target);
   const wanted = sheetDefaults(resolved.entry, sheet, headerRow);
   const client = await deps.sheets();
+  // Карта — лёгкая: первые MAP_ROWS строк листа, и карта сама говорит, что лист может
+  // продолжаться (D-26). Строки целиком читает окно `values`, запись — весь лист.
   const snapshot = await client.getSpreadsheet(
     resolved.id,
-    wanted.sheet === undefined ? {} : { sheet: wanted.sheet },
+    wanted.sheet === undefined ? {} : { sheet: wanted.sheet, maxRows: MAP_ROWS },
   );
   const data = buildSheetData(snapshot, wanted);
   return { resolved, client, data };
 };
+
+/** Сколько строк читает карта листа: ей нужны шапка, типы колонок и образцы, не весь лист. */
+const MAP_ROWS = 500;
 
 const readInput = {
   target: targetArg,
@@ -97,7 +103,15 @@ const readInput = {
     .positive()
     .max(5000)
     .optional()
-    .describe('Сколько строк или абзацев вернуть'),
+    .describe(
+      'Сколько строк или абзацев вернуть; строк таблицы — до 5000, по умолчанию все до предела',
+    ),
+  fromRow: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Таблица, mode=values: с какой строки листа читать (номер строки, как в Google)'),
   tab: z.string().min(1).optional().describe('Документ: таб по заголовку; без него — единственный'),
   fromParagraph: z
     .number()
@@ -113,8 +127,9 @@ export const gcRead: ToolDefinition = {
   description:
     'Начинай отсюда. mode=map даёт дешёвую карту и ПРЕДУПРЕЖДЕНИЯ: у таблицы — листы, ' +
     'границы данных, имена колонок с типами и допустимыми значениями; у документа — табы, ' +
-    'оглавление с № абзацев и таблицы. mode=values читает строки таблицы, mode=text — ' +
-    'абзацы документа.',
+    'оглавление с № абзацев и таблицы. mode=values читает строки таблицы окном: до 5000 за ' +
+    'вызов, fromRow — с какой строки; truncated: true — строки дальше есть, продолжай с ' +
+    'nextFromRow. mode=text — абзацы документа.',
   input: readInput,
   async handle(args, deps) {
     // Обработчик разбирает вход САМ: схема транспорта не единственная граница —
@@ -127,25 +142,9 @@ export const gcRead: ToolDefinition = {
         detail: 'mode=text читает абзацы документа. У таблицы строки читает mode=values.',
       });
     }
-    const { data } = await readSheet(deps, input.target, input.sheet, input.headerRow);
+    const { client, data } = await readSheet(deps, input.target, input.sheet, input.headerRow);
 
-    if (input.mode === 'values') {
-      const limit = Math.min(input.limit ?? 100, limitOf('read.max-rows', 500));
-      // Границу данных знает карта, и с 2026-09-03 `data.rows` уже без пустого хвоста:
-      // резать по `dataRowCount` здесь было бы той же ловушкой, что в карте — счётчик
-      // считает непустые строки где угодно, и таблица «блок, пропуск, блок» потеряла бы
-      // хвостовой блок. Ограничиваем только лимитом.
-      const withData = data.rows;
-      return {
-        sheet: data.map.sheet,
-        headerRow: data.map.headerRow,
-        columns: data.map.columns.map((c) => c.name),
-        // Содержимое — ДАННЫЕ с пометкой источника (правило content.is-data).
-        rows: asData(`таблица ${resolved.id}, лист «${data.map.sheet}»`, withData.slice(0, limit)),
-        truncated: withData.length > limit,
-        warnings: data.map.warnings,
-      };
-    }
+    if (input.mode === 'values') return readValues(client, resolved.id, data, input);
     return data.map;
   },
 };

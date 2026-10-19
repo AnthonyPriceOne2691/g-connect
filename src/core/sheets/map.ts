@@ -25,8 +25,25 @@ import {
 const HEADER_SEARCH_DEPTH = 8;
 const SAMPLE_ROWS = 3;
 /** Порог «колонка похожа на перечисление»: мало уникальных на много строк. */
+/**
+ * Выведенный список — только при СИЛЬНЫХ признаках (D-26, Q8). Раньше хватало четырёх
+ * значений с одним повтором, и свободный текст («Кто имеет доступ», «Ссылка на вход») становился
+ * списком: каждое новое значение получало `not_in_enum`, а подтвердить его было нечем —
+ * «Реестр инфраструктуры» встал на 26 строках из 55. Настоящая проверка данных не меняется.
+ */
 const ENUM_MAX_UNIQUE = 8;
-const ENUM_MIN_ROWS = 4;
+const ENUM_MIN_ROWS = 10;
+/** Строк хотя бы втрое больше, чем разных значений: список — это повторение. */
+const ENUM_MIN_REPEAT = 3;
+/** Значение списка — короткая метка, а не фраза. */
+const ENUM_MAX_LENGTH = 40;
+/**
+ * Тип, ограничивающий запись (число, дата, да/нет), — от двух значений и 80% колонки (Q9): одно
+ * значение — не тип. Два, а не три: на короткой таблице (две строки данных) число и дата
+ * обязаны оставаться числом и датой — «3ч» в числовую колонку пишется числом 3.
+ */
+const TYPE_MIN_VALUES = 2;
+const TYPE_MIN_SHARE = 0.8;
 
 const text = (cell: Cell | undefined): string =>
   cell?.value === null || cell?.value === undefined ? '' : String(cell.value).trim();
@@ -48,21 +65,48 @@ function valueType(raw: string): ColumnType {
 
 /** Тип колонки — самый частый непустой тип значений; ничья решается в пользу строки. */
 function dominantType(values: readonly string[]): ColumnType {
-  const counts = new Map<ColumnType, number>();
-  for (const v of values) {
-    const t = valueType(v);
-    if (t === 'unknown') continue;
-    counts.set(t, (counts.get(t) ?? 0) + 1);
-  }
   let best: ColumnType = 'unknown';
   let bestCount = 0;
-  for (const [type, count] of counts) {
+  let total = 0;
+  for (const [type, count] of typeCounts(values)) {
+    total += count;
     if (count > bestCount || (count === bestCount && type === 'string')) {
       best = type;
       bestCount = count;
     }
   }
-  return best;
+  return heldType(best, bestCount, total);
+}
+
+function typeCounts(values: readonly string[]): Map<ColumnType, number> {
+  const counts = new Map<ColumnType, number>();
+  for (const v of values) {
+    const t = valueType(v);
+    if (t !== 'unknown') counts.set(t, (counts.get(t) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * Ограничивающий тип — по сильным признакам (Q9): «Стоимость/мес.» стала числовой от
+ * одного «0», и любой текст в ней получал `not_a_number`. Не держится — колонка текстовая.
+ */
+function heldType(best: ColumnType, bestCount: number, total: number): ColumnType {
+  const constraining = best === 'number' || best === 'date' || best === 'boolean';
+  const weak = bestCount < TYPE_MIN_VALUES || bestCount < TYPE_MIN_SHARE * total;
+  return constraining && weak ? 'string' : best;
+}
+
+/** Список, выведенный из записанного (Q8): только у текстовой колонки с явным повторением. */
+function inferEnum(
+  values: readonly string[],
+  nonEmpty: readonly string[],
+  unique: ReadonlySet<string>,
+): string[] | null {
+  if (dominantType(values) !== 'string' || nonEmpty.length < ENUM_MIN_ROWS) return null;
+  if (unique.size > ENUM_MAX_UNIQUE || nonEmpty.length < ENUM_MIN_REPEAT * unique.size) return null;
+  if (nonEmpty.some((v) => v.length > ENUM_MAX_LENGTH)) return null;
+  return [...new Set(nonEmpty)];
 }
 
 /** Формат даты берётся у самой колонки: писать «2026-09-01» в колонку с «01.09.2026» — порча. */
@@ -155,6 +199,18 @@ function rowToRecord(
   const out: Record<string, CellValue> = {};
   for (const column of columns) out[column.name] = row[column.index]?.value ?? null;
   return out;
+}
+
+/**
+ * Окно строк листа → записи по колонкам карты (D-26, `gc_read mode=values`). Тот же разбор,
+ * что у строк карты: хвост пустых строк срезан, пропуски в середине остаются — строка
+ * окна под номером `i` — это строка листа `fromRow + i`.
+ */
+export function windowRecords(
+  rows: readonly (readonly Cell[])[],
+  columns: readonly ColumnProfile[],
+): Record<string, CellValue>[] {
+  return withoutEmptyTail(rows).map((row) => rowToRecord(row, columns));
 }
 
 /**
@@ -267,13 +323,7 @@ export function buildSheetData(
     // объявлены на данных. Проверка по шапке молча теряла enum из таблицы.
     const firstDataRow = guess.row + 1;
     const validation = validationValues(sheet, index, firstDataRow);
-    const inferredEnum =
-      validation === null &&
-      nonEmpty.length >= ENUM_MIN_ROWS &&
-      uniqueValues.size <= ENUM_MAX_UNIQUE &&
-      uniqueValues.size < nonEmpty.length
-        ? [...new Set(nonEmpty)]
-        : null;
+    const inferredEnum = validation === null ? inferEnum(values, nonEmpty, uniqueValues) : null;
 
     columns.push({
       name,
@@ -308,6 +358,7 @@ export function buildSheetData(
     );
   }
   warnings.push(...mergeWarnings(sheet, guess.row));
+  warnings.push(...partialReadWarning(snapshot.rowLimit, rows.length, sheet.gridRows));
   if (!guess.confident && options.headerRow === undefined) {
     warnings.push(
       `строка заголовков выбрана неуверенно (${guess.reason}) — проверь и при нужде задай headerRow`,
@@ -346,6 +397,7 @@ export function buildSheetData(
     otherSheets: snapshot.sheets
       .filter((s) => s.title !== sheet.title)
       .map((s) => ({ title: s.title, rowCount: s.rows.length })),
+    ...(sheet.gridRows === undefined ? {} : { sheetRows: sheet.gridRows }),
     // Снимок усечён по листу — значит список других листов НЕ полон, и молчать об этом
     // нельзя: пустой список читается как «других листов нет». Живой прогон 2026-09-04
     // получил `otherSheets: []` на книге из семи листов.
@@ -360,6 +412,26 @@ export function buildSheetData(
   };
 
   return { map, rows: allRows, formats: allFormats, headerFormats };
+}
+
+/** Префикс предупреждения о части листа — по нему `values` его не повторяет (D-26). */
+export const PARTIAL_READ_WARNING = 'карта построена по первым';
+
+/**
+ * Лёгкая карта (первые строки листа) обязана сказать, что лист может продолжаться: иначе
+ * `dataRowCount` и `usedRange` читаются как размер листа (D-26, пример Q7).
+ */
+function partialReadWarning(
+  rowLimit: number | undefined,
+  read: number,
+  gridRows: number | undefined,
+): string[] {
+  if (rowLimit === undefined || read < rowLimit) return [];
+  return [
+    `${PARTIAL_READ_WARNING} ${rowLimit} строкам листа` +
+      `${gridRows === undefined ? '' : ` из ${gridRows} строк сетки`}: dataRowCount и usedRange — ` +
+      'только по ним; строки дальше читай gc_read mode=values (с fromRow)',
+  ];
 }
 
 /** Только карта — когда данные не нужны (ответ агенту на «что в этой таблице»). */

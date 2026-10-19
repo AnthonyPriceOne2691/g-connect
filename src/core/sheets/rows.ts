@@ -269,7 +269,10 @@ export async function appendRow(
   const prepared = prepare(map, values, options);
   if (prepared.questions.length > 0) return clarify(prepared.questions, map);
 
-  const rowNumber = map.headerRow + map.dataRowCount + 1;
+  // После ПОСЛЕДНЕЙ строки с данными, а не после числа непустых строк (урок L16): при
+  // пропуске в середине листа счётчик целился внутрь данных. `data.rows` — строки без
+  // пустого хвоста, и лист прочитан целиком (D-26), а не первые 500 строк.
+  const rowNumber = map.headerRow + data.rows.length + 1;
   const changes: PlannedChange[] = prepared.resolved.map(({ column, value }) => ({
     kind: 'addRow' as const,
     a1: `${map.sheet}!${column.letter}${rowNumber}`,
