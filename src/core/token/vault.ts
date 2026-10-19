@@ -12,6 +12,7 @@
 
 import { requireUsableProfile, type TokenExchanger } from '../auth.js';
 import { gcError } from '../errors.js';
+import { unlockLine } from '../profile-names.js';
 import {
   readOAuthClient,
   readSealedToken,
@@ -138,10 +139,13 @@ export function tokenVault(deps: VaultDeps): TokenVault {
       if (open() && access !== undefined) return access.token;
       const until = usableUntil();
       throw gcError('google_locked', {
+        // Строка своего профиля — в самом отказе (D-25): с двумя серверами рядом агент
+        // говорит человеку, ЧЕЙ Google просит касание, а не общее «G connect».
         detail:
-          until === undefined
+          (until === undefined
             ? 'Google в этой сессии ещё не открыт: токен под пальцем владельца.'
-            : `Доступ к Google в этой сессии истёк в ${clockTime(until)}: нужно касание снова.`,
+            : `Доступ к Google в этой сессии истёк в ${clockTime(until)}: нужно касание снова.`) +
+          ` Скажи человеку «${unlockLine(deps.account)}» и вызови gc_unlock.`,
         cause: until === undefined ? 'not_unlocked' : 'expired',
       });
     },

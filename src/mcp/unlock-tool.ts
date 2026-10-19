@@ -8,10 +8,15 @@
  */
 
 import { gcError } from '../core/errors.js';
+import { unlockLine } from '../core/profile-names.js';
+import { DEFAULT_ACCOUNT } from '../core/profiles.js';
 import type { ToolDeps, ToolDefinition } from './deps.js';
 
-/** Строка человеку перед окном — слово в слово, чтобы окно G connect узнавалось по ней. */
-export const UNLOCK_LINE = 'G connect попросит палец, чтобы открыть Google этой сессии на час';
+/**
+ * Строка человеку перед окном личного профиля — слово в слово, чтобы окно G connect
+ * узнавалось по ней. У другого профиля строка своя, с его именем (`unlockLine`, D-25).
+ */
+export const UNLOCK_LINE = unlockLine(DEFAULT_ACCOUNT);
 
 /** Что агент видит о доступе к Google — в `gc_targets` и в ответе `gc_unlock`. */
 export function googleSummary(deps: ToolDeps): { readonly state: string; readonly detail: string } {
@@ -26,7 +31,7 @@ export function googleSummary(deps: ToolDeps): { readonly state: string; readonl
     state: 'locked',
     detail:
       'Google в этой сессии закрыт: первое обращение ответит google_locked — тогда скажи ' +
-      `человеку «${UNLOCK_LINE}» и вызови gc_unlock`,
+      `человеку «${unlockLine(deps.account)}» и вызови gc_unlock`,
   };
 }
 
@@ -36,7 +41,8 @@ export const gcUnlock: ToolDefinition = {
   description:
     'Открыть Google этой сессии: токен Google зашифрован ключом Secure Enclave, macOS покажет ' +
     'окно Touch ID (палец или пароль Mac), ожидание до 60 с; открыто — на час. Зови после ' +
-    `ответа google_locked и ТОЛЬКО сразу после строки человеку: «${UNLOCK_LINE}». ` +
+    'ответа google_locked и ТОЛЬКО сразу после строки человеку из этого ответа: у личного ' +
+    `профиля — «${UNLOCK_LINE}», у другого — с его именем («G connect (work) попросит…»). ` +
     'Окно без строки учит касаться не глядя.',
   input: {},
   async handle(_args, deps) {

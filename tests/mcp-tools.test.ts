@@ -505,7 +505,7 @@ describe('V11 — вид на границе инструмента', () => {
 
 describe('живой прогон B13 — что он нашёл', () => {
   it('gc_targets не отдаёт expiresAt: агент читал его как «срок входа истёк»', async () => {
-    // Профиль нужен настоящий, иначе accounts пуст и оракул проходит вхолостую.
+    // Профиль нужен настоящий, иначе статус пуст и оракул проходит вхолостую.
     await mkdir(profileDir('default'), { recursive: true });
     await writeFile(
       join(profileDir('default'), 'credentials.json'),
@@ -513,10 +513,9 @@ describe('живой прогон B13 — что он нашёл', () => {
     );
     const { deps } = harness();
     const data = (await callMcp(gcTargets, {}, deps)).data as {
-      accounts: { account: string; state: string }[];
+      profile: { account: string; state: string };
     };
-    expect(data.accounts).toHaveLength(1);
-    expect(data.accounts[0]?.state).toBeTypeOf('string');
+    expect(data.profile).toMatchObject({ account: 'default', state: 'needs_reauth' });
     expect(JSON.stringify(data)).not.toContain('expiresAt');
   });
 
