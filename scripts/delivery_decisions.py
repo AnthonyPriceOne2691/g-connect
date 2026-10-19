@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from delivery_base import list_entries, unfilled
+from delivery_base import DELIVERY, ROOT, list_entries, read, read_json, unfilled
 
 def signature_verdict(name: str, raw: str, klass: str, phase: str) -> tuple[list[str], list[str]]:
     """§2.2b для ЛЮБОГО поля-подписи: `yes` / `deferred (reason=…)` / нет.
@@ -167,3 +167,98 @@ def decisions_without_cost(text: str, diff_ids: set[str] | None = None) -> list[
     return out
 
 
+
+
+def check_permissions(errors: list[str], warnings: list[str]) -> None:
+    """Права на действия: объявлено ↔ подключено (§4.5) и песочницы (§4.6).
+    """
+    # --- §4.5: права на действия. Объявлено (CONSTITUTION) ↔ подключено (настройки).
+    settings_path = ROOT / ".claude" / "settings.json"
+    declared = permission_block(read(DELIVERY / "CONSTITUTION.md"))
+    settings, s_err = read_json(settings_path)
+    if s_err:
+        errors.append(
+            f".claude/settings.json: не парсится ({s_err}) — права агента "
+            "не проверяемы (§4.5)"
+        )
+    perms = settings.get("permissions") or {}
+    wired = {k: list(perms.get(k) or []) for k in ("deny", "ask")}
+
+    check_declared_vs_wired(declared, settings_path, s_err, wired, errors, warnings)
+
+    check_sandbox_oracles(declared, errors)
+    local, _ = read_json(ROOT / ".claude" / "settings.local.json")
+    n_allow = len(perms.get("allow") or []) + len(
+        (local.get("permissions") or {}).get("allow") or []
+    )
+    if n_allow >= 50 and not wired["deny"]:
+        warnings.append(
+            f"permissions: {n_allow} правил в allow и ни одного в deny (§4.5) — "
+            "права накапливались кликами «yes» и ни разу не сужались"
+        )
+
+
+def check_sandbox_oracles(declared, errors: list[str]) -> None:
+    """Перевод из HITL в автономию называет СУЩЕСТВУЮЩИЙ оракул (§4.6).
+
+    Шов по СЛОЖНОСТИ (`delivery@1.59`): `check_permissions` уложилась в 77
+    строк при cx 23, а §2.1 меряет обе оси.
+    """
+    # --- §4.6: перевод из HITL в автономию обязан назвать существующий оракул.
+    # Объявленная песочница без скрипта — снятая проверка с видом усиления;
+    # класс тот же, что «скрипт лежал в репозитории, никто не вызывал» (§3.1a).
+    for line in (declared or {}).get("sandbox", []):
+        m_or = re.search(r"oracle=([^\s]+)", line)
+        if not m_or:
+            errors.append(
+                f"sandbox без oracle=: {line[:60]} (§4.6) — перевод из HITL "
+                "в автономию обязан назвать оракул, заменивший человека"
+            )
+        elif not (ROOT / m_or.group(1)).exists():
+            errors.append(
+                f"sandbox: oracle={m_or.group(1)} не существует (§4.6) — "
+                "объявленная песочница без скрипта это снятая проверка "
+                "с видом усиления"
+            )
+
+    # Ратчет прав: длинный allow при пустом deny = права росли только вверх.
+    # Считаем и локальные настройки — именно там оседают клики «yes».
+
+
+def check_declared_vs_wired(declared, settings_path, s_err, wired,
+                            errors: list[str], warnings: list[str]) -> None:
+    """Объявленные права ↔ подключённые в настройках (§4.5).
+    """
+    if declared is None:
+        msg = (
+            "CONSTITUTION.md: нет блока `agent-permissions` (§4.5 / A.1) — контур "
+            "контролирует выход и молчит про действия агента"
+        )
+        if any(wired.values()):
+            errors.append(
+                msg + "; при этом deny/ask в настройках заданы, то есть границы "
+                "действий живут без ревью"
+            )
+        else:
+            warnings.append(msg)
+    elif not settings_path.is_file():
+        errors.append(
+            "CONSTITUTION.md объявляет agent-permissions, а .claude/settings.json "
+            "нет (§4.5) — объявленный неработающий запрет хуже отсутствующего: "
+            "он выглядит как контроль"
+        )
+    elif not s_err:
+        for bucket in ("deny", "ask"):
+            only_canon = [r for r in declared[bucket] if r not in wired[bucket]]
+            only_wired = [r for r in wired[bucket] if r not in declared[bucket]]
+            if only_canon:
+                errors.append(
+                    f"permissions.{bucket}: объявлено в CONSTITUTION, нет в "
+                    f".claude/settings.json: {', '.join(only_canon)} (§4.5)"
+                )
+            if only_wired:
+                errors.append(
+                    f"permissions.{bucket}: есть в .claude/settings.json, нет в "
+                    f"CONSTITUTION: {', '.join(only_wired)} (§4.5) — границу "
+                    "действий двигали молча"
+                )

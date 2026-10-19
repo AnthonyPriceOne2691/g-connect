@@ -8,12 +8,6 @@
 #
 # Подключается через `source`; `FE_DIR`, `TS_SRC`, `MIN_KILLED`, `TIMEOUT_BIN` и
 # палитру задаёт вход. Самостоятельно не запускается — гейт это `check_*`.
-#
-# ⚠ АДАПТАЦИЯ G connect (объявлена в adapted.json, две ПОЧИНКИ канона):
-#   2. «не просудил» — красное, как у python-половины с `cqg@2.46` (`not_judged`);
-#   3. доля прогона `MUTATION_SHARD=k/N` — большой PR судится параллельными джобами.
-# ПОЧИНКУ 1 (маска `mutate` конфига) канон закрыл в cqg@2.62: `ts_scope_filter` ниже —
-# канонный, кроме кода возврата на неразобранной маске (2 — «не судит», по ПОЧИНКЕ 2).
 
 # --- TS-половина: тот же вопрос, другой инструмент ---------------------------
 # Роль «тесты хоть что-то утверждают» на TS закрывает Stryker. Это ПОДСТАНОВКА
@@ -38,22 +32,18 @@ TS_SRC=${LINT_TS_SRC:-$FE_DIR/src}
 # bash — тем же приёмом, которым `undecided` в `mutation_verdict.sh` читает `out`
 # и `rc`.
 #
-# ⚠ Код возврата тут — РЕШЕНИЕ, а не вердикт гейта: 1 — «судить честно нечего,
-# сказано вслух», 2 — «судить НЕЧЕМ» (нет инструмента или базы), и это уже
-# `not_judged` у вызывающего. Возврат нулём означал бы «продолжай», то есть
-# прогон Stryker'а без Stryker'а.
+# ⚠ Код возврата тут — РЕШЕНИЕ, а не вердикт гейта: 1 значит «честно судить
+# нечего», и выход остаётся у вызывающего (`|| return 0`). Возврат нулём означал
+# бы «продолжай», то есть прогон Stryker'а без Stryker'а. «Не смог судить» сюда
+# не возвращается вовсе: это `not_judged`, красное (`cqg@2.64`, решение Anthony
+# 18.10, симметрично python-половине с `cqg@2.46`).
+#
+# Порядок «сначала есть ли работа, потом чем её делать» — несущий: без него
+# проект без Stryker краснел бы и на PR, где TS не тронут.
 ts_stryker_setup() {
-  STRYKER="$FE_DIR/node_modules/.bin/stryker"
-  [[ -x "$STRYKER" ]] || STRYKER="node_modules/.bin/stryker"
-  [[ -x "$STRYKER" ]] || STRYKER=$(command -v stryker 2>/dev/null || true)
-  if [[ -z "$STRYKER" ]]; then
-    printf '%s⚠ mutation: Stryker не найден — TS-половина не судит.\n' "$yellow"
-    printf 'Установка: npm i -D @stryker-mutator/core @stryker-mutator/<runner>-runner%s\n' "$reset"
-    return 2
-  fi
   if ! git rev-parse --verify --quiet "$BASE" >/dev/null; then
     printf '%s⚠ mutation: ref %s недоступен — TS-половина не судит%s\n' "$yellow" "$BASE" "$reset"
-    return 2
+    not_judged
   fi
   # Тесты из населения исключаются: мутировать надо продуктовый код. Маска шире
   # дефолта Stryker намеренно — проекты зовут каталог и `test`, и `tests`, и `__tests__`.
@@ -67,17 +57,25 @@ ts_stryker_setup() {
       "$green" "$BASE" "$TS_SRC" "$reset"
     return 1
   fi
+  STRYKER="$FE_DIR/node_modules/.bin/stryker"
+  [[ -x "$STRYKER" ]] || STRYKER="node_modules/.bin/stryker"
+  [[ -x "$STRYKER" ]] || STRYKER=$(command -v stryker 2>/dev/null || true)
+  if [[ -z "$STRYKER" ]]; then
+    printf '%s⚠ mutation: Stryker не найден — TS-половина не судит.\n' "$yellow"
+    printf 'Установка: npm i -D @stryker-mutator/core @stryker-mutator/<runner>-runner%s\n' "$reset"
+    not_judged
+  fi
   return 0
 }
 
 # Чем запускать Stryker: конфиг проекта либо единственный установленный раннер.
 # Наружу уходят два имени — `cfg` и `runner`; `runners` за границу не выходит и
-# потому объявлен здесь. Возврат 1 — «судить нечем», вызывающий зовёт `not_judged`.
+# потому объявлен здесь.
 #
 # Конфиг проекта, если он есть, Stryker находит сам — тогда гейт добавляет только
 # область и репортёр. Если конфига нет, нужен раннер, и угадывать его нельзя:
-# берём тот, что реально установлен, и только когда он ОДИН. Два раннера — это
-# выбор проекта, а не гейта; ноль — честный пропуск с командой установки.
+# берём тот, что реально установлен, и только когда он ОДИН. Два раннера — выбор
+# проекта, ноль — нечем запускать; оба исхода «не судит», то есть `not_judged`.
 ts_stryker_config() {
   local runners
   cfg=""
@@ -94,13 +92,13 @@ ts_stryker_config() {
   if [[ -z "$runners" ]]; then
     printf '%s⚠ mutation: ни конфига Stryker, ни раннера — TS-половина не судит.\n' "$yellow"
     printf 'Поставь раннер под свой сьют: npm i -D @stryker-mutator/vitest-runner%s\n' "$reset"
-    return 1
+    not_judged
   fi
   if [[ $(printf '%s\n' "$runners" | wc -l | tr -d ' ') -gt 1 ]]; then
     printf '%s⚠ mutation: раннеров несколько (%s) — какой брать, решает ПРОЕКТ.\n' \
       "$yellow" "$(printf '%s' "$runners" | tr '\n' ',')"
     printf 'Заведи stryker.config.json с полем testRunner — гейт его подхватит.%s\n' "$reset"
-    return 1
+    not_judged
   fi
   runner="$runners"
   return 0
@@ -155,7 +153,7 @@ for path in sys.stdin.read().split():
     if keep and os.path.isfile(path):
         print(path)
 ' "$cfg") || { printf '%s⚠ mutation: маска %s не разобрана — TS-половина не судит, Stryker не запущен%s\n' \
-      "$yellow" "$cfg" "$reset"; return 2; }  # ПОЧИНКА 2: «не судит» — not_judged, красное
+      "$yellow" "$cfg" "$reset"; not_judged; }
   dropped=$(comm -23 <(printf '%s\n' "$changed" | sort) <(printf '%s\n' "$kept" | sort) | tr '\n' ' ')
   [[ -n "${dropped// /}" ]] && printf 'mutation/ts: вне маски %s — %s\n' "$cfg" "$dropped"
   changed="$kept"
@@ -166,43 +164,10 @@ for path in sys.stdin.read().split():
   return 0
 }
 
-# ПОЧИНКА 3 — доля прогона. `MUTATION_SHARD=k/N` оставляет каждый N-й файл,
-# начиная с k-го: CI гонит N долей параллельными джобами, и PR на два десятка
-# файлов ядра судится за время одной доли, а не всех подряд. Порог — на долю, и
-# вердикт поэтому зависит от того, как алфавит разложил файлы: CI PR #4 — доля 59%
-# при общих 70% (урок L31). Отдавать счёт и судить сумму последней джобой — решение
-# владельца (вопрос открыт). Без переменной — весь список, как в каноне.
-ts_shard() {
-  local k total
-  [[ -n "${MUTATION_SHARD:-}" ]] || return 0
-  if [[ ! "$MUTATION_SHARD" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] \
-     || (( BASH_REMATCH[1] > BASH_REMATCH[2] )); then
-    printf '%s⚠ mutation: MUTATION_SHARD=%s — ждал k/N, 1 ≤ k ≤ N; гейт не судит%s\n' \
-      "$yellow" "$MUTATION_SHARD" "$reset"
-    return 2
-  fi
-  k=${BASH_REMATCH[1]}; total=${BASH_REMATCH[2]}
-  changed=$(printf '%s\n' "$changed" | sort | awk -v k="$k" -v n="$total" '(NR - 1) % n == k - 1')
-  if [[ -z "$changed" ]]; then
-    printf '%smutation: доля %s — файлов на неё не пришлось%s\n' "$green" "$MUTATION_SHARD" "$reset"
-    return 1
-  fi
-  return 0
-}
-
-ts_mutation() {
-  local STRYKER changed n cfg runner out rc report score step
-  for step in ts_stryker_setup ts_stryker_config ts_scope_filter ts_shard; do
-    "$step"; rc=$?
-    # У `ts_stryker_config` своё значение 1 — «судить нечем»; у остальных 1 — «нечего».
-    [[ "$step" == ts_stryker_config && $rc -eq 1 ]] && rc=2
-    (( rc == 1 )) && return 0
-    (( rc == 2 )) && not_judged
-  done
-  n=$(printf '%s\n' "$changed" | wc -l | tr -d ' ')
-  printf 'mutation/ts: %s файл(ов)%s, бюджет %ss, цель ≥%s%% убитых\n' \
-    "$n" "${MUTATION_SHARD:+, доля $MUTATION_SHARD}" "$BUDGET_SEC" "$MIN_KILLED"
-
+# Запуск Stryker'а и путь к отчёту (шов по §2.1: `ts_mutation` вырос до 89 строк).
+# Наружу — `report`. Честный ноль — возврат 1 со счётом «0 0»; «не смог» — `not_judged`.
+ts_run() {
+  local out rc
   out=$(mktemp)
   # Бюджет держим тем же способом, что python-половина: 124 от timeout — это
   # НЕПОЛНЫЕ данные, а не «зелено».
@@ -214,9 +179,20 @@ ts_mutation() {
       --mutate "$(printf '%s' "$changed" | tr '\n' ',')" --reporters json >"$out" 2>&1
   fi
   rc=$?
+  # Честное «судить нечего» узнаётся по словам Stryker'а, а не по отчёту. Замер
+  # Stryker 9.6 (`cqg@2.64`): дифф из одних типов — «Instrumented 1 source file(s)
+  # with 0 mutant(s)», дальше vitest-раннер не находит связанных тестов и падает
+  # `ConfigError` с rc=1 и БЕЗ отчёта; а файлы без мутантов в отчёт не попадают
+  # вовсе. Без этой ветки правка одних типов краснела бы «не просудил».
+  if grep -qE 'Instrumented [0-9]+ source file\(s\) with 0 mutant\(s\)' "$out"; then
+    printf '%smutation/ts: изменённые файлы не дали мутантов (только типы?) — судить нечего%s\n' \
+      "$green" "$reset"
+    rm -f "$out"; ts_counts 0 0; return 1
+  fi
   if (( rc == 124 )); then
     printf '%s⚠ mutation: бюджет %ss исчерпан — данные НЕПОЛНЫЕ, гейт не судит.\n' "$yellow" "$BUDGET_SEC"
-    printf 'Это не «зелено»: часть мутантов не проверена. Сузь дифф, добавь долей или подними BUDGET_SEC.%s\n' "$reset"
+    printf 'Это не «зелено»: часть мутантов не проверена. Сузь дифф, подними BUDGET_SEC\n'
+    printf 'или раздели прогон на доли (MUTATION_SHARD, CQG §3.7).%s\n' "$reset"
     rm -f "$out"; not_judged
   fi
 
@@ -229,6 +205,29 @@ ts_mutation() {
     printf '%s⚠ mutation: Stryker отработал, но отчёт не найден — гейт НЕ судит.%s\n' "$yellow" "$reset"
     tail -5 "$out" >&2; rm -f "$out"; not_judged
   fi
+
+  rm -f "$out"
+  return 0
+}
+
+ts_mutation() {
+  local STRYKER changed n cfg runner report score src
+  # Неприменима ПОЛОВИНА, а не роль (`cqg@2.64`): ключ `имя:правило`, как у правил
+  # AST- и grep-гейтов. Python-половина и карта ролей им не задеваются.
+  if [[ -f "$NA" ]] && grep -q '"check_mutation_gate.sh:ts"' "$NA"; then
+    printf '%s⚠ mutation: TS-половина объявлена неприменимой в %s — пропуск НАЗВАН.%s\n' \
+      "$yellow" "$NA" "$reset"
+    return 0
+  fi
+  ts_stryker_setup || { ts_counts 0 0; return 0; }
+  ts_stryker_config
+  ts_scope_filter || { ts_counts 0 0; return 0; }
+  ts_shard || { ts_counts 0 0; return 0; }
+  n=$(printf '%s\n' "$changed" | wc -l | tr -d ' ')
+  printf 'mutation/ts: %s файл(ов)%s, бюджет %ss, цель ≥%s%% убитых\n' \
+    "$n" "${MUTATION_SHARD:+, доля $MUTATION_SHARD}" "$BUDGET_SEC" "$MIN_KILLED"
+
+  ts_run || return 0
 
   score=$(python3 -c '
 import json, sys
@@ -244,35 +243,22 @@ for info in d.get("files", {}).values():
             det += 1
         elif s in ("Survived", "NoCoverage"):
             und += 1
-total = det + und
-if total == 0:
-    sys.stderr.write("мутанты не сгенерированы\n"); raise SystemExit(4)
-sys.stdout.write("%d %d %d" % (det, total, 100 * det // total))
+sys.stdout.write("%d %d" % (det, det + und))
 ' "$report" 2>&1)
-  rc=$?
-  rm -f "$out"
-  # Изменённые файлы без мутантов (одни типы, одни импорты) — честное «судить
-  # нечего», как у python-половины; всё прочее без вердикта — `not_judged`.
-  if (( rc == 4 )); then
-    printf '%smutation: изменённые файлы не дали мутантов (одни типы? импорты?) — судить нечего%s\n' \
-      "$green" "$reset"
-    return 0
-  fi
-  if [[ ! "$score" =~ ^[0-9]+\ [0-9]+\ [0-9]+$ ]]; then
+  src=$?
+  if (( src != 0 )) || [[ ! "$score" =~ ^[0-9]+\ [0-9]+$ ]] || [[ "$score" == *" 0" ]]; then
+    # Ноль засчитываемых при мутантах в отчёте — все CompileError/Ignored: это не
+    # «нечего судить» (тот случай узнан выше по словам Stryker'а), а «не судил».
     printf '%s⚠ mutation: отчёт есть, а вердикта из него нет — гейт НЕ судит: %s%s\n' \
-      "$yellow" "$score" "$reset"
+      "$yellow" "${score:-пусто}" "$reset"
     not_judged
   fi
   set -- $score
-  printf 'mutation/ts: убито %s из %s (%s%%), порог %s%%\n' "$1" "$2" "$3" "$MIN_KILLED"
-  if (( $3 < MIN_KILLED )); then
-    printf '\n%sERROR%s: тесты не убивают мутантов изменённого кода — они его не проверяют.\n' \
-      "$red" "$reset" >&2
-    printf 'Выживший мутант = поведение, которое сьют пропустил бы в проде.\n' >&2
-    printf 'Кто выжил: %s\n' "$report" >&2
-    [[ "$STRICT" == "0" ]] && { printf '%sWARNING (STRICT=0)%s\n' "$yellow" "$reset" >&2; return 0; }
-    return 1
+  if [[ -n "${MUTATION_SHARD:-}" ]]; then
+    ts_counts "$1" "$2"
+    printf 'mutation/ts: доля %s — убито %s из %s; порог судит сумма долей (MUTATION_SUM)\n' \
+      "$MUTATION_SHARD" "$1" "$2"
+    return 0
   fi
-  printf '%smutation/ts: OK%s\n' "$green" "$reset"
-  return 0
+  ts_verdict "$1" "$2" "прогон" "$report"
 }

@@ -77,6 +77,7 @@ try:
 except Exception:
     sys.exit(0)
 v = d.get("check_ci_status.sh") or d.get("ci-status")
+v = v.get("reason") if isinstance(v, dict) else v  # объектная форма, `cqg@2.66`
 sys.stdout.write(v if isinstance(v, str) else "")' 2>/dev/null)
   fi
   if [[ -n "$reason" ]]; then

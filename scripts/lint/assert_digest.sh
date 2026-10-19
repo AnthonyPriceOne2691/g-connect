@@ -13,7 +13,8 @@
 # Это НЕ гейт: он ничего не запрещает, exit всегда 0. Его продукт — текст в
 # verify-report.md, под которым человек ставит подпись (DoD §3.2 для M/L).
 #
-# Настройка (env): BASE (origin/main), LINT_TEST_GLOB.
+# Настройка (env): BASE (origin/main), LINT_TEST_GLOB — маски тест-файлов через
+# пробел (дефолт ниже; обещана шапкой с первой редакции, подключена с `cqg@2.68`).
 #
 # Использование:
 #   bash scripts/lint/assert_digest.sh                    # в stdout
@@ -36,8 +37,40 @@ fi
 # `grep` — обёртка над ugrep, см. §3.1a; на /usr/bin/grep то же выражение проходит,
 # поэтому проверка «у меня работает» тут ничего не значит). Незаэкранированный `+`
 # в BRE — обычный символ, и это работает во всех трёх реализациях.
-added=$(git diff "$BASE"...HEAD -- '*test*.py' '*test*.ts' '*test*.tsx' '*_test.go' 2>/dev/null \
+read -r -a TEST_GLOBS <<< "${LINT_TEST_GLOB:-*test*.py *test*.ts *test*.tsx *_test.go *Tests.swift *Test.swift}"
+added=$(git diff "$BASE"...HEAD -- "${TEST_GLOBS[@]}" 2>/dev/null \
   | grep '^+' | grep -v '^+++' | sed 's/^+//')
+
+# «Не видел» обязано отличаться от «утверждений нет» (`cqg@2.68`). Поле Smart Friend
+# Ally 18.10: в диффе 12 `XCTAssert`, а сводка — «Новых утверждений нет» и 0
+# непривязанных, то есть `asserts_reviewed_by: n/a` проходил на пустоте: маска не
+# знала Swift. Тест-файл опознаётся ПРИНЦИПОМ — именем (`test_*`, `*_test.*`,
+# `*_spec.*`, `*.test.*`, `*Tests.*`, `*Spec.*`) или каталогом `__tests__/`, где имена
+# не помечены, — а не списком языков. Каталог `tests/` сам по себе признаком не
+# служит: на том же поле он дал бы `unknown` генератору фикстур
+# `Tests/…/Fixtures/make_fixtures.py`. Файл мимо масок выше разобран не был, и
+# маркер тогда `unknown`, а не число.
+unseen=$(comm -23 \
+  <(git diff --name-only --diff-filter=d "$BASE"...HEAD 2>/dev/null \
+      | grep -E '\.(py|pyi|ts|tsx|js|jsx|mjs|cjs|mts|cts|go|swift|kt|kts|java|rb|php|cs|rs|scala|dart|m|mm|c|cc|cpp|h)$' \
+      | grep -E '(^|/)__tests__/|(^|/)(test_[^/]*|[^/]*_(test|spec)\.[^/]*|[^/]*\.(test|spec)\.[^/]*|[^/]*(Tests?|Spec)\.[^/]*)$' \
+      | sort -u) \
+  <(git diff --name-only --diff-filter=d "$BASE"...HEAD -- "${TEST_GLOBS[@]}" 2>/dev/null | sort -u))
+
+# Маркер — последней строкой: его дописывают в verify-report, и его же читает
+# delivery_check. Неразобранный тест-файл делает число непроверенным — `unknown`.
+marker() {
+  if [[ -n "$unseen" ]]; then
+    echo "⚠ **Тест-файлы, которых дайджест не разбирал** (маски — \`LINT_TEST_GLOB\`):"
+    printf '%s\n' "$unseen" | sed 's/^/- `/; s/$/`/'
+    echo "Их утверждений здесь нет, поэтому число непривязанных неизвестно, и"
+    echo "\`asserts_reviewed_by: n/a\` недоступно: подпись human:… at=… либо маски проекта."
+    echo
+    echo "asserts_without_example: unknown"
+  else
+    echo "asserts_without_example: $1"
+  fi
+}
 
 # Классификация каждого утверждения: привязано к примеру спеки или нет.
 #
@@ -52,7 +85,7 @@ added=$(git diff "$BASE"...HEAD -- '*test*.py' '*test*.ts' '*test*.tsx' '*_test.
 # бага, что `^\+` выше). Побочно это отсеивает `MD5`/`UTF8`: там перед цифрой
 # стоит буква внутри слова, то есть границы нет.
 classified=$(printf '%s\n' "$added" | awk '
-  /(^|[^a-zA-Z_])(def[ \t]+test|it\(|test\(|func[ \t]+Test)/ { cur = "" }
+  /(^|[^a-zA-Z_])(def[ \t]+test|it\(|test\(|func[ \t]+[Tt]est)|@Test/ { cur = "" }
   {
     if (match($0, /(^|[^A-Za-z0-9_])[A-Z][0-9]+([^A-Za-z0-9_]|$)/)) {
       tok = substr($0, RSTART, RLENGTH)
@@ -60,7 +93,7 @@ classified=$(printf '%s\n' "$added" | awk '
       cur = tok
     }
   }
-  /(^|[^a-zA-Z_])(assert[a-zA-Z_]*|expect|require|should)[ (]/ {
+  /(^|[^a-zA-Z_])(assert[a-zA-Z_]*|XCTAssert[a-zA-Z]*|XCTFail|expect|require|should)[ (]/ {
     line = $0
     sub(/^[ \t]+/, "", line)
     printf "%s\t%s\n", (cur == "" ? "-" : cur), line
@@ -78,7 +111,7 @@ if [[ -z "$classified" ]]; then
   # «утверждений нет» из-за незакоммиченного теста = разрешение подписать пустоту.
   # Класс уже закрыт у `check_diff_coverage.sh` и `check_grep_gate.sh`; здесь его
   # не было, и приёмочное развёртывание поймало это staged-тестом с `assert 2+2==5`.
-  staged=$(git status --porcelain -- '*test*.py' '*test*.ts' '*test*.tsx' 2>/dev/null | wc -l | tr -d ' ')
+  staged=$(git status --porcelain -- "${TEST_GLOBS[@]}" 2>/dev/null | wc -l | tr -d ' ')
   if [[ "${staged:-0}" -gt 0 ]]; then
     echo
     echo "⚠ **Внимание: $staged незакоммиченных тест-файл(ов).** Дайджест считает"
@@ -93,7 +126,7 @@ if [[ -z "$classified" ]]; then
   echo
   # Маркер печатается ВСЕГДА, в том числе здесь: delivery_check требует его
   # наличия, а «утверждений нет» — законный ноль непривязанных.
-  echo "asserts_without_example: 0"
+  marker 0
   exit 0
 fi
 
@@ -110,7 +143,11 @@ printf '%s\n' "$classified" | cut -c1-160
 echo '```'
 echo
 ids=$(printf '%s\n' "$classified" | cut -f1 | grep -v '^-$' | sort -u | paste -sd' ' -)
-if [[ "$bare" -eq 0 ]]; then
+if [[ "$bare" -eq 0 && -n "$unseen" ]]; then
+  # Совет «пиши n/a» тут был бы ложью: часть тест-файлов не разобрана (ниже).
+  echo "Разобранные утверждения ведут к примерам спеки ($ids), но разобраны НЕ все"
+  echo "тест-файлы — список ниже, и до него \`n/a\` не заслужен."
+elif [[ "$bare" -eq 0 ]]; then
   echo "✅ **Каждое утверждение ведёт к примеру спеки** ($ids), а примеры человек"
   echo "подписал до кода (\`human_ok_spec\`). Подпись под дайджестом здесь"
   echo "**не требуется**: она уже стоит, заранее и на числах. Пиши в verify-report"
@@ -130,5 +167,5 @@ echo
 # Машинно-читаемый маркер: по нему delivery_check решает, заслужен ли `n/a`
 # (Delivery §3.1d уровень 3). Держать последней строкой — её дописывают в
 # verify-report, и она должна быть видна глазами тоже.
-echo "asserts_without_example: $bare"
+marker "$bare"
 exit 0

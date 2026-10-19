@@ -60,6 +60,10 @@ if os.path.isfile(na_file):
 # множество; для «n/a без объявления» — оба: причина печатается в обоих случаях.
 na_scripts = {str(k).split(":")[0] for k in declared}
 reasoned = na_scripts | canon_na
+# «Плюс против n/a» судят только ключи на ВЕСЬ скрипт (`cqg@2.64`). Ключ
+# имя:правило снимает часть гейта (правило AST, TS-половину мутаций), а сам гейт
+# жив, и его ✅ в карте — правда, а не противоречие.
+na_whole = {str(k) for k in declared if ":" not in str(k)}
 
 # Строка карты называет роль ЛИБО именем файла (check_jscpd_gate.sh), либо
 # ярлыком (jscpd-DRY) — обе формы живые, и вторая встречается чаще: карта
@@ -80,12 +84,33 @@ scripts = [f for f in sorted(os.listdir(lint_dir))
     if os.path.isdir(lint_dir) else []
 by_alias = {a: f for f in scripts for a in aliases(f)}
 
+# Статус — ВЕДУЩИЙ токен ячейки-заявления, а не подстрока где угодно в строке
+# (поле Ally 17.10). Канон задаёт статус перечнем «как есть · адаптирован ·
+# n/a + причина»: токен стоит В НАЧАЛЕ поля, дальше проза. Первая ячейка —
+# ПРЕДМЕТ строки (роль или гейт) и заявлением не бывает: в «Объявления n/a
+# истекают с кодом» n/a — о чём роль, а не её статус. Подстрока роняла такой
+# коммит («n/a без объявления»), гасила соседнее ✅ при объявленном n/a и
+# читала «не подключён» как ✅. Колонку по шапке не ищем: образец карты в
+# каноне кладёт статус и в «В этом проекте», флот пишет так же.
+STATUS = ("✅", "⛔", "n/a", "подключ", "не подключ", "как есть", "адаптир")
+# «как есть» и «адаптирован» — тоже «подключён» (`cqg@2.65`, решение Anthony 18.10):
+# это статусы из перечня самого канона, и без них карты формы шаблона заявлений не
+# несли вовсе — замер флота 18.10: проверка видела 14 строк из 96.
+ON = ("✅", "подключ", "как есть", "адаптир")
+
 problems = []
 for line in open(mp, encoding="utf-8"):
     if not line.lstrip().startswith("|"):
         continue
+    cells = line.strip().strip("|").split("|")
+    leads = [re.sub(r"^[^\w⛔✅]+", "", c).lower() for c in cells[1:]]
+    # Имена — только из ячеек ДО первого статуса (`cqg@2.65`): дальше проза, и имя
+    # гейта, упомянутое в объяснении, читалось как предмет строки. Тот же класс, что
+    # статус из прозы у `2.60`, на том же месте: тогда разбирали статус, а имена
+    # продолжали брать из всей строки.
+    first = next((i + 1 for i, s in enumerate(leads) if s.startswith(STATUS)), len(cells))
     names = []
-    for tok in re.findall(r"\x60([^\x60]+)\x60", line):
+    for tok in re.findall(r"\x60([^\x60]+)\x60", "|".join(cells[:first])):
         key = tok.strip().lower()
         # jscpd-DRY -> ярлык jscpd;  check_x.sh --rule y -> имя файла
         key = re.split(r"\s|--", key)[0].strip()
@@ -96,22 +121,17 @@ for line in open(mp, encoding="utf-8"):
     names = sorted(set(names))
     if not names:
         continue
-    # Статус — ВЕДУЩИЙ токен ячейки-заявления, а не подстрока где угодно в строке
-    # (поле Ally 17.10). Канон задаёт статус перечнем «как есть · адаптирован ·
-    # n/a + причина»: токен стоит В НАЧАЛЕ поля, дальше проза. Первая ячейка —
-    # ПРЕДМЕТ строки (роль или гейт) и заявлением не бывает: в «Объявления n/a
-    # истекают с кодом» n/a — о чём роль, а не её статус. Подстрока роняла такой
-    # коммит («n/a без объявления»), гасила соседнее ✅ при объявленном n/a и
-    # читала «не подключён» как ✅. Колонку по шапке не ищем: образец карты в
-    # каноне кладёт статус и в «В этом проекте», флот пишет так же.
-    leads = [re.sub(r"^[^\w⛔✅]+", "", c).lower()
-             for c in line.strip().strip("|").split("|")[1:]]
     claims_na = any(s.startswith(("n/a", "⛔")) for s in leads)
-    claims_on = any(s.startswith(("✅", "подключ")) for s in leads) and not claims_na
+    claims_on = any(s.startswith(ON) for s in leads) and not claims_na
+    # Строка замены: канонный гейт объявлен n/a, роль держит свой скрипт проекта
+    # («адаптирован»: check_grep_gate_ts.sh вместо check_grep_gate.sh у G connect).
+    # Противоречие — только когда живого скрипта в строке нет ни одного.
+    live = [n for n in names if n not in na_whole]
     for n in names:
-        if claims_on and n in na_scripts:
+        if claims_on and n in na_whole and not live:
             problems.append(
-                "%s: в карте ролей ✅, а в not-applicable.json объявлен n/a" % n)
+                "%s: в карте ролей ✅, а в not-applicable.json объявлен n/a "
+                "(подключён — и «как есть», и «адаптирован»)" % n)
         if claims_na and n not in reasoned and os.path.isfile(
                 os.path.join(lint_dir, n)):
             problems.append(

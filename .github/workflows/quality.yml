@@ -114,8 +114,9 @@ jobs:
   # До 2026-10-17 здесь стоял `npx stryker run` по ВСЕМУ ядру без бюджета: 4993 мутанта
   # и 22 минуты в сентябре, 45+ минут после уровня 3 (61 файл) — 85–90% времени PR.
   # Теперь канонный гейт по ИЗМЕНЁННЫМ файлам ядра в маске stryker.config.json, четыре
-  # доли параллельно, бюджет 600 с на долю, «не просудил» — красное (поправка в
-  # scripts/lint/mutation_ts.sh, adapted.json). Полный прогон ядра — руками: `npx stryker run`.
+  # доли параллельно, бюджет 600 с на долю, «не просудил» — красное (cqg@2.64). Доля только
+  # СЧИТАЕТ и выгружает счёт, порог судит джоба mutation-sum по сумме (CQG §3.7, урок L31:
+  # порог на доле делал вердикт функцией разбиения). Полный прогон ядра — `npx stryker run`.
   mutation:
     if: github.event_name == 'pull_request'
     name: mutation (доля ${{ matrix.shard }}/4)
@@ -148,11 +149,40 @@ jobs:
       - name: age для тестов шва токена
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends age
 
-      - name: Мутационный гейт (тесты утверждают)
+      - name: Мутационный гейт (доля — счёт)
         env:
           LINT_TS_SRC: src
           LINT_FE_DIR: .
           MIN_KILLED: '60'
           BUDGET_SEC: '600'
           MUTATION_SHARD: ${{ matrix.shard }}/4
+        run: bash scripts/lint/check_mutation_gate.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mutation-shard-${{ matrix.shard }}
+          path: reports/mutation/shards/
+
+  # Порог — по сумме долей (CQG §3.7): доля без счёта для суммы — «не просудил», красное.
+  mutation-sum:
+    if: github.event_name == 'pull_request'
+    name: mutation (сумма долей)
+    needs: mutation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: mutation-shard-*
+          path: reports/mutation/shards/
+          merge-multiple: true
+
+      - name: Мутационный гейт (сумма долей — порог)
+        env:
+          LINT_TS_SRC: src
+          LINT_FE_DIR: .
+          MIN_KILLED: '60'
+          MUTATION_SUM: '4'
         run: bash scripts/lint/check_mutation_gate.sh

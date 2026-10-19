@@ -58,8 +58,10 @@ class HookReaders:
     #: гейта длины `*.py *.ts *.tsx` их не покрывает — и не должна: это конфиги, а
     #: не продуктовый код, и их размер живёт под ратчетом веса канона.
     #: Регрессия развёртывания видела один конфиг из девяти, поэтому сьют молчал.
-    CONTOUR_RE = re.compile(r"^(scripts/lint/|scripts/delivery_(check|metrics)\.py$"
+    CONTOUR_RE = re.compile(r"^(scripts/lint/|scripts/delivery_[a-z_]+\.py$"
                             r"|scripts/okf_[a-z_]+\.py$|scripts/merge_guard\.sh$"
+                            r"|scripts/(check_irreversible_signature|sign_irreversible)\.sh$"
+                            r"|(scripts/)?(stack_selftest|selftest_sizes|extract_payload)\.py$"
                             r"|delivery/|knowledge/|docs/canon/"
                             r"|([^/]+/)*(\.dependency-cruiser|eslint\.config)\.[cm]?js$)")
 

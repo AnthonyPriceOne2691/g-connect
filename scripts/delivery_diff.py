@@ -38,6 +38,33 @@ def archived_in_diff(base: str | None) -> list[Path]:
     return [ROOT / Path(f).parent for f in out.split("\0") if ARCHIVED_STATUS.match(f)]
 
 
+def numstat(rng: str) -> list[tuple[str, str, str]]:
+    """(путь, добавлено, удалено) из `git diff --numstat -z` — пути как есть.
+
+    `-z` (`delivery@2.05`): без него git отдаёт кириллический путь в кавычках и
+    восьмеричных кодах (замер 17.10), `delivery/заметка.md` не узнавался как
+    `delivery/`, и документ поставки шёл в breaker'ы кодом. Переименование при `-z`
+    — запись «добавлено, удалено, пусто» и два пути следом; берётся новый, а не
+    строка «старый => новый», которую разбор без `-z` принимал за путь.
+    """
+    parts = git("diff", "--numstat", "-z", rng).split("\0")
+    out: list[tuple[str, str, str]] = []
+    i = 0
+    while i < len(parts):
+        fields = parts[i].split("\t")
+        if len(fields) != 3:
+            i += 1
+            continue
+        a, d, path = fields
+        if path:
+            i += 1
+        else:
+            path, i = (parts[i + 2] if i + 2 < len(parts) else ""), i + 3
+        if path:
+            out.append((path, a, d))
+    return out
+
+
 def diff_stats(base: str) -> tuple[int, int, int, int, list[str]] | None:
     """(files, added, deleted, excluded, paths) для base..HEAD; None если ref недоступен.
 
@@ -52,11 +79,7 @@ def diff_stats(base: str) -> tuple[int, int, int, int, list[str]] | None:
     merge_base = merge_base_of(base) or base
     files = added = deleted = excluded = 0
     paths: list[str] = []
-    for line in git("diff", "--numstat", f"{merge_base}..HEAD").splitlines():
-        parts = line.split("\t")
-        if len(parts) != 3:
-            continue
-        a, d, path = parts
+    for path, a, d in numstat(f"{merge_base}..HEAD"):
         if out_of_blast_radius(path):
             excluded += 1
             continue
