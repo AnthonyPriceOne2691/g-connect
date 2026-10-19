@@ -147,3 +147,9 @@ PR #12 (Q20–Q22) — агент F от `380d507`, сводит ведущий 
 16. **Цель создания** (агент F; `src/core/create-parent.ts`, `create-op.ts`, шов `drive.ts`
     `fileKind`, `run-create.ts`): вид цели без типа — у Drive; родитель обязателен по типу; журнал —
     под ID папки.
+
+PR #13 (Q23–Q26) — агент G от `efb2cee`, сводит ведущий в `feat/cell-notes` поверх PR #12:
+
+17. **Заметки ячеек** (агент G; шов `toCell`, `src/core/sheets/notes.ts`, `map.ts`, `rows.ts`
+    `finish`, `read-values.ts`, `tools.ts`): заметки — данными; подсказка в превью — по разу на
+    задетую колонку.
