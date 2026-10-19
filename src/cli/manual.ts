@@ -9,14 +9,14 @@
  *   npm run gc -- upsert <ссылка> <лист> <ключ=значение,...> <поле=значение,...>
  *                        [--write --confirm=<код плана>]
  *   npm run gc -- grant [open|revoke <каталог проекта> | revoke --all]
+ *   npm run gc -- seal                      # переход на токен под пальцем (D-24), один раз
+ *   npm run gc -- run -- <команда> [арг…]   # команде — access-токен на час, после касания
  */
 
 import { execFileSync } from 'node:child_process';
 
-import { ensureAccessToken, login } from '../core/auth.js';
 import { defaultAccount, grantKeyName } from '../core/env.js';
 import { gcError, isGcError } from '../core/errors.js';
-import { googleExchanger } from '../core/google/exchanger.js';
 import { issueGrant, listGrants, revokeGrant } from '../core/grant/grants.js';
 import { secretiveKeys } from '../core/grant/secretive.js';
 import { GoogleSheetsClient } from '../core/google/sheets.js';
@@ -24,6 +24,7 @@ import { profileStatus } from '../core/profiles.js';
 import { buildSheetData } from '../core/sheets/map.js';
 import { upsertRow } from '../core/sheets/rows.js';
 import { assertWritable, loadRegistry, resolveTarget } from '../core/targets.js';
+import { cliAccessToken, cmdLogin, cmdRun, cmdSeal } from './token-commands.js';
 
 const ACCOUNT = defaultAccount();
 
@@ -56,25 +57,12 @@ const pairs = (text: string): Record<string, string> => {
 };
 
 async function client(): Promise<GoogleSheetsClient> {
-  const accessToken = await ensureAccessToken({ account: ACCOUNT, exchanger: googleExchanger });
+  const accessToken = await cliAccessToken();
   return new GoogleSheetsClient({
     accessToken,
     onRetry: (attempt, total, delay) =>
       console.log(`  Google не ответил, повтор ${attempt} из ${total} через ${delay} мс…`),
   });
-}
-
-async function cmdLogin(): Promise<void> {
-  const before = await profileStatus(ACCOUNT);
-  console.log(`Профиль «${ACCOUNT}»: ${before.state}`);
-  const result = await login({
-    account: ACCOUNT,
-    exchanger: googleExchanger,
-    present: openInBrowser,
-  });
-  console.log(
-    `\nГотово. Права: ${result.scopes.map((s) => s.replace('https://www.googleapis.com/auth/', '')).join(', ')}`,
-  );
 }
 
 async function cmdMap(ref: string, sheet?: string): Promise<void> {
@@ -204,6 +192,27 @@ async function openOne(keys: Keys, project: string): Promise<void> {
   console.log(`G connect открыт для ${project} до ${grant.expires}.`);
 }
 
+async function mapCommand(rest: readonly string[]): Promise<void> {
+  if (rest[0] === undefined) {
+    throw gcError('bad_request', { detail: 'Нужна ссылка: npm run gc -- map <ссылка> [лист]' });
+  }
+  await cmdMap(rest[0], rest[1]);
+}
+
+async function upsertCommand(
+  rest: readonly string[],
+  write: boolean,
+  confirm: string | undefined,
+): Promise<void> {
+  if (rest.length < 4) {
+    throw gcError('bad_request', {
+      detail:
+        'Нужно: npm run gc -- upsert <ссылка> <лист> <ключ=знач,...> <поле=знач,...> [--write]',
+    });
+  }
+  await cmdUpsert(rest[0]!, rest[1]!, rest[2]!, rest[3]!, write, confirm);
+}
+
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   const write = args.includes('--write');
@@ -212,22 +221,20 @@ async function main(): Promise<void> {
 
   switch (command) {
     case 'login':
-      await cmdLogin();
+      await cmdLogin(openInBrowser);
+      return;
+    case 'seal':
+      await cmdSeal(openInBrowser);
+      return;
+    case 'run':
+      // Аргументы команды — как есть: `--write` у неё может быть своим.
+      await cmdRun(args);
       return;
     case 'map':
-      if (rest[0] === undefined) {
-        throw gcError('bad_request', { detail: 'Нужна ссылка: npm run gc -- map <ссылка> [лист]' });
-      }
-      await cmdMap(rest[0], rest[1]);
+      await mapCommand(rest);
       return;
     case 'upsert':
-      if (rest.length < 4) {
-        throw gcError('bad_request', {
-          detail:
-            'Нужно: npm run gc -- upsert <ссылка> <лист> <ключ=знач,...> <поле=знач,...> [--write]',
-        });
-      }
-      await cmdUpsert(rest[0]!, rest[1]!, rest[2]!, rest[3]!, write, confirmFlag);
+      await upsertCommand(rest, write, confirmFlag);
       return;
     case 'status': {
       const status = await profileStatus(ACCOUNT);
@@ -239,9 +246,9 @@ async function main(): Promise<void> {
       return;
     default:
       console.log(
-        'Команды: login · status · map <ссылка> [лист] · ' +
+        'Команды: login · seal · status · map <ссылка> [лист] · ' +
           'upsert <ссылка> <лист> <ключ> <значения> [--write --confirm=<код>] · ' +
-          'grant [open|revoke <каталог проекта> | revoke --all]',
+          'grant [open|revoke <каталог проекта> | revoke --all] · run -- <команда> [аргументы]',
       );
   }
 }

@@ -8,10 +8,11 @@
  * подменяет агента, к которому идёт подпись.
  */
 
-import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import { run, type RunResult } from '../subprocess.js';
 
 export const SSH_KEYGEN = '/usr/bin/ssh-keygen';
 export const SSH_ADD = '/usr/bin/ssh-add';
@@ -19,51 +20,6 @@ export const SSH_ADD = '/usr/bin/ssh-add';
 /** Пространство подписи: подпись разрешения не годится ни для чего другого, и наоборот. */
 export const GRANT_NAMESPACE = 'g-connect-grant';
 const SIGNER = 'g-connect';
-const BASE_ENV = { PATH: '/usr/bin:/bin' };
-
-export interface RunResult {
-  readonly code: number | null;
-  readonly stdout: string;
-  readonly stderr: string;
-  readonly timedOut: boolean;
-}
-
-export interface RunOptions {
-  readonly input?: string;
-  readonly env?: Readonly<Record<string, string>>;
-  readonly timeoutMs?: number;
-}
-
-export function run(
-  command: string,
-  args: readonly string[],
-  options: RunOptions = {},
-): Promise<RunResult> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, { env: { ...BASE_ENV, ...options.env }, stdio: 'pipe' });
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    const timer =
-      options.timeoutMs === undefined
-        ? undefined
-        : setTimeout(() => {
-            timedOut = true;
-            child.kill('SIGKILL');
-          }, options.timeoutMs);
-    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
-    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
-    child.on('error', (error) => {
-      clearTimeout(timer);
-      resolve({ code: null, stdout, stderr: stderr + error.message, timedOut });
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout, stderr, timedOut });
-    });
-    child.stdin.end(options.input ?? '');
-  });
-}
 
 /** Временный каталог с правами 700 под файлы одного вызова; удаляется в любом исходе. */
 async function withScratch<T>(body: (dir: string) => Promise<T>): Promise<T> {

@@ -39,6 +39,20 @@
       "probe": "откат по id записи другого проекта → policy_denied undo.own-project"
     },
     {
+      "id": "token.sealed-at-rest",
+      "title": "Токен Google на диске — только шифротекст ключом Secure Enclave: открытый token.json ядро не пишет и не берёт (D-24)",
+      "kind": "deny",
+      "enforced_in": "src/core/profiles.ts (writeSealedToken, profileStatus, requireProfile)",
+      "probe": "шифровальщик, вернувший открытый текст, → отказ, токена на диске нет; открытый token.json → token_unsealed"
+    },
+    {
+      "id": "google.unlock-only-tool",
+      "title": "Окно Touch ID для токена Google вызывает только gc_unlock: остальные инструменты при закрытом Google отвечают google_locked (D-24)",
+      "kind": "deny",
+      "enforced_in": "src/core/token/vault.ts (accessToken, tokenForClients, unlock) + src/mcp/unlock-tool.ts (gcUnlock)",
+      "probe": "обращение к Google при закрытом хранилище → google_locked, расшифровок (окон) ноль"
+    },
+    {
       "id": "write.formula-column",
       "title": "Запись в формульную колонку блокируется без явного подтверждения",
       "kind": "deny",

@@ -15,6 +15,7 @@ import type { GrantKeys, GrantState } from '../core/grant/grants.js';
 import type { JournalSink, JournalSource } from '../core/journal.js';
 import type { SheetsClient } from '../core/sheets/types.js';
 import type { Registry } from '../core/targets.js';
+import type { TokenVault } from '../core/token/vault.js';
 
 export interface ToolDeps {
   readonly account: string;
@@ -35,6 +36,11 @@ export interface ToolDeps {
   grant?(): Promise<GrantState>;
   /** Ключи разрешения — для `gc_grant`: выдать касанием. */
   readonly grantKeys?: GrantKeys;
+  /**
+   * Токен Google процесса (D-24): статус для `gc_targets`, касание — только `gc_unlock`.
+   * Нет — Google открывать нечем (тесты с готовыми клиентами).
+   */
+  readonly google?: TokenVault;
 }
 
 export interface ToolResult {

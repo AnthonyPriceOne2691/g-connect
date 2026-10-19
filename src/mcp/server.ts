@@ -22,7 +22,6 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
-import { ensureAccessToken } from '../core/auth.js';
 import { fileJournal, fileJournalSource } from '../core/audit.js';
 import { callerProject, defaultAccount, grantKeyName } from '../core/env.js';
 import { currentGrant } from '../core/grant/grants.js';
@@ -34,6 +33,9 @@ import { GoogleSheetsClient } from '../core/google/sheets.js';
 import type { RetryReporter } from '../core/google/support.js';
 import { policyText } from '../core/policy.js';
 import { loadRegistry } from '../core/targets.js';
+import { findAgeTools } from '../core/token/age.js';
+import { profileSealer, profileUnsealer } from '../core/token/sealing.js';
+import { tokenForClients, tokenVault } from '../core/token/vault.js';
 import { unknownToolResult } from './boundary.js';
 import {
   TOOLS,
@@ -47,11 +49,21 @@ import {
 const ACCOUNT = defaultAccount();
 
 /**
- * Токен берётся при каждом обращении, а не один раз при старте: сервер живёт часами,
- * access-токен — минуты, и `ensureAccessToken` сам обновит его по refresh-токену.
+ * Токен Google процесса (D-24): один на сервер, то есть на сессию клиента. Программы `age`
+ * ищутся один раз; касание — только `gc_unlock`, всё прочее получает access-токен из памяти
+ * или `google_locked`.
  */
-const token = (): Promise<string> =>
-  ensureAccessToken({ account: ACCOUNT, exchanger: googleExchanger });
+const AGE_TOOLS = findAgeTools();
+const VAULT = tokenVault({
+  account: ACCOUNT,
+  exchanger: googleExchanger,
+  unsealer: {
+    unseal: async (sealed, meta) => profileUnsealer(await AGE_TOOLS, ACCOUNT).unseal(sealed, meta),
+  },
+  sealer: async () => profileSealer(await AGE_TOOLS, ACCOUNT),
+});
+
+const token = tokenForClients(VAULT);
 
 /** Чей вызов собирает зависимости: имя инструмента уходит в строки о повторах. */
 export interface CallContext {
@@ -90,6 +102,7 @@ function deps(call?: CallContext): ToolDeps {
     ...(PROJECT === undefined ? {} : { project: PROJECT }),
     grant: () => currentGrant(GRANT_KEYS, PROJECT, ACCOUNT),
     grantKeys: GRANT_KEYS,
+    google: VAULT,
     sheets: async () => new GoogleSheetsClient({ accessToken: await token(), onRetry }),
     docs: async () => new GoogleDocsClient({ accessToken: await token(), onRetry }),
     drive: async () => new GoogleDriveClient(await token(), onRetry),

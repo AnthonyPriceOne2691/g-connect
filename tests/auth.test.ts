@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,12 +7,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   MVP_SCOPES,
   buildAuthUrl,
-  ensureAccessToken,
   login,
+  requireUsableProfile,
   waitForCode,
 } from '../src/core/auth.js';
-import { profileDir, readToken, writeToken } from '../src/core/profiles.js';
+import { profileDir, readTokenMeta, writeSealedToken } from '../src/core/profiles.js';
 import type { OAuthClient, StoredToken } from '../src/core/profiles.js';
+import { fakeSealer } from './fixtures/sealing.js';
 
 const CLIENT: OAuthClient = {
   clientId: 'id.apps.googleusercontent.com',
@@ -109,12 +110,19 @@ describe('петля redirect (рисковый путь, проверяется
   });
 });
 
+const plainOnDisk = (): Promise<boolean> =>
+  access(join(profileDir(), 'token.json')).then(
+    () => true,
+    () => false,
+  );
+
 describe('вход целиком', () => {
-  it('токен пишется в профиль, ссылка отдаётся человеку', async () => {
+  it('U9: токен ложится шифротекстом, открытого token.json нет; ссылка отдаётся человеку', async () => {
     const ex = exchanger({ access_token: 'a', refresh_token: 'r', scope: MVP_SCOPES.join(' ') });
     let shown = '';
     const result = await login({
       exchanger: ex,
+      sealer: fakeSealer('age1login'),
       port: PORT + 4,
       present: (url) => {
         shown = url;
@@ -125,7 +133,11 @@ describe('вход целиком', () => {
     });
     expect(shown).toContain('accounts.google.com');
     expect(result.scopes).toEqual([...MVP_SCOPES]);
-    expect((await readToken())?.refresh_token).toBe('r');
+    expect(await readTokenMeta()).toMatchObject({
+      recipient: 'age1login',
+      scope: MVP_SCOPES.join(' '),
+    });
+    expect(await plainOnDisk()).toBe(false);
     expect(ex.calls).toContain('exchange:C');
   });
 
@@ -134,6 +146,7 @@ describe('вход целиком', () => {
     await expect(
       login({
         exchanger: ex,
+        sealer: fakeSealer(),
         port: PORT + 5,
         present: (url) => {
           void fetch(
@@ -142,59 +155,21 @@ describe('вход целиком', () => {
         },
       }),
     ).rejects.toMatchObject({ payload: { cause: 'no_refresh_token' } });
-    expect(await readToken()).toBeNull();
+    expect(await readTokenMeta()).toBeNull();
   });
 });
 
-describe('действующий access-токен', () => {
-  it('свежий токен отдаётся без обращения к Google', async () => {
-    await writeToken({
-      access_token: 'fresh',
-      refresh_token: 'r',
-      scope: MVP_SCOPES.join(' '),
-      expiry_date: 10_000_000,
-    });
-    const ex = exchanger({ access_token: 'new' });
-    expect(await ensureAccessToken({ exchanger: ex, now: () => 1_000_000 })).toBe('fresh');
-    expect(ex.calls).toHaveLength(0);
-  });
-
-  it('истёкший обновляется, refresh_token не теряется', async () => {
-    await writeToken({
-      access_token: 'old',
-      refresh_token: 'keepme',
-      scope: MVP_SCOPES.join(' '),
-      expiry_date: 1_000,
-    });
-    const ex = exchanger({ access_token: 'renewed', expiry_date: 9_000_000 });
-    expect(await ensureAccessToken({ exchanger: ex, now: () => 500_000 })).toBe('renewed');
-    expect(ex.calls).toContain('refresh:keepme');
-    expect((await readToken())?.refresh_token).toBe('keepme');
-  });
-
-  it('токен, истекающий через полминуты, считается истёкшим заранее', async () => {
-    await writeToken({
-      access_token: 'almost',
-      refresh_token: 'r',
-      scope: MVP_SCOPES.join(' '),
-      expiry_date: 1_030_000,
-    });
-    const ex = exchanger({ access_token: 'renewed' });
-    expect(await ensureAccessToken({ exchanger: ex, now: () => 1_000_000 })).toBe('renewed');
-  });
-
+describe('пригодность профиля перед открытием Google', () => {
   it('старый набор прав → scope_missing с перечислением недостающего, а не «доступ сломался»', async () => {
-    // Ровно случай владельца: в token.json лежит forms.body.readonly, но нет documents.
-    await writeToken({
-      access_token: 'a',
+    // Ровно случай владельца: во входе лежит forms.body.readonly, но нет documents.
+    await writeSealedToken(fakeSealer(), {
       refresh_token: 'r',
       scope:
         'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.file ' +
         'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/forms.body.readonly',
-      expiry_date: 9_000_000,
     });
     try {
-      await ensureAccessToken({ exchanger: exchanger({}), now: () => 1_000 });
+      await requireUsableProfile('default');
       expect.unreachable('должно бросить');
     } catch (error) {
       const payload = (error as { payload: { code: string; detail?: string } }).payload;
@@ -204,9 +179,9 @@ describe('действующий access-токен', () => {
     }
   });
 
-  it('нет профиля → no_profile, а не попытка обновить пустоту', async () => {
+  it('нет профиля → no_profile, а не попытка открыть пустоту', async () => {
     process.env['GCONNECT_HOME'] = join(home, 'empty');
-    await expect(ensureAccessToken({ exchanger: exchanger({}) })).rejects.toMatchObject({
+    await expect(requireUsableProfile('default')).rejects.toMatchObject({
       payload: { code: 'no_profile' },
     });
   });

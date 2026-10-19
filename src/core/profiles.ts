@@ -4,9 +4,14 @@
  * Один профиль = один аккаунт Google (D-2). Секреты живут только здесь, с правами 600,
  * и наружу из ядра не выходят: функции возвращают СТАТУС, а не токен.
  * Корень переопределяется `GCONNECT_HOME` — это же делает профили тестируемыми.
+ *
+ * Токен на диске — только шифротекст (D-24): `token.age` под ключом Secure Enclave,
+ * рядом `token.meta.json` без секретов. Писатель принимает лишь шифровальщика — другого
+ * пути на диск у токена нет. Открытый `token.json` прежней раскладки ядро не читает: это
+ * состояние `unsealed`, и выход из него — `gc seal`.
  */
 
-import { chmod, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { profilesHome } from './env.js';
@@ -38,14 +43,37 @@ export interface StoredToken {
   readonly obtained_at?: number;
 }
 
+/** Шифровальщик токена: писатель профиля другого пути на диск не знает (D-24). */
+export interface TokenSealer {
+  /** Получатель (открытый ключ), для которого шифруется, — уходит в метаданные. */
+  readonly recipient: string;
+  seal(plain: string): Promise<string>;
+}
+
+/** Что лежит рядом с шифротекстом: без секретов — для статуса и для разбора отказов. */
+export interface TokenMeta {
+  readonly scope?: string;
+  /** Когда получен refresh-токен: у приложения в Testing Google рубит его через 7 дней. */
+  readonly obtained_at: number;
+  /** Кому зашифрован: совпал с ключом в файле ключа — отказ значит «касания не было». */
+  readonly recipient: string;
+  readonly sealed_at: number;
+}
+
+const SEALED_FILE = 'token.age';
+const META_FILE = 'token.meta.json';
+/** Прежняя раскладка: открытый токен. Ядро его не читает — только `gc seal`, чтобы отозвать. */
+const PLAIN_FILE = 'token.json';
+const IDENTITY_FILE = 'se-identity.txt';
+
 /** То, что видит панель и агент: состояние без секретов (§13.5). */
 export interface ProfileStatus {
   readonly account: string;
-  readonly state: 'no_profile' | 'no_credentials' | 'needs_reauth' | 'connected';
+  readonly state: 'no_profile' | 'no_credentials' | 'needs_reauth' | 'unsealed' | 'connected';
   readonly hasCredentials: boolean;
+  /** Есть зашифрованный токен, которым G connect может открыть Google. */
   readonly hasToken: boolean;
   readonly scopes: readonly string[];
-  readonly expiresAt: string | null;
   /** Сколько дней живёт refresh-токен; `null`, если отметки нет (старый профиль). */
   readonly refreshAgeDays: number | null;
   /** Предупреждения человеку: пусто — значит всё в порядке. */
@@ -106,7 +134,8 @@ export async function listProfiles(): Promise<string[]> {
         const path = join(profilesRoot(), dir.name);
         const hasAny =
           (await exists(join(path, 'credentials.json'))) ||
-          (await exists(join(path, 'token.json')));
+          (await exists(join(path, SEALED_FILE))) ||
+          (await exists(join(path, PLAIN_FILE)));
         return hasAny ? dir.name : null;
       }),
     );
@@ -146,53 +175,77 @@ export async function readOAuthClient(account: string = DEFAULT_ACCOUNT): Promis
   return { clientId, clientSecret, redirectUri };
 }
 
-export async function readToken(account: string = DEFAULT_ACCOUNT): Promise<StoredToken | null> {
-  return readJson<StoredToken>(join(profileDir(account), 'token.json'));
+/** Файл ключа анклава профиля: ссылка на ключ в Secure Enclave этого Mac (D-24). */
+export function identityPath(account: string = DEFAULT_ACCOUNT): string {
+  return join(profileDir(account), IDENTITY_FILE);
 }
 
-/** Пишет токен с правами 600 в каталог с правами 700. Каталог создаётся при нужде. */
-export async function writeToken(
-  token: StoredToken,
+/** Секрет — во временный файл 600 и переименованием на место: половины файла не бывает. */
+async function writeSecret(path: string, text: string): Promise<void> {
+  const draft = `${path}.part`;
+  await writeFile(draft, text, { mode: FILE_MODE, flag: 'w' });
+  await chmod(draft, FILE_MODE);
+  await rename(draft, path);
+}
+
+/**
+ * Записать refresh-токен — только через шифровальщика (правило `token.sealed-at-rest`).
+ * Шифротекст, в котором виден сам токен, на диск не ложится: последний ремень на случай,
+ * если «шифровальщик» вернул открытый текст.
+ */
+export async function writeSealedToken(
+  sealer: TokenSealer,
+  token: { readonly refresh_token: string; readonly scope?: string; readonly obtained_at?: number },
   account: string = DEFAULT_ACCOUNT,
-): Promise<void> {
-  // Отметка ставится только при появлении НОВОГО refresh-токена: обновление access
-  // возраст не сбрасывает, иначе предупреждение никогда бы не сработало.
-  const stamped: StoredToken =
-    token.refresh_token === undefined || token.obtained_at !== undefined
-      ? token
-      : { ...token, obtained_at: Date.now() };
-  token = stamped;
+): Promise<TokenMeta> {
+  const sealed = await sealer.seal(JSON.stringify({ refresh_token: token.refresh_token }));
+  if (sealed.includes(token.refresh_token)) {
+    throw gcError('internal', {
+      detail: 'Шифровальщик вернул открытый токен — на диск он не ляжет.',
+      cause: 'seal_returned_plaintext',
+    });
+  }
   const dir = profileDir(account);
   await mkdir(dir, { recursive: true, mode: DIR_MODE });
   await chmod(dir, DIR_MODE).catch(() => undefined);
-  const path = join(dir, 'token.json');
-  await writeFile(path, JSON.stringify(token, null, 2), { mode: FILE_MODE, flag: 'w' });
-  await chmod(path, FILE_MODE);
+  const now = Date.now();
+  const meta: TokenMeta = {
+    ...(token.scope === undefined ? {} : { scope: token.scope }),
+    obtained_at: token.obtained_at ?? now,
+    recipient: sealer.recipient,
+    sealed_at: now,
+  };
+  await writeSecret(join(dir, SEALED_FILE), sealed);
+  await writeSecret(join(dir, META_FILE), JSON.stringify(meta, null, 2));
+  return meta;
 }
 
-export async function profileStatus(account: string = DEFAULT_ACCOUNT): Promise<ProfileStatus> {
-  const dir = profileDir(account);
-  const hasDir = await exists(dir);
-  const hasCredentials = await exists(join(dir, 'credentials.json'));
-  const token = hasDir ? await readToken(account) : null;
-  const scopes = token?.scope === undefined ? [] : token.scope.split(/\s+/).filter(Boolean);
-  const expiresAt =
-    token?.expiry_date === undefined ? null : new Date(token.expiry_date).toISOString();
+export function readTokenMeta(account: string = DEFAULT_ACCOUNT): Promise<TokenMeta | null> {
+  return readJson<TokenMeta>(join(profileDir(account), META_FILE));
+}
 
-  // Отметки может не быть — профиль записан до её появления. Тогда берём время файла:
-  // приблизительно, зато предупреждение работает и для уже существующих токенов, а не
-  // только для будущих. Точность здесь не нужна: вопрос «шестой день или нет».
-  let obtainedAt = token?.obtained_at;
-  if (obtainedAt === undefined && token !== null) {
-    try {
-      obtainedAt = (await stat(join(dir, 'token.json'))).mtimeMs;
-    } catch {
-      obtainedAt = undefined;
-    }
-  }
-  const refreshAgeDays =
-    obtainedAt === undefined ? null : Math.floor((Date.now() - obtainedAt) / 86_400_000);
+/** Шифротекст и метаданные; нет любого — `null`: зашифрованного токена нет. */
+export async function readSealedToken(
+  account: string = DEFAULT_ACCOUNT,
+): Promise<{ readonly sealed: string; readonly meta: TokenMeta } | null> {
+  const meta = await readTokenMeta(account);
+  const sealed = await readFile(join(profileDir(account), SEALED_FILE), 'utf8').catch(() => null);
+  return meta === null || sealed === null ? null : { sealed, meta };
+}
 
+/** Открытый токен прежней раскладки — только для `gc seal`: отозвать старый вход. */
+export function readPlaintextToken(account: string = DEFAULT_ACCOUNT): Promise<StoredToken | null> {
+  return readJson<StoredToken>(join(profileDir(account), PLAIN_FILE));
+}
+
+export async function removePlaintextToken(account: string = DEFAULT_ACCOUNT): Promise<void> {
+  await rm(join(profileDir(account), PLAIN_FILE), { force: true });
+}
+
+const DAY_MS = 86_400_000;
+
+/** Предупреждения человеку о доступе: срок входа и открытый файл. */
+function accessWarnings(refreshAgeDays: number | null, plaintext: boolean): string[] {
   const warnings: string[] = [];
   // 7 дней — предел Google для приложения в статусе Testing; предупреждаем на шестой,
   // чтобы «перестало работать» не случилось посреди работы.
@@ -203,24 +256,44 @@ export async function profileStatus(account: string = DEFAULT_ACCOUNT): Promise<
         'приложение в Cloud Console, чтобы ограничение снялось.',
     );
   }
+  if (plaintext) {
+    warnings.push(
+      'Токен Google лежит открытым файлом token.json — его читает любая программа под этим ' +
+        'пользователем. G connect его не берёт: владелец запускает npm run gc -- seal.',
+    );
+  }
+  return warnings;
+}
+
+export async function profileStatus(account: string = DEFAULT_ACCOUNT): Promise<ProfileStatus> {
+  const dir = profileDir(account);
+  const hasDir = await exists(dir);
+  const hasCredentials = await exists(join(dir, 'credentials.json'));
+  const meta = hasDir ? await readTokenMeta(account) : null;
+  const sealed = meta !== null && (await exists(join(dir, SEALED_FILE)));
+  const plaintext = hasDir && (await exists(join(dir, PLAIN_FILE)));
+  const scopes = meta?.scope === undefined ? [] : meta.scope.split(/\s+/).filter(Boolean);
+  const refreshAgeDays =
+    meta === null ? null : Math.floor((Date.now() - meta.obtained_at) / DAY_MS);
 
   const state: ProfileStatus['state'] = !hasDir
     ? 'no_profile'
     : !hasCredentials
       ? 'no_credentials'
-      : token === null || token.refresh_token === undefined
-        ? 'needs_reauth'
-        : 'connected';
+      : sealed
+        ? 'connected'
+        : plaintext
+          ? 'unsealed'
+          : 'needs_reauth';
 
   return {
     account,
     state,
     hasCredentials,
-    hasToken: token !== null,
+    hasToken: sealed,
     scopes,
-    expiresAt,
     refreshAgeDays,
-    warnings,
+    warnings: accessWarnings(refreshAgeDays, plaintext),
   };
 }
 
@@ -250,6 +323,14 @@ export async function requireProfile(account: string = DEFAULT_ACCOUNT): Promise
     throw gcError('auth_expired', {
       detail: `В профиле «${account}» нет действующего refresh-токена — нужен повторный вход.`,
       cause: 'no_refresh_token',
+    });
+  }
+  if (status.state === 'unsealed') {
+    throw gcError('token_unsealed', {
+      detail:
+        `Токен профиля «${account}» лежит открытым файлом token.json, и G connect его не берёт ` +
+        '(D-24). Владелец запускает в терминале: npm run gc -- seal — он зашифрует вход ключом ' +
+        'анклава и отзовёт старый.',
     });
   }
   return status;

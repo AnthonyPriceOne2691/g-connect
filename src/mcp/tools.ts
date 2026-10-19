@@ -39,6 +39,7 @@ import {
 import { applyInput, operationOf } from './apply-schema.js';
 import { parseToolInput } from './boundary.js';
 import { gcGrant, grantSummary } from './grant-tool.js';
+import { gcUnlock, googleSummary } from './unlock-tool.js';
 import { targetArg } from './target-arg.js';
 
 /** Общий разбор цели: реестр + ссылка. Здесь же решается, можно ли писать. */
@@ -114,7 +115,10 @@ export const gcTargets: ToolDefinition = {
       // Право проекта (D-23) — рядом с правами целей: без него агент узнавал бы о нём по
       // отказу записи, а человек не видел бы, до какого часа G connect открыт.
       grant: await grantSummary(deps),
+      // Доступ к Google (D-24) — рядом с правом: «закрыт» здесь, а не ошибкой первого запроса.
+      google: googleSummary(deps),
       note:
+        'Google открывается касанием на час (gc_unlock, после строки человеку). ' +
         'Право записи даёт реестр (правило write.allowlist) или разрешение проекта ' +
         '(write.grant): владелец открывает G connect касанием, gc_grant. Без него ' +
         'произвольная ссылка — только для чтения. Цель с конвертом (auto) пишется с первой ' +
@@ -454,10 +458,11 @@ export const TOOLS: readonly ToolDefinition[] = [
   gcApply,
   gcUndo,
   gcGrant,
+  gcUnlock,
 ];
 
-/** Ровно семь — требование §3 с поправкой D-23 (седьмой — право, а не документ). Тест сверяет. */
-export const EXPECTED_TOOL_COUNT = 7;
+/** Ровно восемь — §3 с поправками D-23 и D-24 (право записи и доступ к Google). Тест сверяет. */
+export const EXPECTED_TOOL_COUNT = 8;
 
 /**
  * Единый перехват на границе: наружу уходит payload ошибки, а не исключение и не

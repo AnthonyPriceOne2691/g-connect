@@ -9,7 +9,7 @@
 
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import fc from 'fast-check';
@@ -32,7 +32,12 @@ import {
   revokeGrant,
   type GrantKeys,
 } from '../src/core/grant/grants.js';
-import { agentKeyName, keyNameKey, secretiveKeys } from '../src/core/grant/secretive.js';
+import {
+  SECRETIVE_SOCKET,
+  agentKeyName,
+  keyNameKey,
+  secretiveKeys,
+} from '../src/core/grant/secretive.js';
 import { GcError } from '../src/core/errors.js';
 import { KEYGEN, fileKeys, makeKey, type SoftKey } from './fixtures/grant-keys.js';
 
@@ -293,7 +298,11 @@ describe('ключ из агента (путь Secretive на настоящем
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
     }
-    execFileSync('/usr/bin/ssh-add', ['-q', owner.file], { env: { SSH_AUTH_SOCK: socket } });
+    // Первым в агенте — ключ с ТЕМ ЖЕ именем, но без метки Secretive: его брать нельзя.
+    const impostor = makeKey(keysDir, 'impostor', 'G connect');
+    for (const key of [impostor, owner]) {
+      execFileSync('/usr/bin/ssh-add', ['-q', key.file], { env: { SSH_AUTH_SOCK: socket } });
+    }
   });
 
   afterAll(() => {
@@ -305,7 +314,13 @@ describe('ключ из агента (путь Secretive на настоящем
       'irreversible',
     );
     expect(agentKeyName('ssh-ed25519 AAAA evil@elsewhere')).toBeUndefined();
-    expect(keyNameKey('G connect')).toBe(keyNameKey('g-connect'));
+    expect(agentKeyName('  ecdsa  AAAA  G connect@secretive.host')).toBe('G connect');
+    expect(agentKeyName('ecdsa AAAA @secretive.host')).toBeUndefined();
+    expect(keyNameKey('  G_connect  key ')).toBe('g-connect-key');
+    // Сокет — контейнер Secretive, а не SSH_AUTH_SOCK сессии: свой агент подписал бы без пальца.
+    expect(SECRETIVE_SOCKET).toBe(
+      join(homedir(), 'Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh'),
+    );
   });
 
   it('агент отдаёт ключ по имени, подписывает — разрешение проверяется ключом агента', async () => {
@@ -316,6 +331,12 @@ describe('ключ из агента (путь Secretive на настоящем
       state: 'granted',
       grant,
     });
+  });
+
+  it('подпись ключом, которого у агента нет, — «касания не было», а не пустая подпись', async () => {
+    expect(
+      await secretiveKeys('g-connect', socket).sign('текст', stranger.pub, 5_000),
+    ).toBeUndefined();
   });
 
   it('ключа с таким именем у агента нет — grant_key_missing, а не чужой ключ', async () => {

@@ -12,7 +12,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { ERROR_CATALOG, type ErrorCode } from '../src/core/error-catalog.js';
 import { gcError } from '../src/core/errors.js';
-import { profileDir, profileStatus, readToken, writeToken } from '../src/core/profiles.js';
+import {
+  profileDir,
+  profileStatus,
+  readTokenMeta,
+  writeSealedToken,
+} from '../src/core/profiles.js';
+import { fakeSealer } from './fixtures/sealing.js';
 import { withRetry } from '../src/core/retry.js';
 import { isSilent, needsClarification, resolveColumn } from '../src/core/resolver.js';
 import { buildSheetData, buildSheetMap } from '../src/core/sheets/map.js';
@@ -399,17 +405,16 @@ describe('инварианты профилей', () => {
     else process.env['GCONNECT_HOME'] = original;
   });
 
-  it('round-trip токена и права 600 — при любом имени аккаунта и любых scopes', async () => {
+  it('round-trip метаданных и права 600 — при любом имени аккаунта и любых scopes', async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.stringMatching(/^[a-z][a-z0-9-]{0,15}$/),
         fc.uniqueArray(fc.stringMatching(/^[a-z.]{3,12}$/), { minLength: 1, maxLength: 4 }),
         async (account, scopeWords) => {
           const scope = scopeWords.map((w) => `https://www.googleapis.com/auth/${w}`).join(' ');
-          await writeToken({ access_token: 'a', refresh_token: 'r', scope }, account);
-          const back = await readToken(account);
-          expect(back?.scope).toBe(scope);
-          expect((await stat(join(profileDir(account), 'token.json'))).mode & 0o777).toBe(0o600);
+          await writeSealedToken(fakeSealer(), { refresh_token: 'r', scope }, account);
+          expect((await readTokenMeta(account))?.scope).toBe(scope);
+          expect((await stat(join(profileDir(account), 'token.age'))).mode & 0o777).toBe(0o600);
 
           const status = await profileStatus(account);
           expect(status.scopes).toEqual(
@@ -425,25 +430,38 @@ describe('инварианты профилей', () => {
 
   it('состояние профиля определено всегда: любая комбинация файлов даёт валидный state', async () => {
     await fc.assert(
-      fc.asyncProperty(fc.boolean(), fc.boolean(), fc.boolean(), async (dir, creds, token) => {
-        const account = `a${Math.random().toString(36).slice(2, 8)}`;
-        if (dir) await mkdir(profileDir(account), { recursive: true });
-        if (dir && creds) {
-          await writeFile(
-            join(profileDir(account), 'credentials.json'),
-            JSON.stringify({ web: { client_id: 'i', client_secret: 's' } }),
-          );
-        }
-        if (dir && token) await writeToken({ access_token: 'a', refresh_token: 'r' }, account);
+      fc.asyncProperty(
+        fc.boolean(),
+        fc.boolean(),
+        fc.boolean(),
+        fc.boolean(),
+        async (dir, creds, token, plain) => {
+          const account = `a${Math.random().toString(36).slice(2, 8)}`;
+          if (dir) await mkdir(profileDir(account), { recursive: true });
+          if (dir && creds) {
+            await writeFile(
+              join(profileDir(account), 'credentials.json'),
+              JSON.stringify({ web: { client_id: 'i', client_secret: 's' } }),
+            );
+          }
+          if (dir && token) await writeSealedToken(fakeSealer(), { refresh_token: 'r' }, account);
+          if (dir && plain) await writeFile(join(profileDir(account), 'token.json'), '{}');
 
-        const status = await profileStatus(account);
-        expect(['no_profile', 'no_credentials', 'needs_reauth', 'connected']).toContain(
-          status.state,
-        );
-        if (status.state === 'connected') {
-          expect(status.hasCredentials && status.hasToken).toBe(true);
-        }
-      }),
+          const status = await profileStatus(account);
+          expect([
+            'no_profile',
+            'no_credentials',
+            'needs_reauth',
+            'unsealed',
+            'connected',
+          ]).toContain(status.state);
+          if (status.state === 'connected') {
+            expect(status.hasCredentials && status.hasToken).toBe(true);
+          }
+          // Открытый файл рядом с шифротекстом не прячется: предупреждение есть всегда.
+          if (dir && plain) expect(status.warnings.join(' ')).toContain('открытым файлом');
+        },
+      ),
       { numRuns: 30 },
     );
   });

@@ -52,12 +52,21 @@ function harness() {
 const deps = (): ToolDeps => harness().deps;
 
 describe('обвязка: тесты говорят с тем же сервером, что и клиент', () => {
-  it('рукопожатие отдаёт семь инструментов (седьмой — gc_grant, D-23) и правила', async () => {
+  it('рукопожатие отдаёт восемь инструментов (gc_grant — D-23, gc_unlock — D-24) и правила', async () => {
     const session = await protocolSession(deps);
     try {
       const { tools } = await session.client.listTools();
       expect(tools.map((t) => t.name).sort()).toEqual(
-        ['gc_apply', 'gc_grant', 'gc_read', 'gc_scan', 'gc_search', 'gc_targets', 'gc_undo'].sort(),
+        [
+          'gc_apply',
+          'gc_grant',
+          'gc_read',
+          'gc_scan',
+          'gc_search',
+          'gc_targets',
+          'gc_undo',
+          'gc_unlock',
+        ].sort(),
       );
       expect(session.client.getInstructions() ?? '').toContain('конверт');
     } finally {
@@ -100,15 +109,23 @@ describe('D-22: модель видит прежнюю схему — серве
     await Promise.all([legacy.connect(serverSide), client.connect(clientSide)]);
     const session = await protocolSession(deps);
     try {
-      type Listed = { name: string; inputSchema: { additionalProperties?: unknown } }[];
+      type Listed = {
+        name: string;
+        inputSchema: { additionalProperties?: unknown; properties?: object };
+      }[];
       const before = JSON.parse(JSON.stringify((await client.listTools()).tools)) as Listed;
       const after = JSON.parse(JSON.stringify((await session.client.listTools()).tools)) as Listed;
-      // Единственная разница, и она честнее прежнего: пустую схему (`gc_targets`) McpServer
-      // строил другой версией zod, без `additionalProperties: false`, — у остальных пяти он
-      // был и раньше. Незнакомое поле теперь отклоняется и здесь, и схема это говорит.
-      const targets = before.find((tool) => tool.name === 'gc_targets')!;
-      expect(targets.inputSchema.additionalProperties).toBeUndefined();
-      targets.inputSchema.additionalProperties = false;
+      // Единственная разница, и она честнее прежнего: пустые схемы (`gc_targets`, `gc_unlock`)
+      // McpServer строил другой версией zod, без `additionalProperties: false`, — у остальных
+      // он был и раньше. Незнакомое поле теперь отклоняется и здесь, и схема это говорит.
+      const empty = before.filter(
+        (tool) => Object.keys(tool.inputSchema.properties ?? {}).length === 0,
+      );
+      expect(empty.map((tool) => tool.name)).toEqual(['gc_targets', 'gc_unlock']);
+      for (const tool of empty) {
+        expect(tool.inputSchema.additionalProperties).toBeUndefined();
+        tool.inputSchema.additionalProperties = false;
+      }
       expect(after).toEqual(before);
     } finally {
       await client.close();

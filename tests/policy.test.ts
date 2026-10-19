@@ -22,10 +22,12 @@ import { DEFAULT_MAX_ROWS } from '../src/core/google/sheets.js';
 import { parseOperation, OPERATION_NAMES } from '../src/core/ops.js';
 import { asData, limitOf, policyRules, policyText, ruleById } from '../src/core/policy.js';
 import { ENVELOPE_OPS, NAMED_CONFIRM_OPS, parseEnvelope } from '../src/core/envelope.js';
-import { profileStatus, writeToken } from '../src/core/profiles.js';
+import { profileStatus, writeSealedToken } from '../src/core/profiles.js';
+import { fakeSealer } from './fixtures/sealing.js';
 import { buildSheetData } from '../src/core/sheets/map.js';
 import type { WriteRecord } from '../src/core/journal.js';
 import { docProbes } from './fixtures/doc-probes.js';
+import { tokenProbes } from './fixtures/token-probes.js';
 import { FakeDocsClient, buildDoc, p as docParagraph } from './fixtures/doc.js';
 import { readDoc } from '../src/mcp/read-doc.js';
 import { appendRow, upsertRow } from '../src/core/sheets/rows.js';
@@ -73,6 +75,7 @@ const GRANTED: GrantState = {
 /** Проба на правило: должна ЗАВЕРШИТЬСЯ УСПЕШНО ровно тогда, когда правило работает. */
 const probes: Record<string, () => Promise<void>> = {
   ...docProbes,
+  ...tokenProbes,
   // D-22: опечатка в НЕОБЯЗАТЕЛЬНОМ поле раньше исчезала молча — вставка уходила в конец
   // таба вместо раздела. Теперь отказ с названием поля и подсказкой, до всякой правки.
   'input.no-silent-drop': async () => {
@@ -663,42 +666,6 @@ const probes: Record<string, () => Promise<void>> = {
     expect(journalled).toHaveLength(1);
   },
 
-  'auth.testing-mode-warning': async () => {
-    await writeToken(
-      {
-        access_token: 'a',
-        refresh_token: 'r',
-        scope: 'x',
-        obtained_at: Date.now() - 7 * 86_400_000,
-      },
-      'stale',
-    );
-    const status = await profileStatus('stale');
-    expect(status.refreshAgeDays).toBeGreaterThanOrEqual(6);
-    expect(status.warnings.join(' ')).toContain('Testing');
-    expect(status.warnings.join(' ')).toContain('войди заново');
-
-    // Свежий профиль молчит: предупреждение без повода — шум.
-    await writeToken({ access_token: 'a', refresh_token: 'r', scope: 'x' }, 'fresh');
-    expect((await profileStatus('fresh')).warnings).toHaveLength(0);
-
-    // Профиль БЕЗ отметки (записан до её появления) не остаётся без присмотра:
-    // возраст берётся по времени файла — иначе защита не работает там, где нужна.
-    const { writeFile } = await import('node:fs/promises');
-    const { profileDir } = await import('../src/core/profiles.js');
-    const { mkdir, utimes } = await import('node:fs/promises');
-    await mkdir(profileDir('legacy'), { recursive: true });
-    await writeFile(
-      join(profileDir('legacy'), 'token.json'),
-      JSON.stringify({ access_token: 'a', refresh_token: 'r', scope: 'x' }),
-    );
-    const eightDaysAgo = new Date(Date.now() - 8 * 86_400_000);
-    await utimes(join(profileDir('legacy'), 'token.json'), eightDaysAgo, eightDaysAgo);
-    const legacy = await profileStatus('legacy');
-    expect(legacy.refreshAgeDays).toBeGreaterThanOrEqual(7);
-    expect(legacy.warnings.join(' ')).toContain('Testing');
-  },
-
   'undo.recency-minutes': async () => {
     const maxMinutes = limitOf('undo.recency-minutes', -1);
     expect(maxMinutes).toBeGreaterThan(0);
@@ -752,12 +719,12 @@ const probes: Record<string, () => Promise<void>> = {
   },
 
   'secrets.never-leave-profile': async () => {
-    await writeToken({ access_token: 'a', refresh_token: 'r', scope: 'x' }, 'probe');
+    await writeSealedToken(fakeSealer(), { refresh_token: 'r-секрет', scope: 'x' }, 'probe');
     const status = await profileStatus('probe');
     const json = JSON.stringify(status);
     expect(json).not.toContain('refresh_token');
     expect(json).not.toContain('access_token');
-    expect(json).not.toContain('"r"');
+    expect(json).not.toContain('r-секрет');
 
     // И журнал секретов не принимает — падает, а не «пишет на всякий случай».
     await expect(
@@ -853,8 +820,9 @@ describe('правила как механизм (D-12)', () => {
     }
     // 40-е — write.named-confirm-bound-to-plan (поправка D-20), 41-е — docs.objects-not-destroyed,
     // 42-е — docs.suggestions-not-edited, 43-е — input.no-silent-drop (D-22); 44–46 —
-    // write.grant, grant.signature, undo.own-project (D-23, разрешение проекта касанием).
-    expect(policyRules()).toHaveLength(46);
+    // write.grant, grant.signature, undo.own-project (D-23, разрешение проекта касанием);
+    // 47–48 — token.sealed-at-rest, google.unlock-only-tool (D-24, токен под пальцем).
+    expect(policyRules()).toHaveLength(48);
   });
 
   it('rules.md называет ровно списки ядра: конверт и подтверждение названием', () => {

@@ -64,3 +64,15 @@ export function grantKeyName(): string {
 export function defaultAccount(): string {
   return read('GCONNECT_ACCOUNT') ?? 'default';
 }
+
+/**
+ * Окружение этого процесса — для команды, которую человек запускает через `gc run` (D-24):
+ * ей нужно его окружение плюс access-токен. Отдаётся копия: ребёнок её не правит.
+ */
+export function inheritedEnv(): Readonly<Record<string, string>> {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+}

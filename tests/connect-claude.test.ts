@@ -75,6 +75,9 @@ describe('connect_claude.sh — подключение ко всем проек�
     expect((s as unknown as { model: string }).model).toBe('opus');
     const memo = await readFile(join(home, '.claude', 'CLAUDE.md'), 'utf8');
     expect(memo).toContain('открой G connect');
+    // D-24: памятка ведёт к Google через инструменты и называет строку перед окном.
+    expect(memo).toContain('gc_unlock');
+    expect(memo).toContain('G connect\n  попросит палец');
     expect(await readdir(join(home, '.claude', 'backups'))).toHaveLength(1);
   });
 

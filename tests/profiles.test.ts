@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -12,10 +12,15 @@ import {
   profileDir,
   profileStatus,
   readOAuthClient,
-  readToken,
+  readSealedToken,
+  readTokenMeta,
   requireProfile,
-  writeToken,
+  writeSealedToken,
+  type TokenSealer,
 } from '../src/core/profiles.js';
+import { profileSealer } from '../src/core/token/sealing.js';
+import { ageToolsIn } from '../src/core/token/age.js';
+import { AGE_DIR, fakeSealer, realAgeProfile } from './fixtures/sealing.js';
 
 let home: string;
 const original = process.env['GCONNECT_HOME'];
@@ -110,37 +115,73 @@ describe('профили', () => {
     await expect(requireProfile()).rejects.toMatchObject({ payload: { code: 'auth_expired' } });
   });
 
-  it('токен без refresh_token тоже needs_reauth: access истечёт и обновить будет нечем', async () => {
+  it('открытый token.json прежней раскладки → unsealed: ядро его не берёт, выход — gc seal', async () => {
     await writeCredentials();
-    await writeToken({ access_token: 'a', scope: 'https://www.googleapis.com/auth/spreadsheets' });
-    expect((await profileStatus()).state).toBe('needs_reauth');
+    await writeFile(join(profileDir(), 'token.json'), JSON.stringify({ refresh_token: 'r' }));
+    const status = await profileStatus();
+    expect(status.state).toBe('unsealed');
+    expect(status.hasToken).toBe(false);
+    expect(status.warnings.join(' ')).toContain('gc -- seal');
+    await expect(requireProfile()).rejects.toMatchObject({
+      payload: { code: 'token_unsealed', action: { kind: 'seal_token' } },
+    });
   });
 
-  it('полный профиль → connected, scopes и срок видны без выдачи токена', async () => {
+  it('зашифрованный токен → connected, scopes видны без выдачи токена; срока access нет', async () => {
     await writeCredentials();
-    const expiry = Date.UTC(2026, 8, 1, 12, 0, 0);
-    await writeToken({
-      access_token: 'a',
-      refresh_token: 'r',
+    await writeSealedToken(fakeSealer(), {
+      refresh_token: 'r-секрет',
       scope: 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive',
-      expiry_date: expiry,
     });
     const status = await profileStatus();
     expect(status.state).toBe('connected');
     expect(status.scopes).toHaveLength(2);
-    expect(status.expiresAt).toBe(new Date(expiry).toISOString());
-    // §13.5: наружу уходит статус, а не секреты.
-    expect(JSON.stringify(status)).not.toContain('refresh_token');
-    expect(JSON.stringify(status)).not.toContain('"r"');
+    // §13.5: наружу уходит статус, а не секреты; access-токен на диске не живёт вовсе.
+    expect(JSON.stringify(status)).not.toContain('r-секрет');
+    expect(status).not.toHaveProperty('expiresAt');
   });
 
-  it('токен пишется с правами 600 в каталог 700', async () => {
-    await writeToken({ access_token: 'a', refresh_token: 'r' });
-    const fileMode = (await stat(join(profileDir(), 'token.json'))).mode & 0o777;
-    const dirMode = (await stat(profileDir())).mode & 0o777;
-    expect(fileMode).toBe(0o600);
-    expect(dirMode).toBe(0o700);
+  it('шифротекст и метаданные пишутся с правами 600 в каталог 700', async () => {
+    await writeSealedToken(fakeSealer(), { refresh_token: 'r' });
+    for (const file of ['token.age', 'token.meta.json']) {
+      expect((await stat(join(profileDir(), file))).mode & 0o777).toBe(0o600);
+    }
+    expect((await stat(profileDir())).mode & 0o777).toBe(0o700);
   });
+
+  it('шифровальщик, вернувший открытый текст, токен на диск не кладёт (token.sealed-at-rest)', async () => {
+    const leaky: TokenSealer = { recipient: 'age1leak', seal: (plain) => Promise.resolve(plain) };
+    await expect(writeSealedToken(leaky, { refresh_token: '1//утечка' })).rejects.toMatchObject({
+      payload: { code: 'internal', cause: 'seal_returned_plaintext' },
+    });
+    expect(await readSealedToken()).toBeNull();
+  });
+
+  it('нет ключа анклава у профиля — token_unsealed с действием «gc seal», а не пустой получатель', async () => {
+    await expect(profileSealer(ageToolsIn('/opt/homebrew/bin'))).rejects.toMatchObject({
+      payload: {
+        code: 'token_unsealed',
+        cause: 'no_identity',
+        detail: expect.stringContaining('gc -- seal'),
+      },
+    });
+  });
+
+  it.skipIf(AGE_DIR === undefined)(
+    'U1: строки refresh-токена нет ни в одном файле профиля; круг — ключом профиля (настоящий age)',
+    async () => {
+      await writeCredentials();
+      const { sealer, unsealer } = await realAgeProfile();
+      const meta = await writeSealedToken(sealer, { refresh_token: '1//секрет-U1' });
+      expect(meta.recipient).toBe(sealer.recipient);
+      for (const file of await readdir(profileDir())) {
+        expect(await readFile(join(profileDir(), file), 'utf8')).not.toContain('секрет-U1');
+      }
+      const stored = await readSealedToken();
+      expect(stored?.meta).toEqual(await readTokenMeta());
+      expect(await unsealer.unseal(stored?.sealed ?? '', meta)).toContain('1//секрет-U1');
+    },
+  );
 
   it('читает и web, и installed; redirect_uris подхватывается', async () => {
     await writeCredentials();
@@ -181,7 +222,7 @@ describe('профили', () => {
 
   it('missingScopes называет ровно недостающие права', async () => {
     await writeCredentials();
-    await writeToken({
+    await writeSealedToken(fakeSealer(), {
       refresh_token: 'r',
       scope: 'https://www.googleapis.com/auth/spreadsheets',
     });
@@ -194,7 +235,8 @@ describe('профили', () => {
     ).toEqual(['https://www.googleapis.com/auth/documents']);
   });
 
-  it('токена нет → readToken отдаёт null, а не бросает', async () => {
-    expect(await readToken()).toBeNull();
+  it('токена нет → readSealedToken и readTokenMeta отдают null, а не бросают', async () => {
+    expect(await readSealedToken()).toBeNull();
+    expect(await readTokenMeta()).toBeNull();
   });
 });
