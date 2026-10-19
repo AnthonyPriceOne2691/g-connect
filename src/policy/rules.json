@@ -220,6 +220,20 @@
       "probe": "formatCells пишет только через batchUpdate: значения ячеек до и после совпадают, values-API не зовётся ни разу"
     },
     {
+      "id": "write.format-rows-explicit",
+      "title": "Строки правки вида — ровно одним способом: where, allRows: true или rows {from, to}; ни одного, два сразу или пустое условие — отказ, а не все строки (D-26, Q13)",
+      "kind": "deny",
+      "enforced_in": "src/core/sheets/row-selection.ts (rowSelectionOf) + src/core/ops.ts (parseOperation)",
+      "probe": "formatCells без способа, с двумя способами и с where: {} → bad_request до обращения к Google; allRows: true → план по всем строкам данных листа"
+    },
+    {
+      "id": "write.append-inherits-format",
+      "title": "Дописанная строка берёт вид строки над ней: копия формата — до значений, превью её называет (D-26, Q14)",
+      "kind": "invariant",
+      "enforced_in": "src/core/sheets/rows.ts (appendRow, layoutFromAbove, finish)",
+      "probe": "appendRow под оформленной строкой: первым запросом — copyPaste с paste: format из строки над новой, потом значения; заметка превью называет копию"
+    },
+    {
       "id": "write.replace-preview-lists-cells",
       "title": "Превью замены перечисляет ячейки, а не их число",
       "kind": "invariant",
