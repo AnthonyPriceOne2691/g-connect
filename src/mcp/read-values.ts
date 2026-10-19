@@ -9,7 +9,7 @@
  * число, а не пометку, урок L22).
  */
 
-import { asData, limitOf } from '../core/policy.js';
+import { asData, limitOf, type UntrustedData } from '../core/policy.js';
 import { PARTIAL_READ_WARNING, windowRecords } from '../core/sheets/map.js';
 import type {
   Cell,
@@ -24,19 +24,46 @@ export interface ValuesRequest {
   readonly fromRow?: number | undefined;
   /** Вид ячеек по строкам (D-26, Q11) — по умолчанию нет: ответ не растёт без просьбы. */
   readonly withFormat?: boolean | undefined;
+  /** Заметки ячеек по строкам (Q25) — тоже только по просьбе. */
+  readonly withNotes?: boolean | undefined;
 }
 
-/** Явный вид ячеек строки по именам колонок; ячейка без явного вида в запись не попадает. */
-const rowFormats = (
+/** Поле ячеек строки по именам колонок; ячейка без него в запись не попадает. */
+const byColumn = <T>(
   row: readonly Cell[],
   columns: readonly ColumnProfile[],
-): Record<string, CellFormat> =>
+  pick: (cell: Cell | undefined) => T | undefined,
+): Record<string, T> =>
   Object.fromEntries(
     columns.flatMap((column) => {
-      const format = row[column.index]?.format;
-      return format === undefined ? [] : [[column.name, format] as const];
+      const value = pick(row[column.index]);
+      return value === undefined ? [] : [[column.name, value] as const];
     }),
   );
+
+/** Слой ячеек окна: по записи на строку, ключ — имя колонки; строка без значений слоя — `{}`. */
+type Layer<T> = UntrustedData<Record<string, T>[]>;
+
+/**
+ * Вид (Q11) и заметки (Q25) — строка в строку с `rows`, каждый по своей просьбе. Тоже данные:
+ * имя шрифта, шаблон формата числа и текст заметки пишет в таблицу кто угодно.
+ */
+function cellLayers(
+  rows: readonly (readonly Cell[])[],
+  columns: readonly ColumnProfile[],
+  request: ValuesRequest,
+  origin: string,
+): { formats?: Layer<CellFormat>; notes?: Layer<string> } {
+  const layer = <T>(pick: (cell: Cell | undefined) => T | undefined): Layer<T> =>
+    asData(
+      origin,
+      rows.map((row) => byColumn(row, columns, pick)),
+    );
+  return {
+    ...(request.withFormat === true ? { formats: layer((cell) => cell?.format) } : {}),
+    ...(request.withNotes === true ? { notes: layer((cell) => cell?.note) } : {}),
+  };
+}
 
 export async function readValues(
   client: SheetsClient,
@@ -70,18 +97,11 @@ export async function readValues(
     sheetRows: window.gridRows,
     // Содержимое — ДАННЫЕ с пометкой источника (правило content.is-data).
     rows: asData(origin, records),
-    // Вид — строка в строку с `rows` (Q11: найти дописанные строки, что выглядят иначе):
-    // `windowRecords` срезает только пустой хвост, и первые `records.length` строк окна — ровно
-    // строки ответа, а оформленный пустой хвост не попадает ни туда, ни сюда. Тоже данные: имя
-    // шрифта и шаблон формата числа пишет в документ кто угодно.
-    ...(request.withFormat === true
-      ? {
-          formats: asData(
-            origin,
-            window.rows.slice(0, records.length).map((row) => rowFormats(row, map.columns)),
-          ),
-        }
-      : {}),
+    // Вид и заметки — строка в строку с `rows` (Q11: найти дописанные строки, что выглядят
+    // иначе; Q25: прочесть заметки строк): `windowRecords` срезает только пустой хвост, и первые
+    // `records.length` строк окна — ровно строки ответа, а оформленный или с заметкой пустой
+    // хвост не попадает ни туда, ни сюда.
+    ...cellLayers(window.rows.slice(0, records.length), map.columns, request, origin),
     truncated,
     ...(truncated ? { nextFromRow: last + 1 } : {}),
     warnings,

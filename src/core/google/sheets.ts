@@ -62,14 +62,23 @@ function cellValue(cell: sheets_v4.Schema$CellData): CellValue {
   );
 }
 
+/**
+ * Заметка ячейки (Q23): `CellData.note` приходит в том же ответе `includeGridData`, отдельного
+ * запроса не нужно. Пустая и из одних пробелов — не заметка: правила в ней нет.
+ */
+const noteOf = (note: string | null | undefined): string | undefined =>
+  typeof note === 'string' && note.trim() !== '' ? note : undefined;
+
 function toCell(cell: sheets_v4.Schema$CellData): Cell {
   const formula = cell.userEnteredValue?.formulaValue;
   const value = cellValue(cell);
   const format = toFormat(cell);
+  const note = noteOf(cell.note);
   return {
     value,
     ...(formula === undefined || formula === null ? {} : { formula }),
     ...(format === undefined ? {} : { format }),
+    ...(note === undefined ? {} : { note }),
   };
 }
 
@@ -181,8 +190,9 @@ function definedOnly<T extends object>(value: Record<string, unknown>): T {
  * Сколько на листе того, чего откат не вернёт. Числа, а не признаки: человеку перед
  * удалением листа нужно «3 правила условного форматирования», а не «есть форматирование».
  *
- * Заметки к ячейкам здесь НЕ считаются, и это названная непокрытость: ядро их не читает
- * вовсе (`toCell` их не переносит), поэтому и обещать их подсчёт нельзя.
+ * Заметки к ячейкам здесь НЕ считаются, и это названная непокрытость: с Q23 ядро их читает
+ * (`toCell`), но откат их не пишет — лист или строки с заметками вернутся без них, а план
+ * удаления этого пока не называет.
  */
 function extrasOf(
   sheet: sheets_v4.Schema$Sheet,

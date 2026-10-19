@@ -4,6 +4,8 @@
  * (решение от 2026-09-01 в decisions.md).
  */
 
+import type { UntrustedData } from '../policy.js';
+
 export type CellValue = string | number | boolean | null;
 
 /**
@@ -54,6 +56,17 @@ export interface Cell {
   readonly formula?: string;
   /** Явно заданный вид; отсутствует, когда ничего не задано. */
   readonly format?: CellFormat;
+  /**
+   * Заметка ячейки (Q23) — непустая строка, как её отдал Google; без заметки поля нет. Пишет её
+   * кто угодно, кто правит таблицу, поэтому наружу она уходит данными (`content.is-data`).
+   */
+  readonly note?: string;
+}
+
+/** Заметка с адресом ячейки — для карты: «A1» и текст (Q24). */
+export interface CellNote {
+  readonly cell: string;
+  readonly note: string;
 }
 
 export interface GridRange {
@@ -166,6 +179,11 @@ export interface ColumnProfile {
    */
   readonly headerFormat?: CellFormat;
   readonly format?: CellFormat;
+  /**
+   * Заметка ячейки шапки (Q24) — часто правило заполнения: «Оценка в часах, если в днях —
+   * умножай на 8». Данными с источником, а не голым текстом: заметку пишет кто угодно.
+   */
+  readonly headerNote?: UntrustedData<string>;
 }
 
 export interface SheetMap {
@@ -186,6 +204,8 @@ export interface SheetMap {
   readonly otherSheets: readonly { readonly title: string; readonly rowCount: number }[];
   /** Строк в сетке листа — верхняя граница; карта строится по первым строкам (D-26). */
   readonly sheetRows?: number;
+  /** Заметки строк над шапкой с адресами (Q24), данными; заметок нет — поля нет. */
+  readonly notesAboveHeader?: UntrustedData<readonly CellNote[]>;
   /** Предупреждения: объединённые ячейки, вторая таблица на листе и т.п. */
   readonly warnings: readonly string[];
 }

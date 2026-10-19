@@ -39,6 +39,7 @@ export type {
 export { NO_CHANGE_NOTE } from './write-types.js';
 
 import { contextOf, finishWrite, writeCells, type Prepared } from './commit.js';
+import { withNoteHints } from './notes.js';
 import { assertBeforeValues } from './write-guards.js';
 
 export type { Prepared } from './commit.js';
@@ -48,7 +49,8 @@ export { formatRequest, finishWrite } from './commit.js';
  * Запись ячеек: тот же контур, что у геометрии, только без структурной части.
  *
  * Обёртка, а не копия: последовательность охранников живёт в `commit.ts` одна на все формы
- * правки. Имя `finish` сохранено, потому что им пользуются все ячеечные операции.
+ * правки. Имя `finish` сохранено, потому что им пользуются все ячеечные операции. Правило из
+ * заметки шапки задетой колонки — здесь же, в `notes` превью любой записи значений (Q26).
  */
 export const finish = (
   client: SheetsClient,
@@ -60,7 +62,7 @@ export const finish = (
   /** Запросы вида, которые уходят ДО значений: копия оформления дописанной строки (Q14). */
   layout: readonly SheetRequest[] = [],
 ): Promise<ApplyOutcome> =>
-  finishWrite(client, contextOf(map), changes, prepared, options, op, {
+  finishWrite(client, contextOf(map), changes, withNoteHints(prepared, map, changes), options, op, {
     // Ячеечная правка приносит своё применение и своё предусловие тем же способом, что
     // структурная: контур записи один, а формы правки различаются ровно этими двумя.
     apply: async (c) => {
