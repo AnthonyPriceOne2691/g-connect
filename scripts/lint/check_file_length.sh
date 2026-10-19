@@ -109,8 +109,16 @@ baseline_lookup() {
 # поставляет сам канон, — как продуктовый код. Ровно F14, только по другому пути.
 # И то же правило читает доктор (CONTOUR_RE): зеркало обязано совпадать, иначе
 # полная канонная раскладка обвиняет сама себя (замер: DEAD 1 на свежем стенде).
+#
+# ⚠ Принцип — «что приносит накат», а не перечень (`cqg@2.67`). Здесь стояло
+# `scripts/delivery_(check|metrics)\.py`: разрез `delivery@1.53` дал тринадцать
+# модулей, и одиннадцать сюда не попали — тот же рецидив, что `BREAKER_EXCLUDE`
+# закрыл префиксом ещё тогда. Поле Ally 18.10: маска длины `*.swift`, и доктор
+# звал модули Delivery DEAD «их не видит ни один гейт». Едущие файлы (§7.1 карты)
+# — тоже механика: копия `stack_selftest.py` у проекта судилась AST-гейтом.
+# Полноту держит `test_contour_population.py` — по манифесту payload'а.
 exclude_contour() {
-  grep -vE '^(scripts/lint/|scripts/delivery_(check|metrics)\.py$|scripts/okf_[a-z_]+\.py$|scripts/merge_guard\.sh$|delivery/|knowledge/|docs/canon/|([^/]+/)*(\.dependency-cruiser|eslint\.config)\.[cm]?js$)'
+  grep -vE '^(scripts/lint/|scripts/delivery_[a-z_]+\.py$|scripts/okf_[a-z_]+\.py$|scripts/merge_guard\.sh$|scripts/(check_irreversible_signature|sign_irreversible)\.sh$|(scripts/)?(stack_selftest|selftest_sizes|extract_payload)\.py$|delivery/|knowledge/|docs/canon/|([^/]+/)*(\.dependency-cruiser|eslint\.config)\.[cm]?js$)'
 }
 
 scanned=0

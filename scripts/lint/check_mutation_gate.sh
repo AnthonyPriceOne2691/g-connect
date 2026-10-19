@@ -67,7 +67,8 @@ fi
 
 not_judged() {
   printf '%s✗ мутационный гейт не просудил НИЧЕГО (причина выше) — это НЕ «мутанты убиты».\n' "$red"
-  printf 'Почини причину либо объяви роль неприменимой в %s с причиной.%s\n' "$NA" "$reset"
+  printf 'Почини причину либо объяви неприменимой в %s с причиной роль целиком\n' "$NA"
+  printf '("check_mutation_gate.sh") или одну TS-половину ("check_mutation_gate.sh:ts").%s\n' "$reset"
   [[ "$STRICT" == "0" ]] && { printf '%sWARNING (STRICT=0)%s\n' "$yellow" "$reset" >&2; exit 0; }
   exit 1
 }
@@ -92,6 +93,11 @@ not_judged() {
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/mutation_ts.sh"
+# shellcheck source=/dev/null
+. "$SCRIPT_DIR/mutation_shard.sh"
+
+# Сумма долей — отдельный шаг, ей не нужен ни инструмент, ни дифф (CQG §3.7).
+[[ -n "${MUTATION_SUM:-}" ]] && { ts_sum; exit $?; }
 
 if [[ ! -d "$REPO_ROOT/$PY_SRC" ]]; then
   # Python-каталога нет — но это ещё не значит «смотреть не на что». Прежде чем
@@ -102,11 +108,22 @@ if [[ ! -d "$REPO_ROOT/$PY_SRC" ]]; then
     ts_mutation
     exit $?
   fi
-  printf '%s⚠ mutation: нет ни %s, ни %s — мутационный гейт пропущен (§6).\n' \
+  # Не смотрел никуда — это «не просудил», а не пропуск (`cqg@2.64`): здесь стоял
+  # жёлтый `exit 0`, и TS-проект с опечаткой в LINT_TS_SRC проходил молча. Замер
+  # флота 18.10: этим путём не идёт ни один проект.
+  printf '%s⚠ mutation: нет ни %s, ни %s — гейт не смотрел никуда (§6).\n' \
     "$yellow" "$PY_SRC" "$TS_SRC"
-  printf 'Это НЕ «изменений нет»: гейт не смотрел никуда. Пакет проекта редко зовётся\n'
-  printf '`features` — задай LINT_PY_SRC/LINT_TS_SRC во ВСЕХ местах вызова, не только в CI.%s\n' "$reset"
-  exit 0
+  printf 'Пакет проекта редко зовётся `features` — задай LINT_PY_SRC/LINT_TS_SRC во ВСЕХ\n'
+  printf 'местах вызова, не только в CI.%s\n' "$reset"
+  not_judged
+fi
+
+# Доли умеет только TS-половина: без этой ветки матрица из N долей на fullstack-репо
+# N раз гнала бы ПОЛНЫЙ python-прогон, и каждая доля выдавала бы его за свою.
+if [[ -n "${MUTATION_SHARD:-}" ]]; then
+  printf '%s⚠ mutation: MUTATION_SHARD задан, а судится python — доли есть только у TS-половины%s\n' \
+    "$yellow" "$reset"
+  not_judged
 fi
 
 # shellcheck source=/dev/null

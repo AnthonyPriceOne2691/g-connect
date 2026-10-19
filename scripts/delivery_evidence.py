@@ -101,7 +101,7 @@ def check_assert_review(status: str, ctx: ActiveCtx, klass: str, phase: str,
     if klass in {"M", "L"} and phase in {"verify", "converge", "handoff"} and verify.is_file():
         vr = read(verify)
         reviewed = field(vr, "asserts_reviewed_by")
-        digest = re.search(r"(?im)^\s*asserts_without_example:\s*(\d+)\s*$", vr)
+        digest = re.search(r"(?im)^\s*asserts_without_example:\s*(\d+|unknown)\s*$", vr)
         if is_placeholder(reviewed):
             errors.append(
                 f"class {klass}: verify-report.md без asserts_reviewed_by "
@@ -115,6 +115,16 @@ def check_assert_review(status: str, ctx: ActiveCtx, klass: str, phase: str,
                     "asserts_reviewed_by: n/a без вставленного дайджеста "
                     "(нет строки 'asserts_without_example: N') — n/a надо "
                     "заслужить, а не заявить (§3.1d уровень 3)"
+                )
+            elif digest.group(1).lower() == "unknown":
+                # `cqg@2.68`: дайджест встретил тест-файл, которого не разбирает.
+                # Прежде этот случай падал в ветку «дайджеста нет» — отказ верный,
+                # диагноз чужой: дайджест вставлен, неизвестно число.
+                errors.append(
+                    "asserts_reviewed_by: n/a, а дайджест разобрал не все тест-файлы "
+                    "(asserts_without_example: unknown) — число непривязанных "
+                    "неизвестно; нужна подпись human:… at=… либо маски LINT_TEST_GLOB "
+                    "(§3.1d уровень 3)"
                 )
             elif int(digest.group(1)) > 0:
                 errors.append(

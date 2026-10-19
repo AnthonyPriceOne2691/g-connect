@@ -247,7 +247,9 @@ class DeploymentScreen:
             raw = json.loads(f.read_text(encoding="utf-8")) or {}
         except (OSError, ValueError) as exc:
             return {}, f"{self.CANON_DIR}/VENDORED.json не разобран ({exc})"
-        table = raw.get("sha256") or {}
+        # Обе формы значения: голый hex и `sha256:<hex>` (`cqg@2.69` — форма, которую
+        # не берут сканеры секретов; у флота старые записи живут до наката).
+        table = {k: str(v).removeprefix("sha256:") for k, v in (raw.get("sha256") or {}).items()}
         return table, "" if table else "VENDORED.json без раздела sha256"
 
     def _diverged_copies(self, name: str, body: bytes, adapted: dict) -> list[str]:

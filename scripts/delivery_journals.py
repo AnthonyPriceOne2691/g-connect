@@ -130,6 +130,14 @@ def check_escalation(status: str, ctx: ActiveCtx, phase: str,
                 )
 
 
+#: Чем запись называет причину отказа (§12.2a). Форма — признак того, что причина
+#: ЕСТЬ, а не того, что она верна, и глагол отказа с двоеточием или тире — такая же
+#: форма, как «потому что»: поле G connect 17.10 — «— отклонён: <причина>» гейт
+#: читал записью без причины (`delivery@2.05`). Пустое «отклонён:» причиной не стало.
+REASON_RE = re.compile(r"(?i)потому что|because|reason=|причина\s*:\s*\S"
+                       r"|(отклон\w*|rejected)\s*[:—–-]+\s*\S")
+
+
 def check_rejected_options(ctx: ActiveCtx, klass: str, phase: str,
                            errors: list[str], warnings: list[str]) -> None:
     """Отклонённые варианты оставляют след (§12.2a).
@@ -156,14 +164,15 @@ def check_rejected_options(ctx: ActiveCtx, klass: str, phase: str,
             entries = [
                 ln
                 for ln in list_entries(sec.group(1))
-                if not unfilled(ln)
-                and re.search(r"(?i)потому что|because|reason=", ln)
+                if not unfilled(ln) and REASON_RE.search(ln)
             ]
             if not entries:
                 msg_alt = (
                     "plan.md: 'Rejected alternatives' без заполненных записей "
-                    "с причиной (§12.2a) — законна и запись «рассматривали "
-                    "только X, потому что Y исключён требованием Z»"
+                    "с причиной (§12.2a) — причину пишут «потому что …», "
+                    "«because …», «reason=…», «причина: …» или «отклонён: …»; "
+                    "законна и запись «рассматривали только X, потому что Y "
+                    "исключён требованием Z»"
                 )
         if msg_alt:
             (errors if klass == "L" else warnings).append(msg_alt)

@@ -74,6 +74,20 @@ red=$(printf '\033[31m'); yellow=$(printf '\033[33m'); green=$(printf '\033[32m'
 # Причина ОБЯЗАТЕЛЬНА и печатается на каждом прогоне — как у `not_wired_reason()`,
 # и по той же причине: состояние проекта меняется («тестов нет», «нет TS»), и
 # устаревшее исключение должно попадаться на глаза, а не лежать в файле.
+#
+# Попадаться на глаза мало, если причина — «кода ещё нет» (`cqg@2.66`, решение
+# Anthony 18.10, образец Ally `check_na_expiry.py`). Проба Ally 03.10: первый
+# закоммиченный `.swift` прошёл и мета-гейт, и доктора — роли Swift были n/a «до
+# кода», код поехал мимо всех гейтов. Такое объявление пишется объектом с маской,
+# и с первым файлом по маске оно ИСТЕКАЕТ — мета-гейт красный, пока человек не
+# решит: подключить гейт либо переобъявить n/a с причиной, верной при коде:
+#
+#     "check_ast_gate.py": {"reason": "питона ещё нет", "until": "backend/*.py"}
+#
+# `until` — маска `git ls-files` (или список масок): индекс и неигнорируемое дерево.
+# Маска называет путь ПРОДУКТА: `*.py` истёк бы сразу на питоновских скриптах самого
+# контура, а `**/` в маске git лишний — `*` и так проходит `/`, и `backend/**/*.py`
+# пропускает файлы верхнего уровня (замер 18.10).
 NA_FILE="$LINT_DIR/not-applicable.json"
 na_reasons=""
 if [[ -f "$NA_FILE" ]]; then
@@ -89,7 +103,7 @@ if [[ -f "$NA_FILE" ]]; then
     # должна стоять причина. Гейт, не назвавший причину, — тот же класс, что
     # «пропуск с чужим диагнозом»: поймано собственным тестом.
     na_out=$("$PY_NA" - "$NA_FILE" 2>&1 <<'PYNA'
-import json, sys
+import json, subprocess, sys
 try:
     data = json.load(open(sys.argv[1], encoding="utf-8"))
 except Exception as exc:
@@ -98,17 +112,40 @@ except Exception as exc:
 if not isinstance(data, dict):
     sys.stderr.write("ожидался объект {ключ: причина}\n")
     raise SystemExit(2)
+lines, expired = [], []
 for k, v in data.items():
     if str(k).startswith("_"):
         continue          # ключ-комментарий, не объявление роли (§5.5)
-    reason = str(v).strip()
+    spec = v if isinstance(v, dict) else {"reason": v}
+    reason = str(spec.get("reason") or "").strip()
     if not reason:
         sys.stderr.write("%s: объявление БЕЗ причины\n" % k)
         raise SystemExit(3)
-    sys.stdout.write("%s\t%s\n" % (k, reason))
+    until = spec.get("until") or []
+    until = [until] if isinstance(until, str) else [str(m) for m in until]
+    if until:
+        hits = [h for h in subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", *until],
+            capture_output=True, text=True, check=False).stdout.split("\0") if h]
+        if hits:
+            expired.append("%s: n/a «пока нет %s» истёк — таких файлов %d, первый %s"
+                           % (k, " ".join(until), len(hits), hits[0]))
+            continue
+    lines.append("%s\t%s\n" % (k, reason))
+if expired:
+    sys.stderr.write("\n".join(expired) + "\n")
+    raise SystemExit(4)
+sys.stdout.write("".join(lines))
 PYNA
 )
     na_rc=$?
+    if (( na_rc == 4 )); then
+      printf '%s✗ объявления n/a «до первого кода» истекли (%s):%s\n' "$red" "$NA_FILE" "$reset" >&2
+      printf '%s\n' "$na_out" | sed 's/^/  /' >&2
+      printf 'Код этого стека появился. Подключи гейт (убери ключ) либо переобъяви n/a\n' >&2
+      printf 'с причиной, верной при коде, — уже без "until" (карта ролей §Применимость).\n' >&2
+      exit 1
+    fi
     if (( na_rc != 0 )); then
       printf '%s✗ %s не применён:%s\n' "$red" "$NA_FILE" "$reset" >&2
       printf '%s\n' "$na_out" | sed 's/^/  /' >&2

@@ -27,7 +27,7 @@
 
 ## Развёрнуто на сегодня
 
-- ① Delivery — да (`delivery@2.04`). ② CQG — да (`cqg@2.63`, адаптирован под TS: карта ролей
+- ① Delivery — да (`delivery@2.06`). ② CQG — да (`cqg@2.69`, адаптирован под TS: карта ролей
   в `delivery/STACK-ACCEPTANCE.md`). ③ OKF — нет. ④ CI (`quality.yml`) и гейт мержа
   (`scripts/merge_guard.sh`) — да; серверной защиты ветки нет.
 - Каноны — вариант D (AGENT_STACK §7.1a): репозиторий публичный, тексты контура в git не
