@@ -97,7 +97,10 @@ if [[ "$APPLY" == 0 ]]; then
   else
     ours | while IFS= read -r name; do printf '  снимется: сервер %s\n' "$name"; done
   fi
-  printf 'Сделать: scripts/connect_claude.sh%s --apply\n' "$([[ "$MODE" == disconnect ]] && echo ' --disconnect')"
+  # Подсказка — с тем же списком: голое `--apply` подключило бы один личный профиль.
+  printf 'Сделать: scripts/connect_claude.sh%s%s --apply\n' \
+    "$([[ -n "$PROFILES_LIST" ]] && echo " --profiles=$PROFILES_LIST")" \
+    "$([[ "$MODE" == disconnect ]] && echo ' --disconnect')"
   exit 0
 fi
 

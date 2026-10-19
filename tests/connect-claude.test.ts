@@ -156,6 +156,14 @@ describe('connect_claude.sh — два профиля рядом (D-25)', () => 
     ]);
   });
 
+  it('W1: показ со списком подсказывает команду с тем же списком — иначе подключится один личный', async () => {
+    await withProfiles('work');
+    expect(run('--profiles=default,work')).toContain(
+      'Сделать: scripts/connect_claude.sh --profiles=default,work --apply',
+    );
+    expect(run()).toContain('Сделать: scripts/connect_claude.sh --apply');
+  });
+
   it('W9: памятка называет оба сервера и правило выбора — без адресов и названий файлов', async () => {
     await withProfiles('work');
     run('--profiles=default,work', '--apply');

@@ -6,13 +6,13 @@
 - **kind:** feature
 - **repro_test:** n/a reason=kind=feature
 - **diagnosis:** n/a reason=kind=feature
-- **phase:** implement
+- **phase:** verify
 - **builder:** agent:claude-opus-5-5
 - **verifier:** human:anton
 - **human_ok_spec:** yes (by=human:anton, at=2026-10-19) reason=ответ «Подписываю» на вопрос с вариантами; решения владельца в спеке: имя второго сервера g-connect-work, без запроса прав, как личный; id примеров P→W до кода — подтверждено владельцем («Да, W1…W10») вместе с планом
 - **human_ok_plan:** yes (by=human:anton, at=2026-10-19) reason=ответ «Подписываю» на вопрос с вариантами: план из семи слайсов, отклонённые альтернативы в plan.md, waiver 30/1300/2
 - **shape-oracles:** cqg-deployed
-- **behavior-oracles:** tests-present (717 тестов; тесты инструментов — через настоящий протокол)
+- **behavior-oracles:** tests-present (734 теста; тесты инструментов — через настоящий протокол; живой прогон W1–W4, W9 — 2026-10-19, `live-run.md`)
 - **artifact_oracle:** scripts/probe_mcp.mjs reason=судит СОБРАННЫЙ сервер по протоколу — в CI на каждом PR и перед переключением стабильной сборки
 - **ci-oracles:** tooling
 - **worktree:** ветка feat/two-profiles reason=класс M (§5.1); мерж только через merge_guard.sh, за ним contour_doctor
