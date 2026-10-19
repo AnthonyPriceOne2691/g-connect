@@ -10,6 +10,7 @@ import { google, type drive_v3, type sheets_v4 } from 'googleapis';
 import { fromGoogleError, gcError } from '../errors.js';
 import { authorizedClient, makeRetry, rgbToHex, type RetryReporter } from './support.js';
 import { toRequest } from './requests.js';
+import { rangesFor, withRowLimit } from './sheet-ranges.js';
 import { denyByRule, limitOf } from '../policy.js';
 import type {
   Cell,
@@ -264,27 +265,6 @@ export function toSpreadsheetSnapshot(
   };
 }
 
-/**
- * Диапазон чтения (D-26): книга целиком без листа; названный лист — целиком, если `maxRows`
- * не задан (по такому снимку считается запись), иначе — первые `maxRows` строк.
- */
-function rangesFor(options: ReadOptions): string[] | undefined {
-  if (options.sheet === undefined) return undefined;
-  return [
-    options.maxRows === undefined
-      ? `'${options.sheet}'`
-      : `'${options.sheet}'!A1:ZZ${options.maxRows}`,
-  ];
-}
-
-/** Лёгкое чтение помечается: карта обязана сказать, что лист может продолжаться. */
-function withRowLimit(
-  snapshot: SpreadsheetSnapshot,
-  maxRows: number | undefined,
-): SpreadsheetSnapshot {
-  return maxRows === undefined ? snapshot : { ...snapshot, rowLimit: maxRows };
-}
-
 /** Окно строк из ответа Google: строки подряд от начала диапазона и размер сетки листа. */
 function toRowWindow(data: sheets_v4.Schema$Spreadsheet): RowWindow {
   const found = data.sheets?.[0];
@@ -395,6 +375,25 @@ export class GoogleSheetsClient implements SheetsClient {
       return toRowWindow(response.data);
     } catch (error) {
       throw fromGoogleError(error, `Не удалось прочитать строки таблицы ${id}.`);
+    }
+  }
+
+  async batchUpdateValues(
+    id: string,
+    cells: readonly { readonly range: string; readonly value: CellValue }[],
+  ): Promise<void> {
+    try {
+      await this.retry(() =>
+        this.sheets.spreadsheets.values.batchUpdate({
+          spreadsheetId: id,
+          requestBody: {
+            valueInputOption: 'USER_ENTERED',
+            data: cells.map((cell) => ({ range: cell.range, values: [[cell.value]] })),
+          },
+        }),
+      );
+    } catch (error) {
+      throw fromGoogleError(error, `Не удалось записать в таблицу ${id}.`);
     }
   }
 

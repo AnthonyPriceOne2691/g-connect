@@ -360,6 +360,14 @@ export interface SheetsClient {
    * Запись значений в A1-диапазон. `input: 'user'` (по умолчанию) — как ввёл бы человек:
    * «2025-06-01» станет датой; `'raw'` — текстом, как есть (D-23, таблица со шапкой).
    */
+  /**
+   * Несколько ячеек — одним запросом (D-26, Q10): запрос либо записан целиком, либо нет, и
+   * повтор после 429 повторяет его весь, а не дописывает хвост.
+   */
+  batchUpdateValues(
+    id: string,
+    cells: readonly { readonly range: string; readonly value: CellValue }[],
+  ): Promise<void>;
   updateValues(
     id: string,
     range: string,

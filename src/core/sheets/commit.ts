@@ -173,13 +173,15 @@ export async function writeCells(
   map: SheetMap,
   changes: readonly PlannedChange[],
 ): Promise<void> {
-  for (const change of changes) {
-    if (change.kind === 'format') continue;
-    // План обещал «станет пусто» — обещание исполняется: `null` в values-API Google
-    // значит «пропустить ячейку», и setCells с пустотой отвечал ok, ничего не записав
-    // (живой прогон 2026-09-06, LR-2). Пустая строка в USER_ENTERED очищает.
-    await client.updateValues(map.spreadsheetId, change.a1, [[change.after ?? '']]);
-  }
+  // Все значения правки — ОДНИМ запросом (D-26, Q10): по запросу на ячейку 429 посреди строки
+  // оставлял её записанной наполовину (M-1: A…J), и строка в 10 ячеек стоила 10 запросов
+  // квоты. План обещал «станет пусто» — обещание исполняется: `null` в values-API Google
+  // значит «пропустить ячейку», и setCells с пустотой отвечал ok, ничего не записав (живой
+  // прогон 2026-09-06, LR-2). Пустая строка в USER_ENTERED очищает.
+  const cells = changes
+    .filter((change) => change.kind !== 'format')
+    .map((change) => ({ range: change.a1, value: change.after ?? '' }));
+  if (cells.length > 0) await client.batchUpdateValues(map.spreadsheetId, cells);
   const formats = changes
     .filter((c) => c.kind === 'format' && c.afterFormat !== undefined)
     .map((c) => formatRequest(map, c.a1, c.afterFormat as CellFormat));

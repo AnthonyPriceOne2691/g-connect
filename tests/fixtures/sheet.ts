@@ -410,6 +410,8 @@ export class FakeSheetsClient implements SheetsClient {
   readonly writes: RecordedWrite[] = [];
   readonly appends: RecordedWrite[] = [];
   readonly formatWrites: SheetRequest[] = [];
+  /** Сколько ячеек ушло каждым запросом batchUpdateValues (Q10: строка — одним запросом). */
+  readonly batches: number[] = [];
   private data: SpreadsheetSnapshot;
 
   constructor(data: SpreadsheetSnapshot = snapshot()) {
@@ -426,6 +428,15 @@ export class FakeSheetsClient implements SheetsClient {
 
   async sheetTitles(): Promise<readonly string[]> {
     return this.data.sheets.map((sheet) => sheet.title);
+  }
+
+  async batchUpdateValues(
+    id: string,
+    cells: readonly { readonly range: string; readonly value: CellValue }[],
+  ): Promise<void> {
+    // Один запрос — одна запись в журнале запросов; ячейки — как прежде, по одной.
+    this.batches.push(cells.length);
+    for (const cell of cells) await this.updateValues(id, cell.range, [[cell.value]]);
   }
 
   async updateValues(
@@ -479,6 +490,13 @@ export class MutableSheetsClient implements SheetsClient {
 
   async sheetTitles(): Promise<readonly string[]> {
     return this.data.sheets.map((sheet) => sheet.title);
+  }
+
+  async batchUpdateValues(
+    id: string,
+    cells: readonly { readonly range: string; readonly value: CellValue }[],
+  ): Promise<void> {
+    for (const cell of cells) await this.updateValues(id, cell.range, [[cell.value]]);
   }
 
   async updateValues(

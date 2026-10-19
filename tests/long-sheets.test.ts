@@ -35,9 +35,10 @@ function rowsOf(range: string, total: number): [number, number] {
 }
 
 /** Google, отвечающий как настоящий; записи — в журнал вызовов. */
-function google(rows: string[][], gridRows: number) {
+function google(rows: string[][], gridRows: number, failBatch = false) {
   const writes: string[] = [];
   const reads: string[] = [];
+  const batches: number[] = [];
   const properties = {
     sheetId: 7,
     title: TITLE,
@@ -73,6 +74,18 @@ function google(rows: string[][], gridRows: number) {
           writes.push(params.range);
           return Promise.resolve({ data: {} });
         },
+        // Строка правки — одним запросом (Q10): каждый запрос — запись в `batches`.
+        batchUpdate: (params: { requestBody: { data: { range: string }[] } }) => {
+          batches.push(params.requestBody.data.length);
+          // Отказ Google не повторяемым кодом: запрос не записан целиком — ни одной ячейки.
+          if (failBatch) {
+            return Promise.reject(
+              Object.assign(new Error('The caller does not have permission'), { code: 403 }),
+            );
+          }
+          for (const d of params.requestBody.data) writes.push(d.range);
+          return Promise.resolve({ data: {} });
+        },
       },
       batchUpdate: () => Promise.resolve({ data: {} }),
     },
@@ -80,7 +93,7 @@ function google(rows: string[][], gridRows: number) {
   const drive = {
     files: { get: () => Promise.resolve({ data: { version: '1' } }) },
   } as unknown as drive_v3.Drive;
-  return { api: { sheets, drive }, writes, reads };
+  return { api: { sheets, drive }, writes, reads, batches };
 }
 
 function depsOf(api: { sheets: sheets_v4.Sheets; drive: drive_v3.Drive }): {
@@ -270,5 +283,33 @@ describe('длинные листы: чтение не теряет строки
     );
     expect(g.reads).toContain(`'${TITLE}'`);
     expect(g.reads).not.toContain(`'${TITLE}'!A1:ZZ500`);
+  });
+});
+
+describe('строка правки — одним запросом (D-26, Q10)', () => {
+  const row = { Компания: 'Новая', Статус: 'новая', Заметка: 'новая заметка' };
+
+  it('Q10: appendRow из трёх ячеек — один запрос batchUpdate, а не три', async () => {
+    const g = google(sheetRows(20), 1000);
+    const result = await callMcp(
+      gcApply,
+      { op: 'appendRow', target: 'big', values: row, dryRun: false },
+      depsOf(g.api).deps,
+    );
+    expect(result.data).toMatchObject({ status: 'ok' });
+    expect(g.batches).toEqual([3]);
+    expect(g.writes).toHaveLength(3);
+  });
+
+  it('Q10: запрос отказал — в листе ни одной ячейки строки, а не половина (M-1: A…J)', async () => {
+    const g = google(sheetRows(20), 1000, true);
+    const result = await callMcp(
+      gcApply,
+      { op: 'appendRow', target: 'big', values: row, dryRun: false },
+      depsOf(g.api).deps,
+    );
+    expect(result.ok).toBe(false);
+    expect(g.batches).toEqual([3]);
+    expect(g.writes).toHaveLength(0);
   });
 });
