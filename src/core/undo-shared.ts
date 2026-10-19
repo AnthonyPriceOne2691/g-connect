@@ -7,6 +7,7 @@
 import { gcError } from './errors.js';
 import { denyByRule, limitOf } from './policy.js';
 import { lastUndoable, type JournalSource, type WriteRecord } from './journal.js';
+import { serverName } from './profile-names.js';
 import type { NothingToUndoReason, UndoOptions, UndoOutcome } from './undo-types.js';
 
 export function reasonFor(
@@ -15,16 +16,38 @@ export function reasonFor(
 ): NothingToUndoReason {
   if (options.correlationId !== undefined) return 'id_not_found';
   if (history.length === 0) return 'journal_empty';
-  const own = ownRecords(history, options.project).filter((r) => r.op !== 'undo');
-  return own.length === 0 ? 'only_other_projects' : 'all_undone';
+  const own = ownRecords(history, options).filter((r) => r.op !== 'undo');
+  if (own.length > 0) return 'all_undone';
+  return otherProfileWrite(history, options) === undefined
+    ? 'only_other_projects'
+    : 'only_other_profiles';
+}
+
+/**
+ * Последняя запись этого проекта, сделанная ДРУГИМ профилем (D-25): по ней ответ называет,
+ * каким сервером откатывать, — иначе агент рабочего сервера решил бы, что откатывать нечего.
+ */
+function otherProfileWrite(
+  history: readonly WriteRecord[],
+  options: UndoOptions,
+): WriteRecord | undefined {
+  if (options.account === undefined) return undefined;
+  return history.find(
+    (r) =>
+      r.op !== 'undo' &&
+      r.account !== options.account &&
+      (options.project === undefined || r.project === options.project),
+  );
 }
 
 export function nothingToUndo(
   reason: NothingToUndoReason,
   seen: number,
   correlationId: string | undefined,
+  profiles?: { readonly own: string; readonly other: string },
 ): UndoOutcome {
   const id = correlationId ?? '—';
+  const other = profiles?.other ?? '—';
   const details: Readonly<Record<NothingToUndoReason, string>> = {
     journal_empty: 'По этой цели журнала нет: ни одной записи через ядро не проходило.',
     all_undone: `В журнале по этой цели записей: ${seen}, и все уже откачены — возвращать нечего.`,
@@ -35,6 +58,9 @@ export function nothingToUndo(
     only_other_projects:
       `В журнале по этой цели записей: ${seen}, но своих у этого проекта нет — записи других ` +
       'проектов откатывают их сессии или владелец из терминала.',
+    only_other_profiles:
+      `Записей профиля ${profiles?.own ?? '—'} по этой цели нет; последняя — профиля ${other}, ` +
+      `откат — сервером ${serverName(other)}.`,
   };
   const detail = details[reason];
   return {
@@ -96,18 +122,47 @@ export async function pickUndoRecord(
   }
   const record =
     options.correlationId === undefined
-      ? lastUndoable(history, ownRecords(history, options.project))
+      ? lastUndoable(history, ownRecords(history, options))
       : (history.find((r) => r.correlationId === options.correlationId) ?? null);
   if (record === null) {
-    return nothingToUndo(reasonFor(history, options), history.length, options.correlationId);
+    const other = otherProfileWrite(history, options);
+    return nothingToUndo(
+      reasonFor(history, options),
+      history.length,
+      options.correlationId,
+      other === undefined || options.account === undefined
+        ? undefined
+        : { own: options.account, other: other.account },
+    );
   }
   assertOwnProject(record, options.project);
+  assertOwnProfile(record, options.account);
   return record;
 }
 
-/** Записи, которые видит сессия проекта (D-23); вызов из терминала видит все. */
-function ownRecords(history: readonly WriteRecord[], project: string | undefined) {
-  return project === undefined ? history : history.filter((r) => r.project === project);
+/**
+ * Записи, которые видит сессия: своего проекта (D-23) и своего профиля (D-25). Вызов из
+ * терминала видит все проекты, но только свой профиль: токен у сервера — одного аккаунта.
+ */
+function ownRecords(history: readonly WriteRecord[], options: UndoOptions) {
+  return history.filter(
+    (r) =>
+      (options.project === undefined || r.project === options.project) &&
+      (options.account === undefined || r.account === options.account),
+  );
+}
+
+/**
+ * Запись другого профиля, названная по id, — отказ, а не откат (D-25): её делал другой
+ * аккаунт, и вернуть её правильно может только его сервер — с его токеном и журналом.
+ */
+function assertOwnProfile(record: WriteRecord, account: string | undefined): void {
+  if (account === undefined || record.account === account) return;
+  denyByRule(
+    'undo.own-profile',
+    `Запись ${record.correlationId} сделана профилем ${record.account}, а откат просит профиль ` +
+      `${account}. Откатить её может сервер ${serverName(record.account)}.`,
+  );
 }
 
 /**

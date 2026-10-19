@@ -356,6 +356,20 @@
       "kind": "deny",
       "enforced_in": "src/core/ops.ts (parseOperation, assertKnownFields) + src/core/field-check.ts (unknownFieldsDetail, closestField) + src/mcp/boundary.ts (parseToolInput, strictInput)",
       "probe": "appendText с опечаткой afterHeding даёт bad_request unknown_field с названием поля и подсказкой afterHeading, и ни одной правки"
+    },
+    {
+      "id": "grant.per-profile",
+      "title": "Разрешение проекта — на пару «проект, профиль»: разрешение одного профиля не открывает и не затирает другой (D-25)",
+      "kind": "deny",
+      "enforced_in": "src/core/grant/grants.ts (currentGrant, issueGrant)",
+      "probe": "разрешение профиля work рядом с default → оба действуют, отзыв одного не трогает другое; файл прежней раскладки на проект → no_grant"
+    },
+    {
+      "id": "undo.own-profile",
+      "title": "Откат — только записей своего профиля: запись другого профиля откатывает его сервер (D-25)",
+      "kind": "deny",
+      "enforced_in": "src/core/undo-shared.ts (pickUndoRecord)",
+      "probe": "откат по id записи другого профиля → policy_denied undo.own-profile; последняя по цели — чужого профиля → nothing_to_undo only_other_profiles"
     }
   ]
 }

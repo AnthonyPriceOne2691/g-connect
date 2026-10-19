@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { MVP_SCOPES } from '../src/core/auth.js';
+import type { WriteRecord } from '../src/core/journal.js';
 import { gcCommand, grantPhrase, serverName, unlockLine } from '../src/core/profile-names.js';
 import { profileDir, writeSealedToken } from '../src/core/profiles.js';
 import type { ResolvedTarget } from '../src/core/targets.js';
@@ -150,6 +151,51 @@ describe('два профиля рядом: сервер называет сво
     } finally {
       await work.close();
       await personal.close();
+    }
+  });
+
+  it('W5: рабочий сервер не откатывает запись личного в общей таблице — называет его сервер', async () => {
+    const id = '1SHAREDsheetBBBBBBBBBBBBBBBBBBBB';
+    const personalWrite: WriteRecord = {
+      at: new Date().toISOString(),
+      account: 'default',
+      targetId: id,
+      alias: 'shared',
+      sheet: 'Лист1',
+      op: 'setCells',
+      changes: [{ a1: 'B2', column: 'Часы', before: 1, after: 2 }],
+      revisionBefore: null,
+      revisionAfter: null,
+      correlationId: 'gc-personal',
+    };
+    const client = new FakeSheetsClient(snapshot());
+    const google = vaultOf('work');
+    const work = await protocolSession({
+      ...depsOf('work', google),
+      sheets: async () => {
+        await tokenForClients(google)();
+        return client;
+      },
+      registry: () =>
+        Promise.resolve({ targets: [{ alias: 'shared', id, type: 'sheet', allow: 'write' }] }),
+      journalSource: { recent: () => Promise.resolve([personalWrite]) },
+    });
+    try {
+      await work.call('gc_unlock', {});
+      const undo = await work.call('gc_undo', { target: 'shared' });
+      expect(undo.data).toMatchObject({
+        status: 'nothing_to_undo',
+        reason: 'only_other_profiles',
+        detail:
+          'Записей профиля work по этой цели нет; последняя — профиля default, откат — сервером g-connect.',
+      });
+      expect(client.writes).toHaveLength(0);
+      // Названная по id — отказ правилом, а не откат чужой записи.
+      const named = await work.call('gc_undo', { target: 'shared', record: 'gc-personal' });
+      expect(named.error).toMatchObject({ code: 'policy_denied', cause: 'undo.own-profile' });
+      expect(client.writes).toHaveLength(0);
+    } finally {
+      await work.close();
     }
   });
 

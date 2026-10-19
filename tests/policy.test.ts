@@ -27,6 +27,7 @@ import { fakeSealer } from './fixtures/sealing.js';
 import { buildSheetData } from '../src/core/sheets/map.js';
 import type { WriteRecord } from '../src/core/journal.js';
 import { docProbes } from './fixtures/doc-probes.js';
+import { profileProbes } from './fixtures/profile-probes.js';
 import { tokenProbes } from './fixtures/token-probes.js';
 import { FakeDocsClient, buildDoc, p as docParagraph } from './fixtures/doc.js';
 import { readDoc } from '../src/mcp/read-doc.js';
@@ -76,6 +77,7 @@ const GRANTED: GrantState = {
 const probes: Record<string, () => Promise<void>> = {
   ...docProbes,
   ...tokenProbes,
+  ...profileProbes,
   // D-22: опечатка в НЕОБЯЗАТЕЛЬНОМ поле раньше исчезала молча — вставка уходила в конец
   // таба вместо раздела. Теперь отказ с названием поля и подсказкой, до всякой правки.
   'input.no-silent-drop': async () => {
@@ -827,8 +829,9 @@ describe('правила как механизм (D-12)', () => {
     // 40-е — write.named-confirm-bound-to-plan (поправка D-20), 41-е — docs.objects-not-destroyed,
     // 42-е — docs.suggestions-not-edited, 43-е — input.no-silent-drop (D-22); 44–46 —
     // write.grant, grant.signature, undo.own-project (D-23, разрешение проекта касанием);
-    // 47–48 — token.sealed-at-rest, google.unlock-only-tool (D-24, токен под пальцем).
-    expect(policyRules()).toHaveLength(48);
+    // 47–48 — token.sealed-at-rest, google.unlock-only-tool (D-24, токен под пальцем);
+    // 49–50 — grant.per-profile, undo.own-profile (D-25, два профиля рядом).
+    expect(policyRules()).toHaveLength(50);
   });
 
   it('rules.md называет ровно списки ядра: конверт и подтверждение названием', () => {
