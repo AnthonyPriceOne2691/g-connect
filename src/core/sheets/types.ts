@@ -82,6 +82,8 @@ export interface SheetSnapshot {
   readonly protectedRanges?: readonly GridRange[];
   /** Объединённые ячейки: на них разбор таблицы спотыкается, поэтому о них говорят. */
   readonly merges?: readonly GridRange[];
+  /** Строк в сетке листа (`gridProperties.rowCount`) — верхняя граница, а не число данных. */
+  readonly gridRows?: number;
 }
 
 export interface SpreadsheetSnapshot {
@@ -94,6 +96,11 @@ export interface SpreadsheetSnapshot {
    * читается как «других листов нет» — и на нём же стояла проверка занятого имени листа.
    */
   readonly partial?: boolean;
+  /**
+   * Читались только первые `rowLimit` строк листа (лёгкая карта, D-26). Лист, на котором
+   * столько строк и набралось, может продолжаться — карта обязана сказать это вслух.
+   */
+  readonly rowLimit?: number;
   readonly title: string;
   readonly revisionId?: string;
   readonly sheets: readonly SheetSnapshot[];
@@ -144,6 +151,8 @@ export interface SheetMap {
   readonly columns: readonly ColumnProfile[];
   readonly sampleRows: readonly Readonly<Record<string, CellValue>>[];
   readonly otherSheets: readonly { readonly title: string; readonly rowCount: number }[];
+  /** Строк в сетке листа — верхняя граница; карта строится по первым строкам (D-26). */
+  readonly sheetRows?: number;
   /** Предупреждения: объединённые ячейки, вторая таблица на листе и т.п. */
   readonly warnings: readonly string[];
 }
@@ -169,8 +178,19 @@ export interface SheetData {
 export interface ReadOptions {
   /** Читать только этот лист — иначе тянется всё, а это дорого на живых таблицах. */
   readonly sheet?: string;
-  /** Верхняя граница строк: ответ помечается усечённым, а не молча обрезается (§9.5). */
+  /**
+   * Только первые `maxRows` строк — для лёгкой карты (D-26). Без него названный лист читается
+   * ЦЕЛИКОМ: запись, превью, предусловие и откат считаются по всему листу, а частичное
+   * чтение надо попросить явно. Снимок такого чтения несёт `rowLimit`.
+   */
   readonly maxRows?: number;
+}
+
+/** Окно строк листа для `gc_read mode=values` (D-26): строки — подряд, начиная с `fromRow`. */
+export interface RowWindow {
+  readonly rows: readonly (readonly Cell[])[];
+  /** Строк в сетке листа — по нему судится, есть ли строки дальше окна. */
+  readonly gridRows: number;
 }
 
 /**
@@ -325,6 +345,8 @@ export type SheetRequest =
 
 export interface SheetsClient {
   getSpreadsheet(id: string, options?: ReadOptions): Promise<SpreadsheetSnapshot>;
+  /** Строки листа с `fromRow` (номер строки листа), не больше `count` — окно чтения. */
+  readRows(id: string, sheet: string, fromRow: number, count: number): Promise<RowWindow>;
   /**
    * Только имена листов книги — без сетки.
    *

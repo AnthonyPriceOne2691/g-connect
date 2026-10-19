@@ -5,18 +5,19 @@
  * с нашими типами — поэтому 100 % логики карты, резолвера и записи проверяется без сети.
  */
 
-import { google, type sheets_v4 } from 'googleapis';
+import { google, type drive_v3, type sheets_v4 } from 'googleapis';
 
 import { fromGoogleError, gcError } from '../errors.js';
 import { authorizedClient, makeRetry, rgbToHex, type RetryReporter } from './support.js';
 import { toRequest } from './requests.js';
-import { limitOf } from '../policy.js';
+import { denyByRule, limitOf } from '../policy.js';
 import type {
   Cell,
   CellFormat,
   CellValue,
   GridRange,
   ReadOptions,
+  RowWindow,
   SheetExtras,
   SheetProperties,
   SheetRequest,
@@ -26,8 +27,11 @@ import type {
   ValidationRule,
 } from '../sheets/types.js';
 
-/** Источник истины — правило `read.max-rows` в rules.json; число здесь только страховка. */
-export const DEFAULT_MAX_ROWS = limitOf('read.max-rows', 500);
+/**
+ * Предел листа, который запись читает целиком (D-26): больше строк сетки — отказ правилом
+ * `write.full-sheet`, а не расчёт по части листа. Источник — правило `write.max-sheet-rows`.
+ */
+export const WRITE_MAX_SHEET_ROWS = limitOf('write.max-sheet-rows', 50_000);
 
 /**
  * Форматы, при которых значение ячейки для человека — СТРОКА, а не число.
@@ -168,10 +172,12 @@ export function toSheetSnapshot(sheet: sheets_v4.Schema$Sheet): SheetSnapshot {
   const protectedRanges = protectedRangesOf(sheet);
   const merges = mergesOf(sheet);
 
+  const gridRows = properties.gridProperties?.rowCount;
   return {
     title: properties.title ?? 'Лист',
     sheetId: properties.sheetId ?? 0,
     rows: rowData.map((row) => (row.values ?? []).map(toCell)),
+    ...(gridRows === undefined || gridRows === null ? {} : { gridRows }),
     merges,
     ...(frozen === undefined || frozen === null ? {} : { frozenRows: frozen }),
     validations: validationsOf(sheet),
@@ -258,33 +264,74 @@ export function toSpreadsheetSnapshot(
   };
 }
 
+/**
+ * Диапазон чтения (D-26): книга целиком без листа; названный лист — целиком, если `maxRows`
+ * не задан (по такому снимку считается запись), иначе — первые `maxRows` строк.
+ */
+function rangesFor(options: ReadOptions): string[] | undefined {
+  if (options.sheet === undefined) return undefined;
+  return [
+    options.maxRows === undefined
+      ? `'${options.sheet}'`
+      : `'${options.sheet}'!A1:ZZ${options.maxRows}`,
+  ];
+}
+
+/** Лёгкое чтение помечается: карта обязана сказать, что лист может продолжаться. */
+function withRowLimit(
+  snapshot: SpreadsheetSnapshot,
+  maxRows: number | undefined,
+): SpreadsheetSnapshot {
+  return maxRows === undefined ? snapshot : { ...snapshot, rowLimit: maxRows };
+}
+
+/** Окно строк из ответа Google: строки подряд от начала диапазона и размер сетки листа. */
+function toRowWindow(data: sheets_v4.Schema$Spreadsheet): RowWindow {
+  const found = data.sheets?.[0];
+  const rowData = found?.data?.[0]?.rowData ?? [];
+  return {
+    rows: rowData.map((row) => (row.values ?? []).map(toCell)),
+    gridRows: found?.properties?.gridProperties?.rowCount ?? 0,
+  };
+}
+
 export interface GoogleSheetsClientOptions {
   readonly accessToken: string;
-  readonly maxRows?: number;
   /** Сообщает о повторе, чтобы наверху можно было показать «попытка 2 из 3». */
   readonly onRetry?: RetryReporter;
+  /**
+   * Внедрённый API — шов судится на живой форме ответа Google, как у Docs (урок L28): фейк
+   * клиента целиком потолка чтения не видел, и запись по обрезанному листу жила незамеченной.
+   */
+  readonly api?: { readonly sheets: sheets_v4.Sheets; readonly drive: drive_v3.Drive };
 }
 
 export class GoogleSheetsClient implements SheetsClient {
   private readonly sheets: sheets_v4.Sheets;
-  private readonly drive;
-  private readonly maxRows: number;
+  private readonly drive: drive_v3.Drive;
   private readonly retry: ReturnType<typeof makeRetry>;
 
   constructor(options: GoogleSheetsClientOptions) {
-    const auth = authorizedClient(options.accessToken);
-    this.sheets = google.sheets({ version: 'v4', auth });
-    this.drive = google.drive({ version: 'v3', auth });
-    this.maxRows = options.maxRows ?? DEFAULT_MAX_ROWS;
+    if (options.api === undefined) {
+      const auth = authorizedClient(options.accessToken);
+      this.sheets = google.sheets({ version: 'v4', auth });
+      this.drive = google.drive({ version: 'v3', auth });
+    } else {
+      this.sheets = options.api.sheets;
+      this.drive = options.api.drive;
+    }
     this.retry = makeRetry(options.onRetry);
   }
 
   async getSpreadsheet(id: string, options: ReadOptions = {}): Promise<SpreadsheetSnapshot> {
-    const maxRows = options.maxRows ?? this.maxRows;
     try {
-      // Один запрос: метаданные всех листов + сетка только нужного диапазона.
-      const ranges =
-        options.sheet === undefined ? undefined : [`'${options.sheet}'!A1:ZZ${maxRows}`];
+      // Названный лист без `maxRows` — ЦЕЛИКОМ (D-26): по этому снимку считаются запись,
+      // превью, предусловие и откат. Раньше здесь стояло `A1:ZZ500` для всех, и на листе в
+      // 1630 строк `appendRow` писал в занятую 501-ю: предусловие видело её пустой.
+      if (options.sheet !== undefined && options.maxRows === undefined) {
+        await this.assertWholeSheetFits(id, options.sheet);
+      }
+      const ranges = rangesFor(options);
       const response = await this.retry(() =>
         this.sheets.spreadsheets.get({
           spreadsheetId: id,
@@ -305,9 +352,49 @@ export class GoogleSheetsClient implements SheetsClient {
         revisionId = undefined;
       }
 
-      return toSpreadsheetSnapshot(response.data, id, revisionId, ranges !== undefined);
+      return withRowLimit(
+        toSpreadsheetSnapshot(response.data, id, revisionId, ranges !== undefined),
+        options.maxRows,
+      );
     } catch (error) {
       throw fromGoogleError(error, `Не удалось прочитать таблицу ${id}.`);
+    }
+  }
+
+  /**
+   * Размер листа — до чтения сетки (урок L11: дорогой отказ — тоже дефект): лист, который
+   * запись не может прочитать целиком, отказывает сразу, а не после минуты чтения.
+   */
+  private async assertWholeSheetFits(id: string, sheet: string): Promise<void> {
+    const meta = await this.retry(() =>
+      this.sheets.spreadsheets.get({
+        spreadsheetId: id,
+        fields: 'sheets.properties(title,gridProperties.rowCount)',
+      }),
+    );
+    const found = meta.data.sheets?.find((s) => s.properties?.title === sheet);
+    const rows = found?.properties?.gridProperties?.rowCount ?? 0;
+    if (rows <= WRITE_MAX_SHEET_ROWS) return;
+    denyByRule(
+      'write.full-sheet',
+      `Лист «${sheet}» — ${rows} строк сетки, больше предела ${WRITE_MAX_SHEET_ROWS}: правку по ` +
+        'нему пришлось бы считать по части листа, а это затирает чужие строки. Запись не ' +
+        'выполнена; читать лист можно окнами (gc_read mode=values с fromRow).',
+    );
+  }
+
+  async readRows(id: string, sheet: string, fromRow: number, count: number): Promise<RowWindow> {
+    try {
+      const response = await this.retry(() =>
+        this.sheets.spreadsheets.get({
+          spreadsheetId: id,
+          includeGridData: true,
+          ranges: [`'${sheet}'!A${fromRow}:ZZ${fromRow + count - 1}`],
+        }),
+      );
+      return toRowWindow(response.data);
+    } catch (error) {
+      throw fromGoogleError(error, `Не удалось прочитать строки таблицы ${id}.`);
     }
   }
 

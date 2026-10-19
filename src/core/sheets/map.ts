@@ -158,6 +158,18 @@ function rowToRecord(
 }
 
 /**
+ * Окно строк листа → записи по колонкам карты (D-26, `gc_read mode=values`). Тот же разбор,
+ * что у строк карты: хвост пустых строк срезан, пропуски в середине остаются — строка
+ * окна под номером `i` — это строка листа `fromRow + i`.
+ */
+export function windowRecords(
+  rows: readonly (readonly Cell[])[],
+  columns: readonly ColumnProfile[],
+): Record<string, CellValue>[] {
+  return withoutEmptyTail(rows).map((row) => rowToRecord(row, columns));
+}
+
+/**
  * Пустая колонка внутри шапки делит лист на блоки: справа от неё обычно отдельная
  * таблица (или врезка), а не продолжение данных. Молча втянуть её значит выдать
  * колонку с одной заполненной ячейкой и не сказать почему — §9.3 требует обратного.
@@ -308,6 +320,7 @@ export function buildSheetData(
     );
   }
   warnings.push(...mergeWarnings(sheet, guess.row));
+  warnings.push(...partialReadWarning(snapshot.rowLimit, rows.length, sheet.gridRows));
   if (!guess.confident && options.headerRow === undefined) {
     warnings.push(
       `строка заголовков выбрана неуверенно (${guess.reason}) — проверь и при нужде задай headerRow`,
@@ -346,6 +359,7 @@ export function buildSheetData(
     otherSheets: snapshot.sheets
       .filter((s) => s.title !== sheet.title)
       .map((s) => ({ title: s.title, rowCount: s.rows.length })),
+    ...(sheet.gridRows === undefined ? {} : { sheetRows: sheet.gridRows }),
     // Снимок усечён по листу — значит список других листов НЕ полон, и молчать об этом
     // нельзя: пустой список читается как «других листов нет». Живой прогон 2026-09-04
     // получил `otherSheets: []` на книге из семи листов.
@@ -360,6 +374,26 @@ export function buildSheetData(
   };
 
   return { map, rows: allRows, formats: allFormats, headerFormats };
+}
+
+/** Префикс предупреждения о части листа — по нему `values` его не повторяет (D-26). */
+export const PARTIAL_READ_WARNING = 'карта построена по первым';
+
+/**
+ * Лёгкая карта (первые строки листа) обязана сказать, что лист может продолжаться: иначе
+ * `dataRowCount` и `usedRange` читаются как размер листа (D-26, пример Q7).
+ */
+function partialReadWarning(
+  rowLimit: number | undefined,
+  read: number,
+  gridRows: number | undefined,
+): string[] {
+  if (rowLimit === undefined || read < rowLimit) return [];
+  return [
+    `${PARTIAL_READ_WARNING} ${rowLimit} строкам листа` +
+      `${gridRows === undefined ? '' : ` из ${gridRows} строк сетки`}: dataRowCount и usedRange — ` +
+      'только по ним; строки дальше читай gc_read mode=values (с fromRow)',
+  ];
 }
 
 /** Только карта — когда данные не нужны (ответ агенту на «что в этой таблице»). */

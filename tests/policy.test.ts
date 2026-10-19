@@ -18,7 +18,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { appendRecord } from '../src/core/audit.js';
 import { clampLimit, listParams } from '../src/core/google/drive.js';
-import { DEFAULT_MAX_ROWS } from '../src/core/google/sheets.js';
 import { parseOperation, OPERATION_NAMES } from '../src/core/ops.js';
 import { asData, limitOf, policyRules, policyText, ruleById } from '../src/core/policy.js';
 import { ENVELOPE_OPS, NAMED_CONFIRM_OPS, parseEnvelope } from '../src/core/envelope.js';
@@ -28,6 +27,7 @@ import { buildSheetData } from '../src/core/sheets/map.js';
 import type { WriteRecord } from '../src/core/journal.js';
 import { docProbes } from './fixtures/doc-probes.js';
 import { profileProbes } from './fixtures/profile-probes.js';
+import { sheetProbes } from './fixtures/sheet-probes.js';
 import { tokenProbes } from './fixtures/token-probes.js';
 import { FakeDocsClient, buildDoc, p as docParagraph } from './fixtures/doc.js';
 import { readDoc } from '../src/mcp/read-doc.js';
@@ -78,6 +78,7 @@ const probes: Record<string, () => Promise<void>> = {
   ...docProbes,
   ...tokenProbes,
   ...profileProbes,
+  ...sheetProbes,
   // D-22: опечатка в НЕОБЯЗАТЕЛЬНОМ поле раньше исчезала молча — вставка уходила в конец
   // таба вместо раздела. Теперь отказ с названием поля и подсказкой, до всякой правки.
   'input.no-silent-drop': async () => {
@@ -263,12 +264,6 @@ const probes: Record<string, () => Promise<void>> = {
     await expect(
       upsertRow(client(), data(), { Проект: 'G connect' }, { Часы: { сколько: 3 } }),
     ).rejects.toMatchObject({ payload: { code: 'bad_request', cause: 'non_primitive_value' } });
-  },
-
-  'read.max-rows': async () => {
-    // Лимит адаптера берётся из правила, а не из числа в коде.
-    expect(DEFAULT_MAX_ROWS).toBe(limitOf('read.max-rows', -1));
-    expect(DEFAULT_MAX_ROWS).toBeGreaterThan(0);
   },
 
   'content.is-data': async () => {
@@ -830,8 +825,9 @@ describe('правила как механизм (D-12)', () => {
     // 42-е — docs.suggestions-not-edited, 43-е — input.no-silent-drop (D-22); 44–46 —
     // write.grant, grant.signature, undo.own-project (D-23, разрешение проекта касанием);
     // 47–48 — token.sealed-at-rest, google.unlock-only-tool (D-24, токен под пальцем);
-    // 49–50 — grant.per-profile, undo.own-profile (D-25, два профиля рядом).
-    expect(policyRules()).toHaveLength(50);
+    // 49–50 — grant.per-profile, undo.own-profile (D-25, два профиля рядом);
+    // 51–52 — write.full-sheet, write.max-sheet-rows (D-26, длинные листы).
+    expect(policyRules()).toHaveLength(52);
   });
 
   it('rules.md называет ровно списки ядра: конверт и подтверждение названием', () => {
