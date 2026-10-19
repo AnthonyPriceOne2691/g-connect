@@ -18,8 +18,8 @@
 - **worktree:** ветка fix/long-sheets reason=класс M (§5.1); мерж только через merge_guard.sh, за ним contour_doctor
 - **parallel_sessions:** merge-guard
 - **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
-- **blockers:** none
-- **waivers:** max_loc_diff=1600 max_files_touched=30 reason=ответ «Да: 1600 строк, 30 файлов» на вопрос с вариантами — форматы ячеек (Q11–Q15) в PR #9 к длинным листам; до них 909 строк из-за Q8–Q10 by=human:anton at=2026-10-19
+- **blockers:** объём PR #10 (Q11–Q15, ~2200 строк) — waiver подписывает владелец: ответ «Разделить на два PR» говорил «waiver нужен на каждый»; до подписи гейт объёма для PR #10 красный
+- **waivers:** max_loc_diff=1600 max_files_touched=30 reason=ответ «Да: 1600 строк, 30 файлов» на вопрос с вариантами; после ответа «Разделить на два PR» — предел PR #9 (Q1–Q10, 909 строк, 18 файлов) by=human:anton at=2026-10-19
 - **new_dependency:** none
 - **runtime_paths:** src/core/google/
   <!-- шов Google целиком: размер листа из метаданных, диапазон '<лист>', окно строк, маски полей вида (сброс null), копия формата строки, локаль книги — отказ виден только живьём -->
