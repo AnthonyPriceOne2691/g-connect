@@ -1,7 +1,8 @@
 /**
  * Поля вида ячейки на внешней границе (`formatCells`) — модуль-низ, как `op-fields.ts`, и по
- * гейту длины `ops.ts`: с D-26 (Q12) вид получил гарнитуру, кегль и формат числа, и у каждого
- * свой отказ человеческим текстом — агент должен узнать, ЧТО не так, а не «invalid_type».
+ * гейту длины `ops.ts`: с D-26 (Q12) вид получил гарнитуру, кегль и формат числа, с Q16 и Q18 —
+ * снятие заливки и цвет текста, и у каждого свой отказ человеческим текстом — агент должен
+ * узнать, ЧТО не так, а не «invalid_type».
  */
 
 import { z } from 'zod';
@@ -32,12 +33,33 @@ const numberFormat = z
   .strict();
 
 /**
+ * Цвет на границе (Q16, Q18): `#RRGGBB` или слово `"none"` — «без заливки» у фона, «цвет листа» у
+ * текста. В домен `"none"` уходит `null` — сброс к виду листа, тем же словом, каким откат снимает
+ * шрифт (D-26): белый `#ffffff` — не «без заливки», он прячет сетку. Любая другая строка, `null`
+ * и не строка — отказ текстом `refusal`. Регулярка — внутри проверки, а не на уровне модуля:
+ * мутант кода уровня модуля Stryker судит всем набором тестов (урок бюджета D-26).
+ */
+function colorOrNone(refusal: string) {
+  return z
+    .unknown()
+    .superRefine((value, context) => {
+      const hex = typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value);
+      if (hex || value === 'none') return;
+      context.addIssue({ code: z.ZodIssueCode.custom, message: refusal });
+    })
+    .transform((value) => (value === 'none' ? null : (value as string)))
+    .optional();
+}
+
+/**
  * Вид ячейки на внешней границе. `.strict()` не косметика: `{strikethrough: true}` должен
  * отклоняться С ПЕРЕЧИСЛЕНИЕМ допустимых полей (пример V11), а не проходить в никуда —
  * иначе агент будет уверен, что текст зачёркнут.
  *
  * `null` у шрифта, кегля и формата числа здесь НЕ принимается, хотя домен его знает: это слово
- * отката — «сбросить к виду листа», — а не правки (D-26).
+ * отката — «сбросить к виду листа», — а не правки (D-26). Фон и цвет текста к виду листа
+ * возвращает слово `"none"` (Q16, Q18). Новое поле дописывается в конец: порядок ключей — это
+ * порядок перечисления допустимых полей в отказе.
  */
 export const cellFormat = z
   .object({
@@ -45,10 +67,7 @@ export const cellFormat = z
     italic: z.boolean().optional(),
     underline: z.boolean().optional(),
     align: z.enum(['left', 'center', 'right']).optional(),
-    background: z
-      .string()
-      .regex(/^#[0-9a-fA-F]{6}$/, 'цвет задаётся как #RRGGBB')
-      .optional(),
+    background: colorOrNone('фон — #RRGGBB или "none" (без заливки)'),
     fontFamily: z
       .string({ invalid_type_error: `${FONT_FAMILY}; ${NO_NULL}` })
       .trim()
@@ -62,6 +81,7 @@ export const cellFormat = z
       .max(96, FONT_SIZE)
       .optional(),
     numberFormat: numberFormat.optional(),
+    textColor: colorOrNone('цвет текста — #RRGGBB или "none" (цвет листа)'),
   })
   .strict();
 

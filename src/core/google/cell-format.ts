@@ -2,8 +2,9 @@
  * Явный вид ячейки из ответа Google → доменный `CellFormat` (§8.1).
  *
  * Отдельным модулем от `sheets.ts` по гейту длины — и по делу: с D-26 (Q11) вид несёт
- * гарнитуру, кегль и формат числа, и это уже соответствие восьми полей Google полям домена, а
- * не три строки внутри снимка листа. Направление то же, что у `sheets.ts`: ответ → домен.
+ * гарнитуру, кегль и формат числа, с Q16 и Q18 — фон и цвет текста из пары полей Google, и это
+ * уже соответствие полей Google полям домена, а не три строки внутри снимка листа. Направление
+ * то же, что у `sheets.ts`: ответ → домен.
  */
 
 import type { sheets_v4 } from 'googleapis';
@@ -14,6 +15,24 @@ import type { CellFormat, NumberFormat } from '../sheets/types.js';
 
 export function toHex(color: sheets_v4.Schema$Color | undefined): string | undefined {
   return color === undefined || color === null ? undefined : rgbToHex(color);
+}
+
+/**
+ * Цвет из пары полей Google (Q16, Q18): стиль (`backgroundColorStyle`, `foregroundColorStyle`)
+ * главнее устаревшего поля (`backgroundColor`, `foregroundColor`) — документация Sheets API,
+ * `CellFormat` и `TextFormat`: «If backgroundColor is also set, this field takes precedence».
+ * Поэтому заданный стиль решает один: `rgbColor` — цвет, а `themeColor` — цвет ТЕМЫ книги, в
+ * `#RRGGBB` он не переводится (тема у каждой книги своя), и такой цвет не читается, даже когда
+ * рядом лежит устаревшее поле. Названная непокрытость: фон темы карта не видит, и `"none"` его не
+ * снимет — правка сочтёт, что фона нет (`no_change`); явный цвет поверх темы пишется.
+ */
+function colorOf(
+  style: sheets_v4.Schema$ColorStyle | undefined,
+  legacy: sheets_v4.Schema$Color | undefined,
+): string | undefined {
+  if (style?.rgbColor) return toHex(style.rgbColor);
+  if (style?.themeColor) return undefined;
+  return toHex(legacy);
 }
 
 /** `LEFT|CENTER|RIGHT` из ответа → доменное выравнивание; всё остальное игнорируем. */
@@ -66,10 +85,11 @@ export function toFormat(cell: sheets_v4.Schema$CellData): CellFormat | undefine
     italic: flag(text.italic),
     underline: flag(text.underline),
     align: toAlign(format.horizontalAlignment),
-    background: toHex(format.backgroundColor ?? undefined),
+    background: colorOf(format.backgroundColorStyle, format.backgroundColor),
     fontFamily: fontFamilyOf(text.fontFamily),
     fontSize: fontSizeOf(text.fontSize),
     numberFormat: toNumberFormat(format.numberFormat),
+    textColor: colorOf(text.foregroundColorStyle, text.foregroundColor),
   };
   const out = Object.fromEntries(
     Object.entries(fields).filter(([, value]) => value !== undefined),

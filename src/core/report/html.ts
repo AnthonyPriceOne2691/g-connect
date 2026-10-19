@@ -83,8 +83,9 @@ const yesNo = (value: boolean | undefined, yes: string, no: string): string | nu
   value === undefined ? null : value ? yes : no;
 
 /**
- * Шрифт, кегль и формат числа (D-26): «шрифт Carlito», «кегль 10», «формат DATE dd.mm.yyyy».
- * `null` — сброс к виду листа (слово отката), и человек читает именно это, а не «—».
+ * Шрифт, кегль и формат числа (D-26): «шрифт Carlito», «кегль 10», «формат DATE dd.mm.yyyy»; фон
+ * и цвет текста (Q16, Q18): «фон #c1e4f5», «цвет текста #FFFFFF». `null` — сброс к виду листа
+ * («без заливки» у фона), и человек читает именно это, а не «—».
  */
 const named = <T>(
   value: T | null | undefined,
@@ -104,7 +105,8 @@ function formatWords(format: CellFormat | undefined): string {
     yesNo(format.italic, 'курсив', 'не курсив'),
     yesNo(format.underline, 'подчёркнутый', 'без подчёркивания'),
     format.align === undefined ? null : ALIGN_WORDS[format.align],
-    format.background === undefined ? null : `фон ${format.background}`,
+    named(format.background, (color) => `фон ${color}`, 'без заливки'),
+    named(format.textColor, (color) => `цвет текста ${color}`, 'цвет текста листа'),
     named(format.fontFamily, (family) => `шрифт ${family}`, 'шрифт листа'),
     named(format.fontSize, (size) => `кегль ${size}`, 'кегль листа'),
     named(format.numberFormat, numberFormatWords, 'формат числа листа'),
