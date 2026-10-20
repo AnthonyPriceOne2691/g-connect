@@ -19,12 +19,12 @@
 - **parallel_sessions:** merge-guard
 - **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
 - **blockers:** none
-- **waivers:** none reason=PR #14 (хотфикс Q27–Q32) — объём сверится после сведения; пределы PR #9–#11 — в spec.md «Решения владельца»
+- **waivers:** max_loc_diff=1000 max_files_touched=20 reason=ответ «Да: 1000 строк, 20 файлов» на вопрос с вариантами — хотфикс PR #14 (Q27–Q32: 913 строк, 16 файлов относительно PR #13) by=human:anton at=2026-10-20
 - **new_dependency:** none
 - **runtime_paths:** src/core/google/
   <!-- шов Google целиком: размер листа из метаданных, диапазон '<лист>', окно строк, маски полей вида (сброс null), копия формата строки, локаль книги — отказ виден только живьём -->
 - **irreversible_surfaces:** none reason=запись по-прежнему через превью, предусловие и журнал с откатом; поставка убирает затирание, а не добавляет запись; вид ячеек — тоже с откатом (вид дописанной строки после отката остаётся на пустой строке — названо)
-- **model_surface:** src/policy/rules.md,src/policy/rules.json,src/mcp/tools.ts,src/mcp/read-values.ts,src/core/ops.ts,src/core/format-fields.ts,src/mcp/apply-schema.ts,src/core/sheets/notes.ts
+- **model_surface:** src/policy/rules.md,src/policy/rules.json,src/mcp/tools.ts,src/mcp/read-values.ts,src/core/ops.ts,src/core/format-fields.ts,src/mcp/apply-schema.ts,src/core/sheets/notes.ts,src/core/sheets/bounds.ts,src/core/sheets/sheet-choice.ts,src/mcp/target-arg.ts
   <!-- агенту уйдут: fromRow, truncated с sheetRows и nextFromRow, предупреждение карты о части листа, отказ write.full-sheet; withFormat и formats, поля вида fontFamily/fontSize/numberFormat, allRows и rows у formatCells, заметки о виде дат и оформлении дописанной строки -->
 - **rule_enforcers:** src/policy/rules.json
 - **canon_drift_waiver:** no
