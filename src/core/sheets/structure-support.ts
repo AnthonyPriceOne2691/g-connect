@@ -245,11 +245,14 @@ export async function freshData(client: SheetsClient, map: SheetMap): Promise<Sh
  * Заготовка плана: пустая или с оговорками. `notes` уезжают человеку в ответ, а не в
  * комментарий кода — поэтому заготовка одна на все структурные операции: гейт копипаста
  * отклонил вторую копию, и он прав, иначе половина операций молчала бы там, где другая
- * половина предупреждает.
+ * половина предупреждает. `assumptions` — как понято условие строк-якоря (Q40).
  */
-export const prepared = (notes: readonly string[] = []): Prepared => ({
+export const prepared = (
+  notes: readonly string[] = [],
+  assumptions: readonly string[] = [],
+): Prepared => ({
   resolved: [],
-  assumptions: [],
+  assumptions: [...assumptions],
   notes: [...notes],
   questions: [],
   touches: [],

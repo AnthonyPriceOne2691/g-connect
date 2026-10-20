@@ -19,7 +19,7 @@
 import { z } from 'zod';
 
 import { gcError } from '../errors.js';
-import { assertRevision, clarify, names, rowsUnderCondition } from './rows.js';
+import { assertRevision, clarify, names, rowsUnderCondition, type RowsFound } from './rows.js';
 import type { SheetData, SheetMap } from './types.js';
 import type { ApplyOutcome, Question, RowOptions, RowValues } from './write-types.js';
 
@@ -247,7 +247,7 @@ export function selectedRows(
   options: RowOptions,
   nothingMatched: string,
   op: RowSelectionOp,
-): { rows: readonly number[] } | { refusal: ApplyOutcome } {
+): RowsFound | { refusal: ApplyOutcome } {
   const chosen = rowSelectionOf(selection, op);
   if ('where' in chosen) {
     return rowsUnderCondition(data, chosen.where, options, nothingMatched);

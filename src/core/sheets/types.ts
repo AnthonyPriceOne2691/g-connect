@@ -187,8 +187,9 @@ export interface ColumnProfile {
 }
 
 /**
- * Колонка без подписи в шапке, но со значениями в строках данных (D-26, Q30). В `columns` её нет —
- * записи по ней нет, — а значения видны: «Лист5» прятал так три подпункта в C9–C11.
+ * Колонка без подписи в шапке, но со значениями в строках данных (D-26, Q30). В `columns` её нет, а
+ * значения видны: «Лист5» прятал так три подпункта в C9–C11. Запись и условие строк берут её только
+ * точным ключом `key` (Q40).
  */
 export interface UnlabeledColumn {
   readonly letter: string;
@@ -235,7 +236,7 @@ export interface SheetMap {
  */
 export interface SheetData {
   readonly map: SheetMap;
-  /** Все строки данных, ключ — имя колонки. */
+  /** Все строки данных, ключ — имя колонки, у колонки без подписи — её ключ `(C)` (Q40). */
   readonly rows: readonly Readonly<Record<string, CellValue>>[];
   /**
    * Явный вид тех же ячеек, ключ — имя колонки. Отдельным полем, а не внутри `rows`:
@@ -251,6 +252,11 @@ export interface SheetData {
    * сортирует целиком: снимок по ним терял C3 «а) доступы» и писал значения D в C.
    */
   readonly cells: readonly (readonly Cell[])[];
+  /**
+   * Колонки без подписи со значениями — профилем записи (Q40): имя — ключ `(C)` карты, и под ним же
+   * их ячейки в `rows` и `formats`. Пишутся и ищутся только этим ключом; в карту не уходят.
+   */
+  readonly unlabeled: readonly ColumnProfile[];
 }
 
 export interface ReadOptions {

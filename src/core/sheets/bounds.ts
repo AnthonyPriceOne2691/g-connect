@@ -38,6 +38,31 @@ export function dataBounds(title: string, rows: Rows): string {
   return `${title}!A1:${columnLetter(Math.max(width, 1) - 1)}${Math.max(height, 1)}`;
 }
 
+/**
+ * Пустая колонка внутри шапки делит лист на блоки: справа от неё обычно отдельная таблица (или
+ * врезка), а не продолжение данных. Молча втянуть её значит выдать колонку с одной заполненной
+ * ячейкой и не сказать почему — §9.3 требует обратного. Значения под пустой ячейкой шапки и правее
+ * последней подписи называет `unlabeledIn` ниже (Q30). Здесь, а не в `map.ts`, — по гейту длины.
+ */
+export function sideBlockWarning(headerCells: readonly (Cell | undefined)[]): string[] {
+  const filledAt: number[] = [];
+  headerCells.forEach((cell, index) => {
+    if (cell !== undefined && hasValue(cell)) filledAt.push(index);
+  });
+  for (let i = 1; i < filledAt.length; i += 1) {
+    const previous = filledAt[i - 1]!;
+    const current = filledAt[i]!;
+    if (current - previous > 1) {
+      return [
+        `колонка ${columnLetter(previous + 1)} пуста, а правее (с ${columnLetter(current)}) снова есть ` +
+          'подписи — похоже, на листе ДВА блока. Правая часть в данные втянута как обычные колонки; ' +
+          'если это отдельная таблица или врезка, читай её отдельным вызовом или задай область явно',
+      ];
+    }
+  }
+  return [];
+}
+
 /** Строк до последней со значением или формулой — высота других листов в карте (Q31). */
 export const dataHeight = (rows: Rows): number => extentOf(rows).height;
 
@@ -127,9 +152,9 @@ function columnOf(index: number, span: Span, names: ReadonlySet<string>): Unlabe
 }
 
 /**
- * Предупреждение (Q30): сколько значений не попало в колонки и как их прочесть. Запись не
- * открывается — это хотфикс чтения: резолвер записи знает только колонки карты, и ключ `(C)` для
- * него — незнакомая колонка, вопрос, а не запись.
+ * Предупреждение (Q30): сколько значений не попало в колонки и как их прочесть. Запись и условие
+ * строк — только точным ключом `(C)` (Q40, `unlabeled-key.ts`): прежнее «писать нельзя» после Q40
+ * было бы неправдой, а агент читает предупреждение раньше правил.
  */
 function warningOf(
   columns: readonly UnlabeledColumn[],
@@ -148,8 +173,8 @@ function warningOf(
   return [
     `${UNLABELED_WARNING} (${listed(columns.map((column) => column.letter))}) есть значения: ` +
       `${cells} ${plural(cells, ['ячейка', 'ячейки', 'ячеек'])} в ${rows} ` +
-      `${plural(rows, ['строке', 'строках', 'строках'])} — ${tail}; писать в них нельзя, пока ` +
-      'в шапке нет подписи',
+      `${plural(rows, ['строке', 'строках', 'строках'])} — ${tail}; писать и искать по ним — только ` +
+      'этим ключом, точно как здесь; лучше подписать шапку',
   ];
 }
 

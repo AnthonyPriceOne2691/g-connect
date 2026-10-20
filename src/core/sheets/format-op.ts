@@ -7,9 +7,8 @@
  * второй путь записи разъехался бы с первым первой же правкой.
  */
 
-import { clarify, columnQuestion, finish, guardColumn, type Prepared } from './rows.js';
+import { clarify, finish, guardColumn, writeColumn, type Prepared } from './rows.js';
 import { sameFormat } from './a1.js';
-import { needsClarification, resolveColumn } from '../resolver.js';
 import { selectedRows, type RowSelection } from './row-selection.js';
 import type { CellFormat, ColumnProfile, SheetData, SheetMap, SheetsClient } from './types.js';
 import type { ApplyOutcome, PlannedChange, RowOptions, RowValues } from './write-types.js';
@@ -56,35 +55,39 @@ export async function formatRows(
 
   const prepared: Prepared = {
     resolved: [],
-    assumptions: [],
+    // Оговорки условия — в превью тоже (Q40): ключ колонки без подписи, нечёткое имя.
+    assumptions: [...(selected.assumptions ?? [])],
     notes: [],
     questions: [],
     touches: [],
   };
-  const targets = resolveTargets(columns, map, prepared, options);
+  const targets = resolveTargets(columns, data, prepared, options);
   if (prepared.questions.length > 0) return clarify(prepared.questions, map);
 
   const changes = formatChanges(data, selected.rows, targets, format, options);
   return finish(client, map, changes, prepared, options, 'formatCells');
 }
 
-/** Колонки правки вида: те же ступени резолвера и тот же охранник формул (§8.1). */
+/**
+ * Колонки правки вида: та же дорога, что у значений (§8.1, Q40) — ступени резолвера, точный ключ
+ * колонки без подписи и тот же охранник формул.
+ */
 function resolveTargets(
   columns: readonly string[],
-  map: SheetMap,
+  data: SheetData,
   prepared: Prepared,
   options: RowOptions,
 ): ColumnProfile[] {
   const targets: ColumnProfile[] = [];
   for (const requested of columns) {
-    const resolution = resolveColumn(requested, map.columns, options);
-    if (needsClarification(resolution.step) || resolution.column === null) {
-      prepared.questions.push(columnQuestion(requested, resolution, map));
+    const found = writeColumn(requested, data, options);
+    if ('question' in found) {
+      prepared.questions.push(found.question);
       continue;
     }
-    if (resolution.assumption !== null) prepared.assumptions.push(resolution.assumption);
-    guardColumn(resolution.column, prepared, options);
-    targets.push(resolution.column);
+    if (found.assumption !== null) prepared.assumptions.push(found.assumption);
+    guardColumn(found.column, prepared, options);
+    targets.push(found.column);
   }
   return targets;
 }
@@ -110,8 +113,10 @@ function cellState(
   const formats = isHeader ? data.headerFormats : (data.formats[index] ?? {});
   const values = isHeader ? {} : (data.rows[index] ?? {});
   // У ячейки заголовка значение — само имя колонки. Раньше в плане она читалась как
-  // «null → null», хотя в ней лежит текст: нашла живая проверка 2026-09-03.
-  const value = isHeader ? column.name : (values[column.name] ?? null);
+  // «null → null», хотя в ней лежит текст: нашла живая проверка 2026-09-03. У колонки без
+  // подписи шапка пуста (Q40): ключ «(C)» — имя для записи, а не текст ячейки.
+  const header = data.unlabeled.includes(column) ? null : column.name;
+  const value = isHeader ? header : (values[column.name] ?? null);
   return { before: formats[column.name], value };
 }
 

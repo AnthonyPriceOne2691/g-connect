@@ -5,7 +5,7 @@
  * рядом.
  */
 
-import { clarify, finish, prepare } from './rows.js';
+import { clarify, finish, prepare, withAssumptions } from './rows.js';
 import { selectedRows, type RowSelection } from './row-selection.js';
 import type { SheetData, SheetsClient } from './types.js';
 import type { ApplyOutcome, PlannedChange, RowOptions, RowValues } from './write-types.js';
@@ -47,7 +47,7 @@ export async function setRows(
   );
   if ('refusal' in selected) return selected.refusal;
 
-  const prepared = prepare(map, values, options);
+  const prepared = withAssumptions(prepare(data, values, options), selected);
   if (prepared.questions.length > 0) return clarify(prepared.questions, map);
 
   const changes = plannedCells(data, selected.rows, prepared);

@@ -178,6 +178,36 @@ export const sheetProbes: Record<string, () => Promise<void>> = {
     );
     expect(client.order).toEqual(['copyPaste:format', 'values']);
   },
+
+  // Колонка без подписи — только точным ключом из карты (Q40): «(B)» пишется, «B» и «(b)» — вопрос.
+  'columns.unlabeled-exact-key': async () => {
+    // Шапка — строка 1 явно: на двух строках эвристика взяла бы шапкой строку с двумя значениями.
+    const HEADER_1 = { headerRow: 1 };
+    const snapshot = {
+      id: 'SHEET',
+      title: 'Т',
+      sheets: [{ title: 'Лист', sheetId: 1, rows: [[cell('Пункт')], [cell('п. 1'), cell('x')]] }],
+    };
+    for (const key of ['B', '(b)']) {
+      const client = new FakeSheetsClient(snapshot);
+      const asked = await appendRow(client, buildSheetData(snapshot, HEADER_1), {
+        Пункт: 'п. 2',
+        [key]: 'y',
+      });
+      // Вопрос — именно о ключе: «Пункт» найден, а «B» и «(b)» к колонке без подписи не сводятся.
+      expect(asked).toMatchObject({ status: 'needs_clarification', questions: [{ field: key }] });
+      expect(client.writes).toHaveLength(0);
+    }
+    const preview = await appendRow(
+      new FakeSheetsClient(snapshot),
+      buildSheetData(snapshot, HEADER_1),
+      {
+        Пункт: 'п. 2',
+        '(B)': 'y',
+      },
+    );
+    expect(preview.changes.map((change) => change.a1)).toContain('Лист!B3');
+  },
 };
 
 /** Ошибка вызова — или `null`, если вызов прошёл: отказ сверяется по полезной нагрузке. */

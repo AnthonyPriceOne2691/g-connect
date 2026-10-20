@@ -263,7 +263,8 @@ export async function finishWrite(
   if (shape.structural === undefined) assertChangeBudget(changes.length);
   const base: Base = {
     changes,
-    assumptions: prepared.assumptions,
+    // Одна оговорка — один раз: ключ колонки без подписи в условии и в значениях — одна строка (Q40).
+    assumptions: [...new Set(prepared.assumptions)],
     notes: prepared.notes,
     questions: [] as readonly Question[],
     baseRevision: map.revisionId,
