@@ -26,6 +26,7 @@ import {
   assertSnapshotBudget,
   columnSnapshot,
   rowChanges,
+  rowWidth,
   snapshotOf,
   subjectOf,
   prepared,
@@ -263,7 +264,8 @@ export async function deleteRows(
   const count = rows.length;
   const subject = subjectOf(where);
   const changes = rowChanges(data, rows);
-  assertSnapshotBudget(changes.length);
+  // Бюджет судит снимок, а он — по всей ширине строки (Q34), не по колонкам карты из плана.
+  assertSnapshotBudget(count * rowWidth(data));
   const structural: StructuralPlan = {
     kind: 'deleteRows',
     sheet: map.sheet,

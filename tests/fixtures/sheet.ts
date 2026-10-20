@@ -298,21 +298,33 @@ function withMove(data: SpreadsheetSnapshot, request: MoveDimensionRequest): Spr
   };
 }
 
-/** Сортировка диапазона по колонке: строки внутри диапазона, остальные не двигаются. */
+/**
+ * Сортировка диапазона по колонке — как Google: едут только ячейки диапазона, а строки вне его и
+ * ячейки левее и правее его краёв остаются на месте (Q33). Раньше фейк сортировал строки целиком,
+ * и сортировка A–C при данных до D рвала строки только в настоящем Google (урок L23).
+ */
 function withSort(data: SpreadsheetSnapshot, request: SortRangeRequest): SpreadsheetSnapshot {
+  const { row, rowCount, column, columnCount } = request.range;
+  // `column` запроса — индекс колонки листа; в вырезанном блоке он сдвинут на начало диапазона.
+  const key = request.column - column;
   return {
     ...data,
     sheets: data.sheets.map((sheet) => {
       if (sheet.sheetId !== request.sheetId) return sheet;
       const rows = sheet.rows.map((r) => [...r]);
-      const from = request.range.row - 1;
-      const block = rows.splice(from, request.range.rowCount);
+      const block = rows
+        .slice(row - 1, row - 1 + rowCount)
+        .map((r) => Array.from({ length: columnCount }, (_u, i) => r[column + i] ?? cell(null)));
       block.sort((a, b) => {
-        const left = String(a[request.column]?.value ?? '');
-        const right = String(b[request.column]?.value ?? '');
+        const left = String(a[key]?.value ?? '');
+        const right = String(b[key]?.value ?? '');
         return request.descending === true ? right.localeCompare(left) : left.localeCompare(right);
       });
-      rows.splice(from, 0, ...block);
+      block.forEach((cells, offset) => {
+        const target = rows[row - 1 + offset] as Cell[];
+        while (target.length < column) target.push(cell(null));
+        target.splice(column, columnCount, ...cells);
+      });
       return { ...sheet, rows };
     }),
   };

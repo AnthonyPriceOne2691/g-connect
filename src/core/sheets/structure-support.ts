@@ -11,6 +11,7 @@ import { gcError } from '../errors.js';
 import type { RangeSnapshot, SnapshotCell } from '../journal.js';
 import { denyByRule, limitOf } from '../policy.js';
 import { needsClarification, resolveColumn } from '../resolver.js';
+import { dataWidth } from './bounds.js';
 import type { Prepared } from './commit.js';
 import { columnQuestion, clarify, rowsUnderCondition } from './rows.js';
 import { buildSheetData } from './map.js';
@@ -100,23 +101,32 @@ export function rowChanges(data: SheetData, rows: readonly number[]): PlannedCha
   return out;
 }
 
-/** Снимок удаляемых строк: значения И вид, иначе откат вернёт неоформленную строку. */
+/**
+ * Ширина строки данных (Q33, Q34): от A до последней колонки — подписанной или со значением в
+ * строках данных. Не число колонок карты: при шапке A, B, —, D их три, и сортировка брала A–C, а
+ * колонка без подписи правее последней подписи не попадала ни в сортировку, ни в снимок.
+ */
+export function rowWidth(data: SheetData): number {
+  const labeled = data.map.columns.map((column) => column.index + 1);
+  return Math.max(1, dataWidth(data.cells), ...labeled);
+}
+
+/**
+ * Снимок строк: значения И вид, иначе откат вернёт неоформленную строку. По всей ширине строки
+ * и по индексу колонки листа (Q33, Q34): строка уходит целиком, и снимок по колонкам карты терял
+ * колонки без подписи, а при разрыве шапки откат писал значения D в C.
+ */
 export function snapshotOf(map: SheetMap, data: SheetData, rows: readonly number[]): RangeSnapshot {
-  const last = columnLetter(map.columns.length - 1);
+  const width = rowWidth(data);
   const cells = rows.map((rowNumber) => {
-    const index = rowNumber - map.headerRow - 1;
-    const values = data.rows[index] ?? {};
-    const formats = data.formats[index] ?? {};
-    return map.columns.map((column): SnapshotCell => {
-      const format = formats[column.name];
-      return {
-        value: values[column.name] ?? null,
-        ...(format === undefined ? {} : { format }),
-      };
+    const row = data.cells[rowNumber - map.headerRow - 1] ?? [];
+    return Array.from({ length: width }, (_unused, index): SnapshotCell => {
+      const format = row[index]?.format;
+      return { value: row[index]?.value ?? null, ...(format === undefined ? {} : { format }) };
     });
   });
   return {
-    a1Range: `${map.sheet}!A${rows[0] ?? 1}:${last}${rows[rows.length - 1] ?? 1}`,
+    a1Range: `${map.sheet}!A${rows[0] ?? 1}:${columnLetter(width - 1)}${rows[rows.length - 1] ?? 1}`,
     rows: cells,
   };
 }
