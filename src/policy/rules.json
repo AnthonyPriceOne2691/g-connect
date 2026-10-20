@@ -241,6 +241,13 @@
       "probe": "appendRow на листе с колонкой B без подписи: значения под «B» и «(b)» → needs_clarification, записи нет; под «(B)» → план с Лист!B3"
     },
     {
+      "id": "write.format-like-row",
+      "title": "Источник вида — format или likeRow: N, ровно один; образец — строка данных, вид берётся по колонкам (D-26, Q42)",
+      "kind": "deny",
+      "enforced_in": "src/core/sheets/format-source.ts (formatSourceOf, restyleOf) + src/core/ops.ts (parseOperation)",
+      "probe": "formatCells без источника, с format и likeRow сразу и с format без columns → bad_request до Google; likeRow = шапка → like_row_outside_data; likeRow строки с жирным → план жирного в строке цели"
+    },
+    {
       "id": "write.replace-preview-lists-cells",
       "title": "Превью замены перечисляет ячейки, а не их число",
       "kind": "invariant",
