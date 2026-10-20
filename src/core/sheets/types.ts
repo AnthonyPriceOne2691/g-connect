@@ -186,6 +186,22 @@ export interface ColumnProfile {
   readonly headerNote?: UntrustedData<string>;
 }
 
+/**
+ * Колонка без подписи в шапке, но со значениями в строках данных (D-26, Q30). В `columns` её нет —
+ * записи по ней нет, — а значения видны: «Лист5» прятал так три подпункта в C9–C11.
+ */
+export interface UnlabeledColumn {
+  readonly letter: string;
+  /** 0-based индекс внутри строки. */
+  readonly index: number;
+  /** Ключ её ячеек в строках `gc_read mode=values`: `(C)`; занят подписью — `((C))`. */
+  readonly key: string;
+  /** Непустых ячеек в строках данных. */
+  readonly filled: number;
+  /** Строки листа с ними — от первой до последней: «9–11», одна — «9». */
+  readonly rows: string;
+}
+
 export interface SheetMap {
   readonly spreadsheetId: string;
   readonly spreadsheetTitle: string;
@@ -197,6 +213,7 @@ export interface SheetMap {
   /** Как выбрана строка заголовков — показывается человеку (§9.3). */
   readonly headerRowReason: string;
   readonly headerRowConfident: boolean;
+  /** От A1 до последней строки и колонки со значением или формулой: оформление — не данные (Q31). */
   readonly usedRange: string;
   readonly dataRowCount: number;
   readonly columns: readonly ColumnProfile[];
@@ -206,6 +223,8 @@ export interface SheetMap {
   readonly sheetRows?: number;
   /** Заметки строк над шапкой с адресами (Q24), данными; заметок нет — поля нет. */
   readonly notesAboveHeader?: UntrustedData<readonly CellNote[]>;
+  /** Колонки без подписи со значениями (Q30); таких нет — поля нет (Q32). */
+  readonly unlabeled?: readonly UnlabeledColumn[];
   /** Предупреждения: объединённые ячейки, вторая таблица на листе и т.п. */
   readonly warnings: readonly string[];
 }
