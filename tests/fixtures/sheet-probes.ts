@@ -111,7 +111,7 @@ export const sheetProbes: Record<string, () => Promise<void>> = {
     // Ядро держит то же само, без границы: прямой вызов с пустым условием — отказ.
     await expect(
       formatRows(new FakeSheetsClient(snapshot), buildSheetData(snapshot), { where: {} }, ['Имя'], {
-        bold: true,
+        format: { bold: true },
       }),
     ).rejects.toMatchObject({ payload: { code: 'bad_request', cause: 'empty_condition' } });
     const preview = await formatRows(
@@ -119,7 +119,7 @@ export const sheetProbes: Record<string, () => Promise<void>> = {
       buildSheetData(snapshot),
       { allRows: true },
       ['Имя'],
-      { bold: true },
+      { format: { bold: true } },
     );
     expect(preview.changes.map((change) => change.a1)).toEqual(['Лист!A2', 'Лист!A3', 'Лист!A4']);
     const header = await formatRows(
@@ -127,7 +127,7 @@ export const sheetProbes: Record<string, () => Promise<void>> = {
       buildSheetData(snapshot),
       { headerOnly: true },
       ['Имя'],
-      { bold: true },
+      { format: { bold: true } },
     );
     expect(header.changes.map((change) => change.a1)).toEqual(['Лист!A1']);
     // setCells (Q39): те же способы — подмножеством, номерами строк пишется строка без условия.

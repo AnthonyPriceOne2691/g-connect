@@ -163,15 +163,16 @@ interface DataBounds {
 
 /**
  * Граница данных, а не счётчик непустых (урок L16): `data.rows` идут без пустого хвоста, но с
- * пустыми строками внутри, и лист прочитан целиком (D-26). Строк данных нет — `null`.
+ * пустыми строками внутри, и лист прочитан целиком (D-26). Строк данных нет — `null`. Ею же судится
+ * строка-образец вида (Q42, `format-source.ts`): «строка данных» у двух правок вида одна.
  */
-function dataBounds(data: SheetData): DataBounds | null {
+export function dataBounds(data: SheetData): DataBounds | null {
   if (data.rows.length === 0) return null;
   const first = data.map.headerRow + 1;
   return { first, last: data.map.headerRow + data.rows.length };
 }
 
-const spanText = (first: number, last: number): string =>
+export const spanText = (first: number, last: number): string =>
   first === last ? `строка ${first}` : `строки ${first}–${last}`;
 
 /**

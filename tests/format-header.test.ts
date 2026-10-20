@@ -214,7 +214,7 @@ describe('Q17 — только строка шапки: четвёртый сп�
       data,
       { headerOnly: true },
       ['Логин'],
-      { background: NAVY },
+      { format: { background: NAVY } },
       { includeHeader: true },
     );
     expect(outcome.changes.map((change) => change.a1)).toEqual(['Аккаунты!B2']);

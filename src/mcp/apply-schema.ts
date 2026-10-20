@@ -175,8 +175,9 @@ export const applyInput = {
     .union([z.array(z.string().min(1)), z.number().int().positive()])
     .optional()
     .describe(
-      'formatCells/findReplace: имена колонок, чей вид или текст правим; insertTable: ' +
-        'число колонок новой таблицы (1–10); createSheet: шапка новой таблицы',
+      'formatCells/findReplace: имена колонок, чей вид или текст правим (formatCells с likeRow ' +
+        'без них — все колонки); insertTable: число колонок новой таблицы (1–10); createSheet: ' +
+        'шапка новой таблицы',
     ),
   format: z
     .record(z.string(), z.unknown())
@@ -186,6 +187,16 @@ export const applyInput = {
         'или "none" (без заливки), textColor #RRGGBB или "none" (цвет листа), ' +
         'fontFamily (Carlito), fontSize (целое 6–96), numberFormat {type, pattern} — ' +
         'например {type: DATE, pattern: dd.mm.yyyy} — или "none" (формат листа, «автоматический»)',
+    ),
+  likeRow: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      'formatCells: вид как у строки N вместо format — у каждой колонки вид её ячейки в строке ' +
+        'данных N; поле, которого у образца нет, сбрасывается к виду листа. Рамки, перенос, ' +
+        'вертикальное выравнивание и условное форматирование не копируются',
     ),
   includeHeader: z
     .boolean()
