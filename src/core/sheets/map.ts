@@ -8,9 +8,16 @@
  */
 
 import { gcError } from '../errors.js';
-import { dataBounds, dataHeight, unlabeledIn, type KeyedColumn } from './bounds.js';
+import {
+  dataBounds,
+  dataHeight,
+  sideBlockWarning,
+  unlabeledIn,
+  type KeyedColumn,
+} from './bounds.js';
 import { detectDateFormat, withDateStyle } from './date-style.js';
 import { headerNotes } from './notes.js';
+import { unlabeledProfiles } from './unlabeled-key.js';
 import {
   columnLetter,
   type Cell,
@@ -211,29 +218,6 @@ export function windowRecords(
   return withoutEmptyTail(rows, held).map((row) => rowToRecord(row, columns));
 }
 
-/**
- * Пустая колонка внутри шапки делит лист на блоки: справа от неё обычно отдельная
- * таблица (или врезка), а не продолжение данных. Молча втянуть её значит выдать
- * колонку с одной заполненной ячейкой и не сказать почему — §9.3 требует обратного.
- * Значения под пустой ячейкой шапки и правее последней подписи называет `bounds.ts` (Q30).
- */
-function detectSideBlock(
-  headerCells: readonly Cell[],
-): { gapAt: number; rightFrom: number } | null {
-  const filledAt: number[] = [];
-  headerCells.forEach((cell, index) => {
-    if (!isBlank(cell)) filledAt.push(index);
-  });
-  if (filledAt.length < 2) return null;
-
-  for (let i = 1; i < filledAt.length; i += 1) {
-    const previous = filledAt[i - 1]!;
-    const current = filledAt[i]!;
-    if (current - previous > 1) return { gapAt: previous + 1, rightFrom: current };
-  }
-  return null;
-}
-
 /** Объединённые ячейки, задевающие шапку или область данных. */
 function mergeWarnings(sheet: SheetSnapshot, headerRow: number): string[] {
   const merges = sheet.merges ?? [];
@@ -350,16 +334,7 @@ export function buildSheetData(
   // Значения под пустой ячейкой шапки и правее последней подписи — полем и предупреждением (Q30).
   const unlabeled = unlabeledIn(dataRows, guess.row + 1, columns, 'map');
 
-  const side = detectSideBlock(headerCells);
-  if (side !== null) {
-    const gap = columnLetter(side.gapAt);
-    const right = columnLetter(side.rightFrom);
-    warnings.push(
-      `колонка ${gap} пуста, а правее (с ${right}) снова есть подписи — похоже, на листе ДВА блока. ` +
-        `Правая часть в данные втянута как обычные колонки; если это отдельная таблица или врезка, ` +
-        `читай её отдельным вызовом или задай область явно`,
-    );
-  }
+  warnings.push(...sideBlockWarning(headerCells));
   warnings.push(...unlabeled.warnings, ...mergeWarnings(sheet, guess.row));
   warnings.push(...partialReadWarning(snapshot.rowLimit, rows.length, sheet.gridRows));
   if (!guess.confident && options.headerRow === undefined) {
@@ -375,8 +350,11 @@ export function buildSheetData(
   const dataRowCount = dataRows.filter((row) => row.some((c) => !isBlank(c))).length;
 
   const withData = withoutEmptyTail(dataRows, filled);
-  const allRows = withData.map((row) => rowToRecord(row, columns));
-  const allFormats = withData.map((row) => formatsToRecord(row, columns));
+  // Колонки без подписи — в строках записи под ключом «(C)» (Q40); образцы строк карты — без них.
+  const keyed = unlabeledProfiles(unlabeled.columns, dataRows, (index) =>
+    isProtected(sheet, index, guess.row + 1),
+  );
+  const writable = [...columns, ...keyed];
 
   const map: SheetMap = {
     spreadsheetId: snapshot.id,
@@ -393,7 +371,7 @@ export function buildSheetData(
     // Пустой колонке — вид дат листа или локали книги (Q15): первая дата в неё уходила как её
     // прислал агент. Записи строк выше берут только имена и индексы — вид дат им не нужен.
     columns: withDateStyle(columns, snapshot.locale),
-    sampleRows: allRows.slice(0, SAMPLE_ROWS),
+    sampleRows: withData.slice(0, SAMPLE_ROWS).map((row) => rowToRecord(row, columns)),
     // Высота других листов — тоже по данным: строки с одним оформлением — не строки листа (Q31).
     otherSheets: snapshot.sheets
       .filter((s) => s.title !== sheet.title)
@@ -416,10 +394,11 @@ export function buildSheetData(
 
   return {
     map,
-    rows: allRows,
-    formats: allFormats,
-    headerFormats: formatsToRecord(headerCells, columns),
+    rows: withData.map((row) => rowToRecord(row, writable)),
+    formats: withData.map((row) => formatsToRecord(row, writable)),
+    headerFormats: formatsToRecord(headerCells, writable),
     cells: withData,
+    unlabeled: keyed,
   };
 }
 

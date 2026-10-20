@@ -73,7 +73,8 @@ export async function insertRows(
     count,
     anchor: `строка, где ${anchorText(where)}`,
   };
-  return finishWrite(client, contextOf(map), [], prepared(), options, 'insertRows', {
+  const plan = prepared([], selected.assumptions);
+  return finishWrite(client, contextOf(map), [], plan, options, 'insertRows', {
     structural,
     cells: count * Math.max(1, map.columns.length),
     apply: (c) => insertDimension(c, map, 'rows', at, count),
@@ -275,7 +276,8 @@ export async function deleteRows(
     confirmPhrase: `удаляю ${count === 1 ? 'строку' : `строки (${count})`} ${subject}`,
     confirmToken: subject,
   };
-  return finishWrite(client, contextOf(map), changes, prepared(), options, 'deleteRows', {
+  const plan = prepared([], selected.assumptions);
+  return finishWrite(client, contextOf(map), changes, plan, options, 'deleteRows', {
     structural,
     snapshots: [snapshotOf(map, data, rows)],
     apply: (c) => deleteDimension(c, map, 'rows', at, count),

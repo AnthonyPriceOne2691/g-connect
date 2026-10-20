@@ -97,7 +97,7 @@ async function read<T = SheetMap>(sheet: SheetSnapshot, args: Record<string, unk
 
 /** Предупреждение о колонках без подписи: что нашлось — и хвост, у карты и `values` свой. */
 const unlabeledWarning = (found: string, tail: string): string =>
-  `в колонках без подписи ${found} — ${tail}; писать в них нельзя, пока в шапке нет подписи`;
+  `в колонках без подписи ${found} — ${tail}; писать и искать по ним — только этим ключом, точно как здесь; лучше подписать шапку`;
 const mapTail = (keys: string): string =>
   `в данные не попали; прочитать — gc_read mode=values, там они ${keys}`;
 const SHEET5_FOUND = '(C) есть значения: 3 ячейки в 3 строках';
@@ -186,28 +186,65 @@ describe('Q30 — колонки без подписи с данными вид�
     ]);
   });
 
-  // Запись не открывается — это хотфикс чтения (п. 3): страховка, зелёная и до правки.
+  /** Правка «Лист5» в конверте с первой фразы (D-18): заголовок — строка 1. */
+  const writeSheet5 = async (op: Record<string, unknown>) => {
+    const client = new FakeSheetsClient(book(sheet5()));
+    const auto = { ops: ['appendRow', 'upsertRow', 'setCells'], maxCells: 10 };
+    const result = await callMcp(
+      gcApply,
+      { target: 'sheet', headerRow: 1, dryRun: false, ...op },
+      depsOf(client, 'Лист5', auto),
+    );
+    return { client, outcome: result.data as ApplyOutcome };
+  };
+
+  // Запись открыта решением владельца «Явный ключ «(A)»» (Q40): точный ключ из карты пишет и ищет.
   it.each([
-    ['appendRow', { op: 'appendRow', values: { Пункт: 'п. 27', '(C)': 'г) отчёт' } }],
-    ['upsertRow', { op: 'upsertRow', key: { Пункт: 'п. 8' }, values: { '(C)': 'г) отчёт' } }],
-    ['setCells', { op: 'setCells', where: { Пункт: 'п. 8' }, values: { '(C)': 'г) отчёт' } }],
+    [
+      'appendRow',
+      { op: 'appendRow', values: { Пункт: 'п. 27', '(C)': 'г) отчёт' } },
+      ['Лист5!A28', 'Лист5!C28'],
+    ],
+    [
+      'upsertRow',
+      { op: 'upsertRow', key: { Пункт: 'п. 8' }, values: { '(C)': 'г) отчёт' } },
+      ['Лист5!C9'],
+    ],
+    [
+      'setCells',
+      { op: 'setCells', where: { Пункт: 'п. 8' }, values: { '(C)': 'г) отчёт' } },
+      ['Лист5!C9'],
+    ],
     [
       'setCells, условием',
       { op: 'setCells', where: { '(C)': 'а) доступы' }, values: { Описание: 'новое' } },
+      ['Лист5!B9'],
+    ],
+  ])('Q30→Q40: %s по точному ключу «(C)» в конверте — запись', async (_name, op, ranges) => {
+    const { client, outcome } = await writeSheet5(op);
+    expect(outcome.status).toBe('ok');
+    expect(client.writes.map((write) => write.range)).toEqual(ranges);
+  });
+
+  it.each([
+    ['appendRow', { op: 'appendRow', values: { Пункт: 'п. 27', C: 'г) отчёт' } }, 'C'],
+    ['upsertRow', { op: 'upsertRow', key: { Пункт: 'п. 8' }, values: { '(c)': 'г' } }, '(c)'],
+    [
+      'setCells',
+      { op: 'setCells', where: { Пункт: 'п. 8' }, values: { 'колонка C': 'г' } },
+      'колонка C',
+    ],
+    [
+      'setCells, условием',
+      { op: 'setCells', where: { C: 'а) доступы' }, values: { Описание: 'новое' } },
+      'C',
     ],
   ])(
-    'Q30: %s по ключу «(C)» в конверте — вопрос, как у незнакомой колонки, ни одной записи',
-    async (_name, op) => {
-      const client = new FakeSheetsClient(book(sheet5()));
-      const auto = { ops: ['appendRow', 'upsertRow', 'setCells'], maxCells: 10 };
-      const result = await callMcp(
-        gcApply,
-        { target: 'sheet', headerRow: 1, dryRun: false, ...op },
-        depsOf(client, 'Лист5', auto),
-      );
-      const outcome = result.data as ApplyOutcome;
+    'Q30→Q40: %s по неточному ключу — вопрос, как у незнакомой колонки, ни одной записи',
+    async (_name, op, field) => {
+      const { client, outcome } = await writeSheet5(op);
       expect(outcome.status).toBe('needs_clarification');
-      expect(outcome.questions[0]).toMatchObject({ field: '(C)', reason: 'no_match' });
+      expect(outcome.questions[0]).toMatchObject({ field, reason: 'no_match' });
       expect(client.writes).toEqual([]);
       expect(client.batches).toEqual([]);
     },

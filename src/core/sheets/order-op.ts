@@ -85,7 +85,8 @@ export async function moveRows(
     ...wholeRowNote(data, rows),
   ];
   assertSnapshotBudget(count * rowWidth(data));
-  return finishWrite(client, contextOf(map), [], prepared(notes), options, 'moveRows', {
+  const plan = prepared(notes, [...(source.assumptions ?? []), ...(target.assumptions ?? [])]);
+  return finishWrite(client, contextOf(map), [], plan, options, 'moveRows', {
     structural,
     // Снимок перемещаемых строк — обещание четырёх документов и вторая линия обороны:
     // вся обратимость иначе держалась бы на арифметике `inverseMove`, чья ошибка выглядит
