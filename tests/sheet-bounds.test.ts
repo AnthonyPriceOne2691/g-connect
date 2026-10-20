@@ -7,6 +7,7 @@
  *   карта выдавала за границы данных, и есть ли значения в C–Z, узнать было нечем.
  *
  * Карта, `values` и запись — через настоящий протокол (урок L26), разбор — через `buildSheetData`.
+ * План удаления «Лист5» через протокол (Q37) — здесь же, остальное о Q37 — в structure-width.test.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -279,4 +280,28 @@ describe('Q32 — без колонок без подписи — как ран�
       expect(data.warnings).toEqual(map.warnings);
     },
   );
+});
+
+describe('Q37 — план удаления называет колонки без подписи', () => {
+  it('Q37: «Лист5» через протокол — превью deleteRows строки 9: C9 «а) доступы» под ключом «(C)», как в values', async () => {
+    const client = new FakeSheetsClient(book(sheet5()));
+    const op = { target: 'sheet', headerRow: 1, op: 'deleteRows', where: { Пункт: 'п. 8' } };
+    const result = await callMcp(gcApply, op, depsOf(client, 'Лист5'));
+    const outcome = result.data as ApplyOutcome;
+    expect(outcome.status).toBe('preview');
+    const gone = (a1: string, column: string, before: CellValue) => ({
+      kind: 'set',
+      a1: `Лист5!${a1}`,
+      column,
+      before,
+      after: null,
+    });
+    expect(outcome.changes).toEqual([
+      gone('A9', 'Пункт', 'п. 8'),
+      gone('B9', 'Описание', 'описание 8'),
+      gone('C9', '(C)', 'а) доступы'),
+    ]);
+    // Превью — не запись: ни одной правки в книге.
+    expect(client.formatWrites).toEqual([]);
+  });
 });

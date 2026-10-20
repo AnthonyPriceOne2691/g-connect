@@ -10,6 +10,9 @@
  *
  * Колонки без подписи со значениями (Q30) окно отдаёт под ключами `(C)` — только читать: в
  * `columns` их нет, и запись по ним резолвер не находит.
+ *
+ * Конец ответа окно называет само (Q36): `toRow` и предупреждение о срезанном пустом хвосте, пока
+ * строки дальше есть; пустая строка с видом или заметкой, о которых просили, не срезается (Q38).
  */
 
 import { asData, limitOf, type UntrustedData } from '../core/policy.js';
@@ -95,23 +98,61 @@ export async function readValues(
     warnings.push(`fromRow ${request.fromRow} — шапка или выше неё: строки отданы с ${first}-й`);
   }
   const origin = `таблица ${id}, лист «${map.sheet}»`;
-  const records = windowRecords(window.rows, keyed);
+  const records = windowRecords(window.rows, keyed, markedBy(request));
+  const end = windowEnd(fromRow, records.length, last, truncated);
+  warnings.push(...end.warnings);
   return {
     sheet: map.sheet,
     headerRow: map.headerRow,
     columns: map.columns.map((c) => c.name),
     // Строка ответа под номером i — строка листа fromRow + i: пропуски в середине остаются.
     fromRow,
+    // Строка листа последней строки ответа (Q36); строк нет — поля нет.
+    ...end.fields,
     sheetRows: window.gridRows,
     // Содержимое — ДАННЫЕ с пометкой источника (правило content.is-data).
     rows: asData(origin, records),
     // Вид и заметки — строка в строку с `rows` (Q11: найти дописанные строки, что выглядят
     // иначе; Q25: прочесть заметки строк): `windowRecords` срезает только пустой хвост, и первые
-    // `records.length` строк окна — ровно строки ответа, а оформленный или с заметкой пустой
-    // хвост не попадает ни туда, ни сюда.
+    // `records.length` строк окна — ровно строки ответа. Пустая строка хвоста с видом или
+    // заметкой, о которых просили, — тоже строка ответа (Q38), без просьбы — срезана.
     ...cellLayers(window.rows.slice(0, records.length), keyed, request, origin),
     truncated,
     ...(truncated ? { nextFromRow: last + 1 } : {}),
     warnings,
+  };
+}
+
+/**
+ * Что держит пустую строку хвоста окна (Q38): вид — при `withFormat`, заметка — при `withNotes`.
+ * После `insertRows` две пустые оформленные строки 3–4 окно `fromRow 3, limit 2, withFormat`
+ * отдавало пустым: хвост срезался вместе с `formats`, а вид этих строк и был вопросом.
+ */
+const markedBy =
+  (request: ValuesRequest) =>
+  (cell: Cell | undefined): boolean =>
+    (request.withFormat === true && cell?.format !== undefined) ||
+    (request.withNotes === true && cell?.note !== undefined);
+
+/**
+ * Конец ответа (Q36): `toRow` — строка листа последней строки `rows`, а срезанный пустой хвост
+ * окна, пока строки дальше есть, — предупреждением. `fromRow 8, limit 5` при пустой 12-й отдавал
+ * четыре строки и `nextFromRow: 13` — сдвига нет, но строк меньше `limit`, и что 12-я пуста, агент
+ * не видел. Окно дошло до конца сетки (`truncated: false`) — предупреждать не о чем.
+ */
+function windowEnd(
+  fromRow: number,
+  count: number,
+  last: number,
+  truncated: boolean,
+): { fields: { toRow?: number }; warnings: string[] } {
+  const cut = fromRow + count;
+  const what =
+    cut === last
+      ? `строка ${cut} окна пуста и в ответ не вошла`
+      : `строки ${cut}–${last} окна пусты и в ответ не вошли`;
+  return {
+    fields: count === 0 ? {} : { toRow: cut - 1 },
+    warnings: truncated && cut <= last ? [`${what} — продолжай с nextFromRow`] : [],
   };
 }
