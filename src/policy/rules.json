@@ -234,6 +234,13 @@
       "probe": "appendRow под оформленной строкой: первым запросом — copyPaste с paste: format из строки над новой, потом значения; заметка превью называет копию"
     },
     {
+      "id": "columns.unlabeled-exact-key",
+      "title": "Колонка без подписи пишется и ищется только точным ключом из карты — «(A)»; похожие имена не подбираются, ключ в скобках без такой колонки — вопрос, а не запись (D-26, Q40)",
+      "kind": "deny",
+      "enforced_in": "src/core/sheets/unlabeled-key.ts (unlabeledByKey, unlabeledKeyQuestion) + src/core/sheets/rows.ts (writeColumn)",
+      "probe": "appendRow на листе с колонкой B без подписи: значения под «B» и «(b)» → needs_clarification, записи нет; под «(B)» → план с Лист!B3"
+    },
+    {
       "id": "write.replace-preview-lists-cells",
       "title": "Превью замены перечисляет ячейки, а не их число",
       "kind": "invariant",
