@@ -64,9 +64,10 @@ const docFields = {
     .optional()
     .describe('setParagraphStyle: вид абзаца — обычный текст или заголовок'),
   // Три смысла у одного имени, как у `columns`: число строк новой таблицы документа, строки
-  // новой таблицы Sheets (D-23) и номера строк правки вида (Q13). Без любой из форм транспорт
-  // отклонял бы её до ядра. Строка JSON разбирается тем же `orJsonText`, что в ядре (Q19): клиент
-  // со старой схемой шлёт форму строкой, а в `tools/list` строки нет — модель видит три формы.
+  // новой таблицы Sheets (D-23) и номера строк правки вида и записи значений (Q13, Q39). Без
+  // любой из форм транспорт отклонял бы её до ядра. Строка JSON разбирается тем же `orJsonText`,
+  // что в ядре (Q19): клиент со старой схемой шлёт форму строкой, а в `tools/list` строки нет —
+  // модель видит три формы.
   rows: orJsonText(
     z.union([
       z.number().int().positive(),
@@ -78,7 +79,8 @@ const docFields = {
     .describe(
       'insertTable: число строк (1–50); createSheet: строки новой таблицы — массивы значений ' +
         'в порядке колонок шапки; formatCells: {from, to} — номера строк листа включительно, ' +
-        'внутри строк данных (пачка под конверт)',
+        'внутри строк данных (пачка под конверт); setCells: те же номера вместо where — так ' +
+        'пишется пустая вставленная строка без уникального условия',
     ),
   asText: z
     .boolean()
@@ -183,7 +185,7 @@ export const applyInput = {
       'formatCells: bold, italic, underline, align (left|center|right), background #RRGGBB ' +
         'или "none" (без заливки), textColor #RRGGBB или "none" (цвет листа), ' +
         'fontFamily (Carlito), fontSize (целое 6–96), numberFormat {type, pattern} — ' +
-        'например {type: DATE, pattern: dd.mm.yyyy}',
+        'например {type: DATE, pattern: dd.mm.yyyy} — или "none" (формат листа, «автоматический»)',
     ),
   includeHeader: z
     .boolean()

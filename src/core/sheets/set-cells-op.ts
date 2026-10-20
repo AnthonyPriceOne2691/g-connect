@@ -1,28 +1,49 @@
 /**
- * Точечная правка ячеек по условию (§5). Отдельным модулем: гейт длины отклонил житьё
- * всех трёх операций в `rows.ts` разом, а делить по вопросам честнее, чем по строкам —
- * `rows.ts` остался машинерией записи (план, охранники, журнал), операции живут рядом.
+ * Точечная правка ячеек (§5) — по условию или по номерам строк (D-26, Q39). Отдельным модулем:
+ * гейт длины отклонил житьё всех трёх операций в `rows.ts` разом, а делить по вопросам честнее,
+ * чем по строкам — `rows.ts` остался машинерией записи (план, охранники, журнал), операции живут
+ * рядом.
  */
 
-import { clarify, finish, prepare, rowsUnderCondition } from './rows.js';
+import { clarify, finish, prepare } from './rows.js';
+import { selectedRows, type RowSelection } from './row-selection.js';
 import type { SheetData, SheetsClient } from './types.js';
 import type { ApplyOutcome, PlannedChange, RowOptions, RowValues } from './write-types.js';
 
-/** Точечно поправить ячейки во всех строках, подходящих под условие. */
-
-export async function setCells(
+/**
+ * Точечно поправить ячейки во всех строках, подходящих под условие, — прежний адрес вызова.
+ * Обёртка, а не копия: путь записи значений один — `setRows`.
+ */
+export const setCells = (
   client: SheetsClient,
   data: SheetData,
   where: RowValues,
   values: RowValues,
   options: RowOptions = {},
+): Promise<ApplyOutcome> => setRows(client, data, { where }, values, options);
+
+/**
+ * Точечно поправить ячейки выбранных строк: условием — во всех подошедших, номерами строк листа —
+ * в строках внутри данных (Q39). В ежедневном отчёте две строки, вставленные над днём, пусты во
+ * всех колонках: уникального условия у них нет, а номер есть. Способ — ровно один
+ * (`rowSelectionOf` с подмножеством `setCells`): «все строки» и шапка — способы правки вида, и
+ * ядро отказывает в них и без границы. План, конверт (ячейки строк × колонок), сверка «было»
+ * перед записью (D-17) и откат — те же, что у условия: путь записи один.
+ */
+export async function setRows(
+  client: SheetsClient,
+  data: SheetData,
+  selection: RowSelection,
+  values: RowValues,
+  options: RowOptions = {},
 ): Promise<ApplyOutcome> {
   const map = data.map;
-  const selected = rowsUnderCondition(
+  const selected = selectedRows(
     data,
-    where,
+    selection,
     options,
     'Под условие не подошла ни одна строка — править нечего.',
+    'setCells',
   );
   if ('refusal' in selected) return selected.refusal;
 

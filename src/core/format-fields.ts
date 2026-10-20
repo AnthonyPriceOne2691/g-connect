@@ -1,8 +1,8 @@
 /**
  * Поля вида ячейки на внешней границе (`formatCells`) — модуль-низ, как `op-fields.ts`, и по
  * гейту длины `ops.ts`: с D-26 (Q12) вид получил гарнитуру, кегль и формат числа, с Q16 и Q18 —
- * снятие заливки и цвет текста, и у каждого свой отказ человеческим текстом — агент должен
- * узнать, ЧТО не так, а не «invalid_type».
+ * снятие заливки и цвет текста, с Q41 — сброс формата числа, и у каждого свой отказ человеческим
+ * текстом — агент должен узнать, ЧТО не так, а не «invalid_type».
  */
 
 import { z } from 'zod';
@@ -15,22 +15,50 @@ const NO_NULL = 'null (сброс к виду листа) пишет тольк�
 /** Кегль — целые пункты, как в меню Google: дробный и вне 6–96 отклоняется этим текстом. */
 const FONT_SIZE = 'кегль — целое число пунктов от 6 до 96';
 const FONT_FAMILY = 'гарнитура — имя шрифта до 100 знаков: Carlito, Arial';
-const PATTERN = 'шаблон — до 100 знаков: dd.mm.yyyy или #,##0.00';
 
 /**
- * Формат числа: тип Google и шаблон — `{type: 'DATE', pattern: 'dd.mm.yyyy'}`. Без шаблона
- * Google берёт вид типа по локали книги. `.strict()` — по той же причине, что у вида:
- * `{patern: …}` молча не сделал бы ничего.
+ * Формат числа объектом: тип Google и шаблон — `{type: 'DATE', pattern: 'dd.mm.yyyy'}`. Без
+ * шаблона Google берёт вид типа по локали книги. `.strict()` — по той же причине, что у вида:
+ * `{patern: …}` молча не сделал бы ничего. Схема и тексты строятся на разборе, а не на уровне
+ * модуля: мутант кода уровня модуля Stryker судит всем набором тестов (урок бюджета D-26).
  */
-const numberFormat = z
-  .object(
-    {
-      type: z.enum(NUMBER_FORMAT_TYPES),
-      pattern: z.string().min(1, PATTERN).max(100, PATTERN).optional(),
-    },
-    { invalid_type_error: `формат числа — объект {type, pattern}; ${NO_NULL}` },
-  )
-  .strict();
+function numberFormatObject() {
+  const pattern = 'шаблон — до 100 знаков: dd.mm.yyyy или #,##0.00';
+  return z
+    .object(
+      {
+        type: z.enum(NUMBER_FORMAT_TYPES),
+        pattern: z.string().min(1, pattern).max(100, pattern).optional(),
+      },
+      {
+        invalid_type_error:
+          `формат числа — объект {type, pattern} или "none" (формат листа, «автоматический»); ` +
+          NO_NULL,
+      },
+    )
+    .strict();
+}
+
+/**
+ * Формат числа на границе (Q41): объект или слово `"none"` — формат листа, «автоматический». В
+ * домен `"none"` уходит `null` — сброс тем же путём, что у фона и цвета текста: поле в маске
+ * `repeatCell` без значения. Строка задачи, вставленная над днём ежедневного отчёта, унаследовала
+ * DATE и TIME, и вернуть «автоматический» было нечем. Объект судит прежняя строгая схема, и её
+ * отказы — тип вне списка, опечатка в поле — доходят до агента прежними путями и текстом; `null`,
+ * как и у шрифта, — слово отката, а не правки.
+ */
+function numberFormatOrNone() {
+  return z
+    .unknown()
+    .transform((value, context) => {
+      if (value === 'none') return null;
+      const parsed = numberFormatObject().safeParse(value);
+      if (parsed.success) return parsed.data;
+      for (const issue of parsed.error.issues) context.addIssue(issue);
+      return z.NEVER;
+    })
+    .optional();
+}
 
 /**
  * Цвет на границе (Q16, Q18): `#RRGGBB` или слово `"none"` — «без заливки» у фона, «цвет листа» у
@@ -57,9 +85,9 @@ function colorOrNone(refusal: string) {
  * иначе агент будет уверен, что текст зачёркнут.
  *
  * `null` у шрифта, кегля и формата числа здесь НЕ принимается, хотя домен его знает: это слово
- * отката — «сбросить к виду листа», — а не правки (D-26). Фон и цвет текста к виду листа
- * возвращает слово `"none"` (Q16, Q18). Новое поле дописывается в конец: порядок ключей — это
- * порядок перечисления допустимых полей в отказе.
+ * отката — «сбросить к виду листа», — а не правки (D-26). Фон, цвет текста и формат числа к виду
+ * листа возвращает слово `"none"` (Q16, Q18, Q41). Новое поле дописывается в конец: порядок ключей
+ * — это порядок перечисления допустимых полей в отказе.
  */
 export const cellFormat = z
   .object({
@@ -80,7 +108,7 @@ export const cellFormat = z
       .min(6, FONT_SIZE)
       .max(96, FONT_SIZE)
       .optional(),
-    numberFormat: numberFormat.optional(),
+    numberFormat: numberFormatOrNone(),
     textColor: colorOrNone('цвет текста — #RRGGBB или "none" (цвет листа)'),
   })
   .strict();

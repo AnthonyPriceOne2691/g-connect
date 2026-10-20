@@ -20,8 +20,8 @@ export type CellValue = string | number | boolean | null;
  * `null` у гарнитуры, кегля, формата числа, фона и цвета текста — «сбросить к виду листа по
  * умолчанию». Так откат возвращает ячейку, где поле не было задано: нейтрального значения, как
  * `bold: false`, у них нет — шрифт листа по умолчанию у каждой книги свой, а белый фон — не «без
- * заливки» (Q16). Снаружи (`gc_apply`) `null` не принимается: это слово отката, а не правки; фон
- * и цвет текста снимаются словом `"none"`, и граница переводит его в `null`.
+ * заливки» (Q16). Снаружи (`gc_apply`) `null` не принимается: это слово отката, а не правки; фон,
+ * цвет текста и формат числа (Q41) снимаются словом `"none"`, и граница переводит его в `null`.
  */
 export interface CellFormat {
   readonly bold?: boolean;
@@ -36,7 +36,7 @@ export interface CellFormat {
   readonly fontFamily?: string | null;
   /** Кегль в пунктах. */
   readonly fontSize?: number | null;
-  /** Формат числа или даты: тип Google и шаблон — `DATE` и `dd.mm.yyyy`. */
+  /** Формат числа или даты: тип Google и шаблон — `DATE` и `dd.mm.yyyy`; `null` — формат листа. */
   readonly numberFormat?: NumberFormat | null;
 }
 

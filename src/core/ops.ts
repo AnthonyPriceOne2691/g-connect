@@ -61,7 +61,16 @@ export const upsertRowOp = z.object({
 
 export const setCellsOp = z.object({
   op: z.literal('setCells'),
-  where: rowValues,
+  /**
+   * Какие строки — ровно одним способом (Q39, `rowSelectionOf`): `where` — условие, как прежде;
+   * `rows` — номера строк листа внутри данных, объектом или строкой JSON: у пустой вставленной
+   * строки уникального условия нет. `allRows` и `headerOnly` — способы правки вида: они объявлены,
+   * чтобы отказ (`row_selection`) назвал способы setCells, а не «незнакомое поле».
+   */
+  where: rowValues.optional(),
+  rows: orJsonText(rowSpanSchema).optional(),
+  allRows: z.boolean().optional(),
+  headerOnly: z.boolean().optional(),
   values: rowValues,
   ...commonFields,
 });
@@ -419,8 +428,10 @@ function assertKnownFields(input: unknown, op: OperationName): void {
  */
 function shapeHint(op: OperationName, issues: readonly z.ZodIssue[]): string {
   const about = (field: string): boolean => issues.some((issue) => issue.path[0] === field);
+  const span = '{from, to}: номера строк листа включительно; объектом';
   const rowsForms: Partial<Record<OperationName, string>> = {
-    formatCells: '{from, to}: номера строк листа включительно; объектом',
+    formatCells: span,
+    setCells: span,
     createSheet: 'массив строк, каждая — массив значений в порядке колонок шапки; массивом',
   };
   const rowsForm = about('rows') ? rowsForms[op] : undefined;
@@ -444,9 +455,11 @@ export function parseOperation(input: unknown): Operation {
   const parsed = operationSchema.safeParse(input);
   if (parsed.success) {
     assertUsableRegex(parsed.data);
-    // Строки правки вида — ровно одним способом (Q13, Q17): отказ до Google, а не после чтения.
-    if (parsed.data.op === 'formatCells') rowSelectionOf(parsed.data);
-    return parsed.data;
+    // Строки правки вида и записи значений — ровно одним способом своей операции (Q13, Q17, Q39):
+    // отказ до Google, а не после чтения.
+    const { data } = parsed;
+    if (data.op === 'formatCells' || data.op === 'setCells') rowSelectionOf(data, data.op);
+    return data;
   }
   throw gcError('bad_request', {
     detail:

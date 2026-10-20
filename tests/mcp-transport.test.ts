@@ -86,6 +86,15 @@ const SAMPLE: Record<string, unknown> = {
 const ROWS_SAMPLE: Partial<Record<OperationName, unknown>> = {
   createSheet: [['x.com', '2025-06-01']],
   formatCells: { from: 3, to: 4 },
+  setCells: { from: 3, to: 4 },
+};
+
+/**
+ * Способы выбора строк, которых у операции нет (Q39): поля объявлены, чтобы отказ назвал её
+ * способы, а не «незнакомое поле», — образец `false`, то есть «способ не выбран».
+ */
+const FOREIGN_WAYS: Partial<Record<OperationName, readonly string[]>> = {
+  setCells: ['allRows', 'headerOnly'],
 };
 
 /** Поля, чей смысл зависит от вида цели: у документа `where` — селектор абзаца. */
@@ -95,8 +104,9 @@ function sampleFor(op: OperationName): Record<string, unknown> {
     where: isDoc ? { textStartsWith: 'Составы' } : { Проект: 'G connect' },
     columns: op === 'insertTable' ? 3 : ['Статус'],
     // У createSheet `rows` — строки новой таблицы, у insertTable — их число (D-23), у
-    // formatCells — номера строк листа (Q13).
+    // formatCells и setCells — номера строк листа (Q13, Q39).
     rows: ROWS_SAMPLE[op] ?? 2,
+    ...Object.fromEntries((FOREIGN_WAYS[op] ?? []).map((field) => [field, false])),
   };
   const sample: Record<string, unknown> = { op };
   for (const field of Object.keys(shapeOf(op))) {
@@ -107,13 +117,14 @@ function sampleFor(op: OperationName): Record<string, unknown> {
 }
 
 /**
- * Поля, из которых операция берёт РОВНО одно (Q13, Q17): строки правки вида выбирает `where`,
- * `allRows`, `rows` или `headerOnly`. Образец со всеми четырьмя ядро законно отклонит, поэтому у
- * такой операции образцов несколько — по одному на способ, — а «заполнены все поля» судит их
- * объединение.
+ * Поля, из которых операция берёт РОВНО одно (Q13, Q17, Q39): строки правки вида выбирает
+ * `where`, `allRows`, `rows` или `headerOnly`, записи значений — `where` или `rows`. Образец со
+ * всеми сразу ядро законно отклонит, поэтому у такой операции образцов несколько — по одному на
+ * способ, — а «заполнены все поля» судит их объединение.
  */
 const ONE_OF: Partial<Record<OperationName, readonly string[]>> = {
   formatCells: ['where', 'allRows', 'rows', 'headerOnly'],
+  setCells: ['where', 'rows'],
 };
 
 function samplesFor(op: OperationName): Record<string, unknown>[] {

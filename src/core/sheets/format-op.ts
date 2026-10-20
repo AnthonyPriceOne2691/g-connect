@@ -50,6 +50,7 @@ export async function formatRows(
     selection,
     options,
     'Под условие не подошла ни одна строка — оформлять нечего.',
+    'formatCells',
   );
   if ('refusal' in selected) return selected.refusal;
 
