@@ -11,7 +11,7 @@ import { gcError } from '../errors.js';
 import type { RangeSnapshot, SnapshotCell } from '../journal.js';
 import { denyByRule, limitOf } from '../policy.js';
 import { needsClarification, resolveColumn } from '../resolver.js';
-import { dataWidth } from './bounds.js';
+import { dataWidth, unlabeledCells } from './bounds.js';
 import type { Prepared } from './commit.js';
 import { columnQuestion, clarify, rowsUnderCondition } from './rows.js';
 import { buildSheetData } from './map.js';
@@ -81,24 +81,30 @@ export function assertSnapshotBudget(cells: number, options: { estimate?: boolea
   );
 }
 
-/** Ячейки удаляемых строк в план: человек должен видеть, ЧТО именно исчезнет. */
+/**
+ * Ячейки удаляемых строк в план: человек должен видеть, ЧТО именно исчезнет. Строка уходит целиком
+ * (Q34), и план называет и колонки без подписи (Q37) — ключом `(C)`, как в `values` и `unlabeled`,
+ * по месту в строке: раньше он перечислял одни подписи и молчал о «а) доступы» в C3. Пустые ячейки
+ * без подписи в план не идут: подписанная колонка есть у каждой строки, пустая без подписи — шум.
+ */
 export function rowChanges(data: SheetData, rows: readonly number[]): PlannedChange[] {
   const map = data.map;
-  const out: PlannedChange[] = [];
-  for (const rowNumber of rows) {
+  return rows.flatMap((rowNumber) => {
     const index = rowNumber - map.headerRow - 1;
     const values = data.rows[index] ?? {};
-    for (const column of map.columns) {
-      out.push({
-        kind: 'set',
-        a1: `${map.sheet}!${column.letter}${rowNumber}`,
-        column: column.name,
-        before: values[column.name] ?? null,
-        after: null,
-      });
-    }
-  }
-  return out;
+    const unlabeled = unlabeledCells(map.unlabeled, data.cells[index] ?? []);
+    const cells = [
+      ...map.columns.map((column) => ({ column, key: column.name, before: values[column.name] })),
+      ...unlabeled.map(({ column, value }) => ({ column, key: column.key, before: value })),
+    ].sort((left, right) => left.column.index - right.column.index);
+    return cells.map(({ column, key, before }): PlannedChange => ({
+      kind: 'set',
+      a1: `${map.sheet}!${column.letter}${rowNumber}`,
+      column: key,
+      before: before ?? null,
+      after: null,
+    }));
+  });
 }
 
 /**

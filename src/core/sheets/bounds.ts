@@ -7,10 +7,17 @@
  * колонках A–B — границу считали по всем ячейкам сетки, и оформление выдавало себя за данные.
  *
  * Отдельным модулем по гейту длины `map.ts` — и по делу: карту и окно строк `values` судит одно
- * правило, и ключ колонки без подписи у них обязан совпадать.
+ * правило, и ключ колонки без подписи у них обязан совпадать — как и в плане удаления, сортировки и
+ * переноса строк (Q37).
  */
 
-import { columnLetter, type Cell, type ColumnProfile, type UnlabeledColumn } from './types.js';
+import {
+  columnLetter,
+  type Cell,
+  type CellValue,
+  type ColumnProfile,
+  type UnlabeledColumn,
+} from './types.js';
 
 type Rows = readonly (readonly Cell[])[];
 
@@ -146,8 +153,28 @@ function warningOf(
   ];
 }
 
-/** Пять — и многоточие: предупреждение остаётся строкой, а целиком список — в поле `unlabeled`. */
-const listed = (items: readonly string[]): string =>
+/**
+ * Ячейки колонок без подписи со значением в строке листа (Q37): колонка — из найденных картой
+ * (`unlabeled`; нет поля — нет и колонок), ключ тот же, что у карты и окна `values`, значение — как
+ * его считает карта. Строку Google удаляет, сортирует и переносит целиком, и план обязан назвать,
+ * что уйдёт или уедет вместе с ней.
+ */
+export function unlabeledCells(
+  unlabeled: readonly UnlabeledColumn[] | undefined,
+  row: readonly Cell[],
+): { readonly column: UnlabeledColumn; readonly value: CellValue }[] {
+  if (unlabeled === undefined) return [];
+  return unlabeled.flatMap((column) => {
+    const cell = row[column.index];
+    return cell !== undefined && hasValue(cell) ? [{ column, value: cell.value }] : [];
+  });
+}
+
+/**
+ * Пять — и многоточие: предупреждение остаётся строкой, а целиком список — в поле `unlabeled`. Тем
+ * же правилом план сортировки и переноса называет колонки без подписи (Q37).
+ */
+export const listed = (items: readonly string[]): string =>
   items.length > 5 ? `${items.slice(0, 5).join(', ')}, …` : items.join(', ');
 
 /** Форма слова при числе: 1 ячейка, 3 ячейки, 5 ячеек; 11–14 — как 5. */

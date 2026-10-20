@@ -7,6 +7,7 @@
  */
 
 import { gcError } from '../errors.js';
+import { listed, unlabeledCells } from './bounds.js';
 import { contextOf, finishWrite } from './commit.js';
 import { rowsUnderCondition } from './rows.js';
 import {
@@ -81,6 +82,7 @@ export async function moveRows(
     `Поедет ${count === 1 ? 'строка' : `${count} строк`}: ${moved} — станет ` +
       `${anchor < at ? 'выше' : 'ниже'} строки «${anchorKey}». Значения не меняются, ` +
       'меняется порядок; откат вернёт строки на прежнее место.',
+    ...wholeRowNote(data, rows),
   ];
   assertSnapshotBudget(count * rowWidth(data));
   return finishWrite(client, contextOf(map), [], prepared(notes), options, 'moveRows', {
@@ -158,6 +160,7 @@ export async function sortRange(
       `строки идут так: ${current}${rows > 5 ? ' …' : ''}. Итоговый порядок задаёт Google ` +
       '(его правила сравнения), поэтому план его не обещает — но снимок в журнале ' +
       'позволяет вернуть прежний порядок целиком.',
+    ...wholeRowNote(data, block),
   ];
   return finishWrite(client, contextOf(map), [], prepared(notes), options, 'sortRange', {
     structural,
@@ -178,6 +181,25 @@ export async function sortRange(
         },
       ]),
   });
+}
+
+/**
+ * Строки едут целиком (Q33, Q34) — вместе с колонками без подписи, и план называет их ключами
+ * (Q37), пять и многоточие, как предупреждение карты: подписанные колонки видны в плане сами, а о
+ * подпунктах в C человек узнавал, только когда они уже уехали. Значений без подписи в этих строках
+ * нет — заметки нет.
+ */
+function wholeRowNote(data: SheetData, rows: readonly number[]): string[] {
+  const { map } = data;
+  const moving = new Set(
+    rows
+      .flatMap((row) => unlabeledCells(map.unlabeled, data.cells[row - map.headerRow - 1] ?? []))
+      .map(({ column }) => column),
+  );
+  if (moving.size === 0) return [];
+  // По порядку листа, а не строк: подпункт в E выше по листу, чем в C, — ключи всё равно (C), (E).
+  const keys = [...moving].sort((left, right) => left.index - right.index).map(({ key }) => key);
+  return [`строки едут целиком — вместе с колонками без подписи ${listed(keys)}`];
 }
 
 /** Ключ строки словами: им человек узнаёт строку в плане, а не по номеру. */

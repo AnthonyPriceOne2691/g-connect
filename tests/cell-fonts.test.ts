@@ -207,9 +207,12 @@ describe('Q11 — шрифт, кегль и формат числа видны �
       rows: { value: Record<string, unknown>[] };
       formats: { kind: string; value: Record<string, CellFormat>[] };
     };
-    // Хвост из оформленных пустых ячеек — не строка данных: его нет ни в rows, ни в formats.
-    expect(data.rows.value).toHaveLength(4);
+    // Оформленная пустая строка в хвосте — строка ответа, раз вид просили (Q38): в rows она пуста,
+    // в formats — её вид. Без withFormat её нет (следующий тест). До Q38 её не было и здесь.
+    expect(data.rows.value).toHaveLength(5);
+    expect(data.rows.value[4]).toEqual({ Проект: null, Запуск: null, Владелец: null });
     expect(data.formats.value).toHaveLength(data.rows.value.length);
+    expect(data.formats.value[4]).toEqual({ Проект: CARLITO_10, Запуск: CARLITO_10 });
     // Вид — тоже данные из документа: имя шрифта и шаблон формата пишет кто угодно.
     expect(data.formats.kind).toBe('data');
     expect(data.formats.value[0]).toEqual({

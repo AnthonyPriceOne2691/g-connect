@@ -52,6 +52,8 @@ const text = (cell: Cell | undefined): string =>
   cell?.value === null || cell?.value === undefined ? '' : String(cell.value).trim();
 
 const isBlank = (cell: Cell | undefined): boolean => text(cell) === '';
+/** В строке есть значение: пусто и одни пробелы — не значение. */
+const filled = (row: readonly Cell[]): boolean => row.some((cell) => !isBlank(cell));
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$|^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/;
 const NUMBER_RE = /^-?\d+([.,]\d+)?$/;
@@ -196,12 +198,17 @@ function rowToRecord(
  * Окно строк листа → записи по колонкам (D-26, `gc_read mode=values`): колонки карты и ключи
  * колонок без подписи (Q30). Тот же разбор, что у строк карты: хвост пустых строк срезан,
  * пропуски в середине остаются — строка окна под номером `i` — это строка листа `fromRow + i`.
+ * `marked` — что ещё держит строку хвоста (Q38): вид или заметка в колонке окна, о которых просили;
+ * такая строка — той же формы, что пустая в середине окна. Вид за краем колонок окна её не держит.
  */
 export function windowRecords(
   rows: readonly (readonly Cell[])[],
   columns: readonly KeyedColumn[],
+  marked: (cell: Cell | undefined) => boolean,
 ): Record<string, CellValue>[] {
-  return withoutEmptyTail(rows).map((row) => rowToRecord(row, columns));
+  const held = (row: readonly Cell[]): boolean =>
+    filled(row) || columns.some((column) => marked(row[column.index]));
+  return withoutEmptyTail(rows, held).map((row) => rowToRecord(row, columns));
 }
 
 /**
@@ -367,7 +374,7 @@ export function buildSheetData(
 
   const dataRowCount = dataRows.filter((row) => row.some((c) => !isBlank(c))).length;
 
-  const withData = withoutEmptyTail(dataRows);
+  const withData = withoutEmptyTail(dataRows, filled);
   const allRows = withData.map((row) => rowToRecord(row, columns));
   const allFormats = withData.map((row) => formatsToRecord(row, columns));
 
@@ -445,12 +452,15 @@ function partialReadWarning(
  * строки ГДЕ УГОДНО, и срез по нему потерял бы данные после пустой строки в середине —
  * такую таблицу («блок, пропуск, блок») дизайн допускает и предупреждает о ней (§9.3).
  */
-function withoutEmptyTail(rows: readonly (readonly Cell[])[]): readonly (readonly Cell[])[] {
-  let lastFilled = 0;
+function withoutEmptyTail(
+  rows: readonly (readonly Cell[])[],
+  held: (row: readonly Cell[]) => boolean,
+): readonly (readonly Cell[])[] {
+  let lastHeld = 0;
   rows.forEach((row, index) => {
-    if (row.some((cell) => !isBlank(cell))) lastFilled = index + 1;
+    if (held(row)) lastHeld = index + 1;
   });
-  return rows.slice(0, lastFilled);
+  return rows.slice(0, lastHeld);
 }
 
 /** Вид ячеек строки → запись по именам колонок. Ячейки без вида в запись не попадают. */

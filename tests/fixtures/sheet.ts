@@ -437,7 +437,12 @@ export function readAsGoogle(
   };
 }
 
-/** Окно строк, как отдаёт Google: подряд с `fromRow`, без хвоста пустых строк. */
+/**
+ * Окно строк, как отдаёт Google: подряд с `fromRow`, без хвоста пустых строк. Пустая — та, чьих
+ * ячеек Google не отдаёт: без значения, формулы, вида и заметки. Оформленную пустую строку он
+ * отдаёт (Q31, Q38), а фейк резал хвост по одним значениям — и прятал от окна `values` то, что ядро
+ * обязано было показать по `withFormat` (урок L23).
+ */
 export function windowAsGoogle(
   data: SpreadsheetSnapshot,
   sheet: string,
@@ -446,12 +451,13 @@ export function windowAsGoogle(
 ): RowWindow {
   const found = data.sheets.find((s) => s.title === sheet);
   const rows = (found?.rows ?? []).slice(fromRow - 1, fromRow - 1 + count);
+  const bare = (cell: Cell): boolean =>
+    (cell.value === null || cell.value === '') &&
+    cell.formula === undefined &&
+    cell.format === undefined &&
+    cell.note === undefined;
   let last = rows.length;
-  while (
-    last > 0 &&
-    (rows[last - 1] ?? []).every((cell) => cell.value === null || cell.value === '')
-  )
-    last -= 1;
+  while (last > 0 && (rows[last - 1] ?? []).every(bare)) last -= 1;
   return { rows: rows.slice(0, last), gridRows: found?.gridRows ?? found?.rows.length ?? 0 };
 }
 
