@@ -167,3 +167,9 @@ PR #15 (хотфикс Q33–Q35) — агент J от `be1a2c5`, сводит 
 20. **Ширина строки** (агент J; `rowWidth` и общий `snapshotOf` в `structure-support.ts`, `dataWidth` в
     `bounds.ts`, `SheetData.cells`, `order-op.ts`, `structure-op.ts`, фейк `withSort`): сортировка и
     снимки строк — до последней колонки строк данных, ячейка — по индексу колонки листа.
+
+PR #16 (Q36–Q38) — агент K от `7dcb4bd`, сводит ведущий в `feat/window-tail` поверх PR #15:
+
+21. **Конец окна и план колонок без подписи** (агент K; `read-values.ts`, `windowRecords` в `map.ts`,
+    `rowChanges` в `structure-support.ts`, заметки `order-op.ts`): `toRow`, предупреждение о срезанном
+    хвосте, оформленные пустые строки с `withFormat`; ячейки без подписи — в плане удаления.
