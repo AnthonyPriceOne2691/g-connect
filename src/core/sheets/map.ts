@@ -8,6 +8,7 @@
  */
 
 import { gcError } from '../errors.js';
+import { dataBounds, dataHeight, unlabeledIn, type KeyedColumn } from './bounds.js';
 import { detectDateFormat, withDateStyle } from './date-style.js';
 import { headerNotes } from './notes.js';
 import {
@@ -184,7 +185,7 @@ function isProtected(sheet: SheetSnapshot, columnIndex: number, firstDataRow: nu
 /** Строка сетки → запись по именам колонок. Было скопировано дважды (нашёл jscpd). */
 function rowToRecord(
   row: readonly Cell[],
-  columns: readonly ColumnProfile[],
+  columns: readonly KeyedColumn[],
 ): Record<string, CellValue> {
   const out: Record<string, CellValue> = {};
   for (const column of columns) out[column.name] = row[column.index]?.value ?? null;
@@ -192,13 +193,13 @@ function rowToRecord(
 }
 
 /**
- * Окно строк листа → записи по колонкам карты (D-26, `gc_read mode=values`). Тот же разбор,
- * что у строк карты: хвост пустых строк срезан, пропуски в середине остаются — строка
- * окна под номером `i` — это строка листа `fromRow + i`.
+ * Окно строк листа → записи по колонкам (D-26, `gc_read mode=values`): колонки карты и ключи
+ * колонок без подписи (Q30). Тот же разбор, что у строк карты: хвост пустых строк срезан,
+ * пропуски в середине остаются — строка окна под номером `i` — это строка листа `fromRow + i`.
  */
 export function windowRecords(
   rows: readonly (readonly Cell[])[],
-  columns: readonly ColumnProfile[],
+  columns: readonly KeyedColumn[],
 ): Record<string, CellValue>[] {
   return withoutEmptyTail(rows).map((row) => rowToRecord(row, columns));
 }
@@ -207,6 +208,7 @@ export function windowRecords(
  * Пустая колонка внутри шапки делит лист на блоки: справа от неё обычно отдельная
  * таблица (или врезка), а не продолжение данных. Молча втянуть её значит выдать
  * колонку с одной заполненной ячейкой и не сказать почему — §9.3 требует обратного.
+ * Значения под пустой ячейкой шапки и правее последней подписи называет `bounds.ts` (Q30).
  */
 function detectSideBlock(
   headerCells: readonly Cell[],
@@ -291,7 +293,6 @@ export function buildSheetData(
   const notes = headerNotes(rows, guess.row, { id: snapshot.id, sheet: sheet.title });
   const warnings: string[] = [...notes.warnings];
 
-  const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
   const columns: ColumnProfile[] = [];
   const seen = new Map<string, number>();
 
@@ -339,6 +340,8 @@ export function buildSheetData(
   if (columns.length === 0) {
     warnings.push(`в строке ${guess.row} не нашлось ни одной подписи колонки`);
   }
+  // Значения под пустой ячейкой шапки и правее последней подписи — полем и предупреждением (Q30).
+  const unlabeled = unlabeledIn(dataRows, guess.row + 1, columns, 'map');
 
   const side = detectSideBlock(headerCells);
   if (side !== null) {
@@ -350,7 +353,7 @@ export function buildSheetData(
         `читай её отдельным вызовом или задай область явно`,
     );
   }
-  warnings.push(...mergeWarnings(sheet, guess.row));
+  warnings.push(...unlabeled.warnings, ...mergeWarnings(sheet, guess.row));
   warnings.push(...partialReadWarning(snapshot.rowLimit, rows.length, sheet.gridRows));
   if (!guess.confident && options.headerRow === undefined) {
     warnings.push(
@@ -363,10 +366,6 @@ export function buildSheetData(
   }
 
   const dataRowCount = dataRows.filter((row) => row.some((c) => !isBlank(c))).length;
-  const usedRange =
-    rows.length === 0 || width === 0
-      ? `${sheet.title}!A1:A1`
-      : `${sheet.title}!A1:${columnLetter(width - 1)}${rows.length}`;
 
   const withData = withoutEmptyTail(dataRows);
   const allRows = withData.map((row) => rowToRecord(row, columns));
@@ -381,17 +380,20 @@ export function buildSheetData(
     headerRow: guess.row,
     headerRowReason: guess.reason,
     headerRowConfident: guess.confident,
-    usedRange,
+    // Границы данных — по значениям и формулам, а не по оформлению (Q31).
+    usedRange: dataBounds(sheet.title, rows),
     dataRowCount,
     // Пустой колонке — вид дат листа или локали книги (Q15): первая дата в неё уходила как её
     // прислал агент. Записи строк выше берут только имена и индексы — вид дат им не нужен.
     columns: withDateStyle(columns, snapshot.locale),
     sampleRows: allRows.slice(0, SAMPLE_ROWS),
+    // Высота других листов — тоже по данным: строки с одним оформлением — не строки листа (Q31).
     otherSheets: snapshot.sheets
       .filter((s) => s.title !== sheet.title)
-      .map((s) => ({ title: s.title, rowCount: s.rows.length })),
+      .map((s) => ({ title: s.title, rowCount: dataHeight(s.rows) })),
     ...(sheet.gridRows === undefined ? {} : { sheetRows: sheet.gridRows }),
     ...notes.fields,
+    ...unlabeled.fields,
     // Снимок усечён по листу — значит список других листов НЕ полон, и молчать об этом
     // нельзя: пустой список читается как «других листов нет». Живой прогон 2026-09-04
     // получил `otherSheets: []` на книге из семи листов.
