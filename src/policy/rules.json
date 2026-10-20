@@ -221,10 +221,10 @@
     },
     {
       "id": "write.format-rows-explicit",
-      "title": "Строки правки вида — ровно одним способом: where, allRows: true, rows {from, to} или headerOnly: true; ни одного, два сразу или пустое условие — отказ, а не все строки (D-26, Q13, Q17)",
+      "title": "Строки правки вида — ровно одним способом: where, allRows: true, rows {from, to} или headerOnly: true; ни одного, два сразу или пустое условие — отказ, а не все строки (D-26, Q13, Q17); у setCells — where или rows {from, to}, allRows и headerOnly — отказ (Q39)",
       "kind": "deny",
-      "enforced_in": "src/core/sheets/row-selection.ts (rowSelectionOf) + src/core/ops.ts (parseOperation)",
-      "probe": "formatCells без способа, с двумя способами (в том числе headerOnly с rows) и с where: {} → bad_request до обращения к Google; allRows: true → план по всем строкам данных листа; headerOnly → только по шапке"
+      "enforced_in": "src/core/sheets/row-selection.ts (rowSelectionOf, selectedRows) + src/core/ops.ts (parseOperation)",
+      "probe": "formatCells без способа, с двумя способами (в том числе headerOnly с rows) и с where: {} → bad_request до обращения к Google; allRows: true → план по всем строкам данных листа; headerOnly → только по шапке; setCells с allRows, headerOnly или rows вместе с where → bad_request, setCells rows {from: 2, to: 2} → план по строке 2"
     },
     {
       "id": "write.append-inherits-format",

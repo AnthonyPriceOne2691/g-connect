@@ -173,3 +173,10 @@ PR #16 (Q36–Q38) — агент K от `7dcb4bd`, сводит ведущий 
 21. **Конец окна и план колонок без подписи** (агент K; `read-values.ts`, `windowRecords` в `map.ts`,
     `rowChanges` в `structure-support.ts`, заметки `order-op.ts`): `toRow`, предупреждение о срезанном
     хвосте, оформленные пустые строки с `withFormat`; ячейки без подписи — в плане удаления.
+
+PR #17 (Q39, Q41) — агент M1 от `7dcb4bd`, сводит ведущий в `feat/row-address` поверх PR #16; Q40 агента M2 —
+PR #18 (решение владельца «Разделить»):
+
+22. **Строки по номерам у `setCells` и сброс формата числа** (агент M1; `rowSelectionOf` с подмножеством
+    операции в `row-selection.ts`, `setRows` в `set-cells-op.ts`, `ops.ts`, `apply-schema.ts`,
+    `format-fields.ts`): путь записи значений один — `setCells(where)` обёрткой над `setRows`.

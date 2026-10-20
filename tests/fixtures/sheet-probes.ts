@@ -13,6 +13,7 @@ import { limitOf } from '../../src/core/policy.js';
 import { formatRows } from '../../src/core/sheets/format-op.js';
 import { buildSheetData } from '../../src/core/sheets/map.js';
 import { appendRow } from '../../src/core/sheets/rows.js';
+import { setRows } from '../../src/core/sheets/set-cells-op.js';
 import type { Cell, CellValue, SheetRequest } from '../../src/core/sheets/types.js';
 import { readValues } from '../../src/mcp/read-values.js';
 import { FakeSheetsClient } from './sheet.js';
@@ -129,6 +130,25 @@ export const sheetProbes: Record<string, () => Promise<void>> = {
       { bold: true },
     );
     expect(header.changes.map((change) => change.a1)).toEqual(['Лист!A1']);
+    // setCells (Q39): те же способы — подмножеством, номерами строк пишется строка без условия.
+    const cells = { op: 'setCells', values: { Имя: 'новое' } };
+    const notForCells = [
+      { allRows: true },
+      { headerOnly: true },
+      { where: { Имя: 'строка 1' }, rows: { from: 2, to: 2 } },
+    ];
+    for (const fields of notForCells) {
+      expect(thrownBy(() => parseOperation({ ...cells, ...fields }))).toMatchObject({
+        payload: { code: 'bad_request' },
+      });
+    }
+    const byNumber = await setRows(
+      new FakeSheetsClient(snapshot),
+      buildSheetData(snapshot),
+      { rows: { from: 2, to: 2 } },
+      { Имя: 'новое' },
+    );
+    expect(byNumber.changes.map((change) => change.a1)).toEqual(['Лист!A2']);
   },
 
   // Вид дописанной строки — копией формата строки над ней, ДО значений, и превью это называет
