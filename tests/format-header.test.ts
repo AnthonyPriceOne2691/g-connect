@@ -185,8 +185,10 @@ describe('Q17 — только строка шапки: четвёртый сп�
   });
 
   it('Q17: headerOnly: true — ровно этот способ; headerOnly: false — не способ, и отказ без способа перечисляет четвёртый', async () => {
-    expect(rowSelectionOf({ headerOnly: true })).toEqual({ headerOnly: true });
-    expect(rowSelectionOf({ headerOnly: false, allRows: true })).toEqual({ allRows: true });
+    expect(rowSelectionOf({ headerOnly: true }, 'formatCells')).toEqual({ headerOnly: true });
+    expect(rowSelectionOf({ headerOnly: false, allRows: true }, 'formatCells')).toEqual({
+      allRows: true,
+    });
     for (const call of [NAVY_HEADERS, headerCall({ headerOnly: false })]) {
       const result = await callMcp(gcApply, call, withoutGoogle());
       expect(result.error, JSON.stringify(call)).toMatchObject({

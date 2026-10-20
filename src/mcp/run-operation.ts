@@ -11,7 +11,7 @@ import { appendRow, upsertRow, type ApplyOutcome } from '../core/sheets/rows.js'
 import { findReplace } from '../core/sheets/find-replace-op.js';
 import { formatRows } from '../core/sheets/format-op.js';
 import { rowSelectionOf } from '../core/sheets/row-selection.js';
-import { setCells } from '../core/sheets/set-cells-op.js';
+import { setRows } from '../core/sheets/set-cells-op.js';
 import { autoFill, copyRange, cutRange, duplicateSheet } from '../core/sheets/range-op.js';
 import {
   addSheet,
@@ -77,15 +77,19 @@ const HANDLERS: {
     appendRow(client, data, operation.values, options),
   upsertRow: (client, data, operation, options) =>
     upsertRow(client, data, operation.key, operation.values, options),
+  // Строки — ровно одним способом своей операции (Q13, Q17, Q39): неверный выбор отказан ещё
+  // разбором ядра, здесь поля только сужаются до типа.
   setCells: (client, data, operation, options) =>
-    setCells(client, data, operation.where, operation.values, options),
-  // Строки — ровно одним способом (Q13, Q17): неверный выбор отказан ещё разбором ядра, здесь поля
-  // только сужаются до типа.
+    setRows(client, data, rowSelectionOf(operation, 'setCells'), operation.values, options),
   formatCells: (client, data, operation, options) =>
-    formatRows(client, data, rowSelectionOf(operation), operation.columns, operation.format, {
-      ...options,
-      includeHeader: operation.includeHeader,
-    }),
+    formatRows(
+      client,
+      data,
+      rowSelectionOf(operation, 'formatCells'),
+      operation.columns,
+      operation.format,
+      { ...options, includeHeader: operation.includeHeader },
+    ),
   findReplace: (client, data, operation, options) =>
     findReplace(
       client,
