@@ -111,7 +111,7 @@ export const sheetProbes: Record<string, () => Promise<void>> = {
     // Ядро держит то же само, без границы: прямой вызов с пустым условием — отказ.
     await expect(
       formatRows(new FakeSheetsClient(snapshot), buildSheetData(snapshot), { where: {} }, ['Имя'], {
-        bold: true,
+        format: { bold: true },
       }),
     ).rejects.toMatchObject({ payload: { code: 'bad_request', cause: 'empty_condition' } });
     const preview = await formatRows(
@@ -119,7 +119,7 @@ export const sheetProbes: Record<string, () => Promise<void>> = {
       buildSheetData(snapshot),
       { allRows: true },
       ['Имя'],
-      { bold: true },
+      { format: { bold: true } },
     );
     expect(preview.changes.map((change) => change.a1)).toEqual(['Лист!A2', 'Лист!A3', 'Лист!A4']);
     const header = await formatRows(
@@ -127,7 +127,7 @@ export const sheetProbes: Record<string, () => Promise<void>> = {
       buildSheetData(snapshot),
       { headerOnly: true },
       ['Имя'],
-      { bold: true },
+      { format: { bold: true } },
     );
     expect(header.changes.map((change) => change.a1)).toEqual(['Лист!A1']);
     // setCells (Q39): те же способы — подмножеством, номерами строк пишется строка без условия.
@@ -207,6 +207,45 @@ export const sheetProbes: Record<string, () => Promise<void>> = {
       },
     );
     expect(preview.changes.map((change) => change.a1)).toContain('Лист!B3');
+  },
+
+  // Вид как у строки N (Q42): источник вида — ровно один, образец — только строка данных.
+  'write.format-like-row': async () => {
+    const base = { op: 'formatCells', allRows: true };
+    const refused = [
+      {},
+      { format: { bold: true }, likeRow: 2, columns: ['Имя'] },
+      { format: { bold: true } },
+    ];
+    for (const fields of refused) {
+      expect(thrownBy(() => parseOperation({ ...base, ...fields }))).toMatchObject({
+        payload: { code: 'bad_request' },
+      });
+    }
+    const snapshot = {
+      id: 'SHEET',
+      title: 'Т',
+      sheets: [
+        {
+          title: 'Лист',
+          sheetId: 1,
+          rows: [
+            [cell('Имя')],
+            [{ value: 'строка 1', format: { bold: true } }],
+            [cell('строка 2')],
+          ],
+        },
+      ],
+    };
+    const data = () => buildSheetData(snapshot, { headerRow: 1 });
+    const target = { rows: { from: 3, to: 3 } };
+    await expect(
+      formatRows(new FakeSheetsClient(snapshot), data(), target, undefined, { likeRow: 1 }),
+    ).rejects.toMatchObject({ payload: { code: 'bad_request', cause: 'like_row_outside_data' } });
+    const preview = await formatRows(new FakeSheetsClient(snapshot), data(), target, undefined, {
+      likeRow: 2,
+    });
+    expect(preview.changes.map((change) => change.a1)).toEqual(['Лист!A3']);
   },
 };
 

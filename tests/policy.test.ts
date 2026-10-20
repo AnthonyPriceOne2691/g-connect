@@ -827,7 +827,7 @@ describe('правила как механизм (D-12)', () => {
     // 47–48 — token.sealed-at-rest, google.unlock-only-tool (D-24, токен под пальцем);
     // 49–50 — grant.per-profile, undo.own-profile (D-25, два профиля рядом);
     // 51–52 — write.full-sheet, write.max-sheet-rows (D-26, длинные листы).
-    expect(policyRules()).toHaveLength(55);
+    expect(policyRules()).toHaveLength(56);
   });
 
   it('rules.md называет ровно списки ядра: конверт и подтверждение названием', () => {

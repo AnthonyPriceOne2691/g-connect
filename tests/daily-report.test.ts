@@ -9,13 +9,12 @@
  *
  * Инструменты — через настоящий протокол (урок L26); маска сброса — на форме запроса Google
  * (урок L28); запись, откат и чтение после сброса — на фейке с семантикой Google
- * (`fixtures/sheet.ts`).
+ * (`fixtures/sheet.ts`). Лист — `fixtures/daily-report.ts`: его делит сьют правки вида по образцу
+ * строки (Q42).
  */
 
-import type { drive_v3, sheets_v4 } from 'googleapis';
 import { describe, expect, it } from 'vitest';
 
-import { GoogleSheetsClient } from '../src/core/google/sheets.js';
 import type { WriteRecord } from '../src/core/journal.js';
 import { parseOperation } from '../src/core/ops.js';
 import { formatRows } from '../src/core/sheets/format-op.js';
@@ -23,118 +22,25 @@ import { buildSheetData } from '../src/core/sheets/map.js';
 import type { RowSelection } from '../src/core/sheets/row-selection.js';
 import type { ApplyOutcome } from '../src/core/sheets/rows.js';
 import { setRows } from '../src/core/sheets/set-cells-op.js';
-import type {
-  Cell,
-  CellFormat,
-  SheetSnapshot,
-  SheetsClient,
-  SpreadsheetSnapshot,
-} from '../src/core/sheets/types.js';
-import { gcApply, gcRead, gcUndo, type ToolDeps } from '../src/mcp/tools.js';
+import type { CellFormat } from '../src/core/sheets/types.js';
+import { gcApply, gcRead, gcUndo } from '../src/mcp/tools.js';
+import {
+  COLUMNS,
+  DAY,
+  ID,
+  SPENT,
+  TITLE,
+  book,
+  dailySheet,
+  depsOf,
+  google,
+  harness,
+  valuesOf,
+  withCell,
+  withoutGoogle,
+} from './fixtures/daily-report.js';
 import { FakeSheetsClient, MutableSheetsClient, row } from './fixtures/sheet.js';
 import { callMcp, protocolSession } from './fixtures/protocol.js';
-
-const ID = '1DAILYreportGGGGGGGGGGGGGGGGGGGGGGGGG';
-const TITLE = 'Отчёт';
-const COLUMNS = ['Суть задачи', 'Время', 'Ссылка', 'Статус задачи', 'Проверка'] as const;
-
-/** Вид строки дня — его и унаследовали вставленные строки. */
-const DAY: CellFormat = { numberFormat: { type: 'DATE', pattern: 'dd.mm' } };
-const SPENT: CellFormat = { numberFormat: { type: 'TIME', pattern: 'h:mm' } };
-
-/** Строка дня: дата в «Сути задачи», итог времени — в «Времени». */
-const dayRow = (date: string, total: string): Cell[] => [
-  { value: null },
-  { value: date, format: DAY },
-  { value: total, format: SPENT },
-  { value: null },
-  { value: null },
-  { value: null },
-];
-
-/** Строка, вставленная над днём: значений нет, вид — от строки дня. */
-const insertedRow = (): Cell[] => dayRow('', '').map((cell) => ({ ...cell, value: null }));
-
-/**
- * Лист как в вести: строки 3–4 пусты внутри данных, с пятой — дни и задачи; последняя строка
- * данных — девятая. Ниже — пустой хвост сетки: данными он не считается.
- */
-function dailySheet(): SheetSnapshot {
-  return {
-    title: TITLE,
-    sheetId: 5,
-    rows: [
-      row(null, ...COLUMNS),
-      row('Новые дни — сверху', null, null, null, null, null),
-      insertedRow(),
-      insertedRow(),
-      dayRow('19.10', '2:15'),
-      row(null, 'разбор входящих заявок', '1:30', 'https://example.com/task/1', 'готово', 'да'),
-      row(null, 'созвон по отчёту', '0:45', 'https://example.com/task/2', 'в работе', 'нет'),
-      dayRow('18.10', '2:00'),
-      row(null, 'правка шаблона', '2:00', 'https://example.com/task/3', 'готово', 'да'),
-      row(null, null, null, null, null, null),
-    ],
-    merges: [{ startRow: 2, endRow: 2, startColumn: 0, endColumn: 5 }],
-  };
-}
-
-const book = (sheet: SheetSnapshot = dailySheet()): SpreadsheetSnapshot => ({
-  id: ID,
-  title: 'Дневник задач',
-  revisionId: 'rev-1',
-  sheets: [sheet],
-});
-
-/** Ячейка листа с другим значением — «между превью и записью в B3 вписали своё». */
-function withValue(sheet: SheetSnapshot, rowNumber: number, column: number, value: string) {
-  const rows = sheet.rows.map((cells) => [...cells]);
-  const target = rows[rowNumber - 1]!;
-  target[column] = { ...target[column]!, value };
-  return { ...sheet, rows };
-}
-
-/** Цель реестра с конвертом записи значений и вида; шапка — строка 1. */
-function depsOf(client: SheetsClient, journalled: WriteRecord[], maxCells = 50): ToolDeps {
-  return {
-    account: 'work',
-    sheets: () => Promise.resolve(client),
-    docs: () => Promise.reject(new TypeError('документов в этом сьюте нет')),
-    drive: () => Promise.reject(new TypeError('Drive в этом сьюте нет')),
-    registry: () =>
-      Promise.resolve({
-        targets: [
-          {
-            alias: 'daily',
-            id: ID,
-            type: 'sheet',
-            allow: 'write',
-            sheet: TITLE,
-            headerRow: 1,
-            auto: { ops: ['setCells', 'formatCells'], maxCells },
-          },
-        ],
-      }),
-    journal: (record) => {
-      journalled.push(record);
-      return Promise.resolve();
-    },
-    journalSource: { recent: () => Promise.resolve([...journalled]) },
-    revision: () => Promise.resolve('rev-1'),
-  };
-}
-
-function harness(maxCells?: number) {
-  const client = new MutableSheetsClient(book());
-  const journalled: WriteRecord[] = [];
-  return { client, journalled, deps: depsOf(client, journalled, maxCells) };
-}
-
-/** Google недоступен: отказ обязан случиться на границе ядра, ДО чтения листа (урок L11). */
-const withoutGoogle = (): ToolDeps => ({
-  ...harness().deps,
-  sheets: () => Promise.reject(new TypeError('Google тронут: отказ опоздал до чтения листа')),
-});
 
 /** Задача, которую агент вписывал в первую вставленную строку. */
 const TASK = { 'Суть задачи': 'сверка отчёта за день', Время: '0:30' };
@@ -146,13 +52,6 @@ const setCall = (selection: Record<string, unknown>, extra: Record<string, unkno
   ...selection,
   ...extra,
 });
-
-/** Значения строки листа — колонки A–F. */
-async function valuesOf(client: SheetsClient, rowNumber: number): Promise<unknown[]> {
-  const sheet = (await client.getSpreadsheet(ID)).sheets[0]!;
-  const cells = sheet.rows[rowNumber - 1] ?? [];
-  return Array.from({ length: 6 }, (_, column) => cells[column]?.value ?? null);
-}
 
 const planOf = (data: unknown) =>
   (data as ApplyOutcome).changes.map(({ a1, before, after }) => ({ a1, before, after }));
@@ -446,7 +345,9 @@ describe('Q39 — setCells по номерам строк: пустая вста
 
   it('Q39: сверка «было» — в B3 вписали своё между превью и записью: stale_value, ни одной записи', async () => {
     const data = buildSheetData(book(), { sheet: TITLE, headerRow: 1 });
-    const client = new FakeSheetsClient(book(withValue(dailySheet(), 3, 1, 'чужая задача')));
+    const client = new FakeSheetsClient(
+      book(withCell(dailySheet(), 3, 1, { value: 'чужая задача' })),
+    );
     const selection = { rows: { from: 3, to: 3 } };
     const preview = await setRows(client, data, selection, TASK);
     expect(preview.status).toBe('preview');
@@ -472,7 +373,7 @@ describe('Q39 — setCells по номерам строк: пустая вста
       payload: { cause: 'row_selection', detail: expect.stringMatching(/^setCells: не выбраны/) },
     });
     await expect(
-      formatRows(client, data, nothing, ['Время'], { bold: true }),
+      formatRows(client, data, nothing, ['Время'], { format: { bold: true } }),
     ).rejects.toMatchObject({
       payload: {
         cause: 'row_selection',
@@ -572,55 +473,6 @@ describe('Q41 — граница: numberFormat "none"', () => {
     expect(typo.detail).toContain('Допустимые поля вида: bold, italic');
   });
 });
-
-/** Ячейка, как её отдаёт Google: видимый текст и явный формат числа. */
-function googleCell(cell: Cell): sheets_v4.Schema$CellData {
-  const shown = cell.value === null ? null : String(cell.value);
-  const numberFormat = cell.format?.numberFormat;
-  return {
-    ...(shown === null ? {} : { effectiveValue: { stringValue: shown }, formattedValue: shown }),
-    ...(numberFormat === undefined || numberFormat === null
-      ? {}
-      : { userEnteredFormat: { numberFormat: { ...numberFormat } } }),
-  };
-}
-
-/** Google, отвечающий формой документации; правки вида — в `requests`, как их получил бы он. */
-function google() {
-  const requests: sheets_v4.Schema$Request[] = [];
-  const properties = {
-    sheetId: 5,
-    title: TITLE,
-    gridProperties: { rowCount: 1000, columnCount: 26 },
-  };
-  const rowData = dailySheet().rows.map((cells) => ({ values: cells.map(googleCell) }));
-  const sheets = {
-    spreadsheets: {
-      get: (params: { includeGridData?: boolean }) =>
-        Promise.resolve({
-          data: {
-            properties: { title: 'Дневник задач' },
-            sheets: [
-              params.includeGridData === true
-                ? { properties, data: [{ startRow: 0, rowData }] }
-                : { properties },
-            ],
-          },
-        }),
-      batchUpdate: (params: { requestBody: { requests: sheets_v4.Schema$Request[] } }) => {
-        requests.push(...params.requestBody.requests);
-        return Promise.resolve({ data: {} });
-      },
-    },
-  } as unknown as sheets_v4.Sheets;
-  const drive = {
-    files: { get: () => Promise.resolve({ data: { version: '1' } }) },
-  } as unknown as drive_v3.Drive;
-  return {
-    client: new GoogleSheetsClient({ accessToken: 'нет', api: { sheets, drive } }),
-    requests,
-  };
-}
 
 const resetCall = (extra: Record<string, unknown> = {}) => ({
   ...formatOp({ numberFormat: 'none' }),

@@ -37,6 +37,7 @@ export * from './docs/ops.js';
 // Вид ячейки — своим модулем (D-26, Q12): у шрифта, кегля и формата числа свои отказы.
 import { cellFormat, FORMAT_FIELDS } from './format-fields.js';
 export { FORMAT_FIELDS };
+import { formatSourceOf } from './sheets/format-source.js';
 import { rowSelectionOf, rowSpanSchema } from './sheets/row-selection.js';
 import type { CellFormat } from './sheets/types.js';
 
@@ -86,10 +87,11 @@ export const formatCellsOp = z.object({
   allRows: z.boolean().optional(),
   rows: orJsonText(rowSpanSchema).optional(),
   headerOnly: z.boolean().optional(),
-  /** Какие колонки — по именам, а не по буквам: колонки переставляют (§5). */
-  columns: z.array(z.string().min(1)).min(1),
+  /** Какие колонки — по именам, а не по буквам (§5); без них — только у likeRow: все (Q42). */
+  columns: z.array(z.string().min(1)).min(1).optional(),
   /**
-   * Правка частичная: `{bold: true}` не сбрасывает выравнивание и фон.
+   * Правка частичная: `{bold: true}` не сбрасывает выравнивание и фон. Вид — этими полями или
+   * образцом `likeRow`, ровно одно (Q42, `formatSourceOf`).
    *
    * `transform` убирает ключи со значением `undefined`: при `exactOptionalPropertyTypes`
    * `{bold: undefined}` и «поля нет» — разные типы, и чистка обязана быть на границе, а не
@@ -99,7 +101,10 @@ export const formatCellsOp = z.object({
     .refine((f) => Object.values(f).some((v) => v !== undefined), 'не задано ни одного поля вида')
     .transform(
       (f) => Object.fromEntries(Object.entries(f).filter(([, v]) => v !== undefined)) as CellFormat,
-    ),
+    )
+    .optional(),
+  /** Вид как у строки N (Q42): у каждой колонки — вид её ячейки в строке данных N. */
+  likeRow: z.number().int().positive().optional(),
   /**
    * Заодно поправить ячейку заголовка этих колонок — «сделай шапку жирной». Только шапку —
    * `headerOnly`; вместе с ним `includeHeader` ничего не добавляет (Q17).
@@ -459,6 +464,8 @@ export function parseOperation(input: unknown): Operation {
     // отказ до Google, а не после чтения.
     const { data } = parsed;
     if (data.op === 'formatCells' || data.op === 'setCells') rowSelectionOf(data, data.op);
+    // Вид правки — полями или строкой-образцом, ровно одно (Q42): отказ тоже до Google.
+    if (data.op === 'formatCells') formatSourceOf(data);
     return data;
   }
   throw gcError('bad_request', {

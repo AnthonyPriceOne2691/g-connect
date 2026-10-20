@@ -46,6 +46,7 @@ const SAMPLE: Record<string, unknown> = {
   key: { Проект: 'G connect' },
   values: { Статус: 'готово' },
   format: { bold: true },
+  likeRow: 7,
   includeHeader: true,
   allRows: true,
   headerOnly: true,
@@ -117,25 +118,30 @@ function sampleFor(op: OperationName): Record<string, unknown> {
 }
 
 /**
- * Поля, из которых операция берёт РОВНО одно (Q13, Q17, Q39): строки правки вида выбирает
- * `where`, `allRows`, `rows` или `headerOnly`, записи значений — `where` или `rows`. Образец со
- * всеми сразу ядро законно отклонит, поэтому у такой операции образцов несколько — по одному на
- * способ, — а «заполнены все поля» судит их объединение.
+ * Поля, из которых операция берёт РОВНО одно (Q13, Q17, Q39, Q42): строки правки вида выбирает
+ * `where`, `allRows`, `rows` или `headerOnly`, записи значений — `where` или `rows`; вид правки —
+ * `format` или `likeRow`. Образец со всеми сразу ядро законно отклонит, поэтому у такой операции
+ * образцов несколько — в i-м из каждой группы оставлено её i-е поле (по кругу), — а «заполнены все
+ * поля» судит их объединение.
  */
-const ONE_OF: Partial<Record<OperationName, readonly string[]>> = {
-  formatCells: ['where', 'allRows', 'rows', 'headerOnly'],
-  setCells: ['where', 'rows'],
+const ONE_OF: Partial<Record<OperationName, readonly (readonly string[])[]>> = {
+  formatCells: [
+    ['where', 'allRows', 'rows', 'headerOnly'],
+    ['format', 'likeRow'],
+  ],
+  setCells: [['where', 'rows']],
 };
 
 function samplesFor(op: OperationName): Record<string, unknown>[] {
   const full = sampleFor(op);
-  const oneOf = ONE_OF[op];
-  if (oneOf === undefined) return [full];
-  return oneOf.map((kept) =>
-    Object.fromEntries(
-      Object.entries(full).filter(([field]) => field === kept || !oneOf.includes(field)),
-    ),
-  );
+  const groups = ONE_OF[op];
+  if (groups === undefined) return [full];
+  const count = Math.max(...groups.map((group) => group.length));
+  return Array.from({ length: count }, (_, i) => {
+    const kept = groups.map((group) => group[i % group.length]);
+    const dropped = groups.flat().filter((field) => !kept.includes(field));
+    return Object.fromEntries(Object.entries(full).filter(([field]) => !dropped.includes(field)));
+  });
 }
 
 describe('схема транспорта gc_apply против ядра — по полям (живой прогон 2026-10-02)', () => {
