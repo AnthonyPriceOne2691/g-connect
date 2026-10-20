@@ -44,6 +44,11 @@ export interface ResolvedTarget {
   readonly allow: Permission;
   readonly alias: string | null;
   readonly entry: RegistryEntry | null;
+  /**
+   * Лист из ссылки на вкладку (`gid` — это `sheetId`, D-26, Q27). Нет — ссылка листа не
+   * называет: голый ID, алиас или ссылка без gid. Лист по нему выбирает `chooseSheet`.
+   */
+  readonly gid?: number;
 }
 
 const URL_PATTERNS: readonly { readonly re: RegExp; readonly type: TargetType }[] = [
@@ -61,12 +66,34 @@ const BARE_ID = /^[A-Za-z0-9_-]{20,}$/;
 export const MY_DRIVE_ID = 'root';
 const MY_DRIVE_REFS: ReadonlySet<string> = new Set(['root', 'мой диск', 'my drive', 'my-drive']);
 
-export function parseTargetUrl(ref: string): { id: string; type: TargetType } | null {
+export function parseTargetUrl(ref: string): { id: string; type: TargetType; gid?: number } | null {
   for (const { re, type } of URL_PATTERNS) {
     const match = re.exec(ref);
-    if (match?.[1] !== undefined) return { id: match[1], type };
+    if (match?.[1] === undefined) continue;
+    const gid = gidOf(ref);
+    return { id: match[1], type, ...(gid === undefined ? {} : { gid }) };
   }
   return null;
+}
+
+/**
+ * Лист из ссылки (D-26, Q27): Google ставит `gid` и в запрос (`?gid=`), и во фрагмент (`#gid=`).
+ * Раньше разбор его отбрасывал, и ссылка на вкладку «Лог проверок» читалась первым листом.
+ * Число — лист, в том числе 0; пустое и мусор (`gid=abc`, `gid=12abc`) — как нет gid. Два разных
+ * числа в одной ссылке — отказ: выбрать одно значило бы угадать вкладку, в которую писать.
+ */
+function gidOf(ref: string): number | undefined {
+  const found = [...ref.matchAll(/[?&#]gid=(\d+)(?!\w)/g)];
+  const gids = [...new Set(found.map((match) => Number(match[1])))];
+  if (gids.length > 1) {
+    throw gcError('bad_request', {
+      detail:
+        `Ссылка называет два разных листа: gid ${gids.join(' и ')}. Ни чтения, ни записи не ` +
+        'было: спроси человека, какая вкладка нужна.',
+      cause: 'sheet_gid_conflict',
+    });
+  }
+  return gids[0];
 }
 
 export async function loadRegistry(account: string = DEFAULT_ACCOUNT): Promise<Registry> {
@@ -136,6 +163,7 @@ export function resolveTarget(ref: string, registry: Registry = { targets: [] })
     allow: known?.allow ?? 'read',
     alias: known?.alias ?? null,
     entry: known ?? null,
+    ...(fromUrl?.gid === undefined ? {} : { gid: fromUrl.gid }),
   };
 }
 

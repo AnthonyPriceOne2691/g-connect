@@ -211,7 +211,7 @@ async function assertTitleUnused(
   map: SheetMap,
   title: string,
 ): Promise<void> {
-  const titles = await client.sheetTitles(map.spreadsheetId);
+  const titles = (await client.sheetTitles(map.spreadsheetId)).map((s) => s.title);
   if (!titles.includes(title)) return;
   const free = `${title} 2`;
   throw gcError('bad_request', {

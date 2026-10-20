@@ -19,6 +19,7 @@ import type {
   InsertDimensionRequest,
   SheetRequest,
   SheetSnapshot,
+  SheetTitle,
   SheetsClient,
   SpreadsheetSnapshot,
   ReadOptions,
@@ -462,8 +463,8 @@ export class FakeSheetsClient implements SheetsClient {
     return windowAsGoogle(this.data, sheet, fromRow, count);
   }
 
-  async sheetTitles(): Promise<readonly string[]> {
-    return this.data.sheets.map((sheet) => sheet.title);
+  async sheetTitles(): Promise<readonly SheetTitle[]> {
+    return this.data.sheets.map(({ title, sheetId }) => ({ title, sheetId }));
   }
 
   async batchUpdateValues(
@@ -524,8 +525,8 @@ export class MutableSheetsClient implements SheetsClient {
     return windowAsGoogle(this.data, sheet, fromRow, count);
   }
 
-  async sheetTitles(): Promise<readonly string[]> {
-    return this.data.sheets.map((sheet) => sheet.title);
+  async sheetTitles(): Promise<readonly SheetTitle[]> {
+    return this.data.sheets.map(({ title, sheetId }) => ({ title, sheetId }));
   }
 
   async batchUpdateValues(

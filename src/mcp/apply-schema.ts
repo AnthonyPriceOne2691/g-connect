@@ -17,7 +17,7 @@ import {
   type OperationName,
 } from '../core/ops.js';
 import { rowSpanSchema } from '../core/sheets/row-selection.js';
-import { targetArg } from './target-arg.js';
+import { sheetArg, targetArg } from './target-arg.js';
 
 /**
  * Поля операций над документом (уровень 3).
@@ -150,7 +150,7 @@ export const applyInput = {
   /** Превью файлом: широкую таблицу в терминале не читают (§13.3, ступень 0). */
   report: z.boolean().default(false).describe('Дополнительно записать превью HTML-файлом'),
   target: targetArg,
-  sheet: z.string().min(1).optional(),
+  sheet: sheetArg,
   headerRow: z.number().int().positive().optional(),
   key: z.record(z.string(), z.unknown()).optional().describe('upsertRow: ключ строки'),
   where: z

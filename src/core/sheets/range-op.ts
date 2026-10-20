@@ -210,7 +210,7 @@ export async function duplicateSheet(
   if (title.trim().length === 0) {
     throw gcError('bad_request', { detail: 'Имя копии не может быть пустым.' });
   }
-  const titles = await client.sheetTitles(map.spreadsheetId);
+  const titles = (await client.sheetTitles(map.spreadsheetId)).map((s) => s.title);
   if (titles.includes(title)) {
     throw gcError('bad_request', {
       detail:

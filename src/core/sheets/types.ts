@@ -396,19 +396,25 @@ export type SheetRequest =
   | MoveDimensionRequest
   | SortRangeRequest;
 
+/** Лист книги по метаданным: имя и `sheetId` — тот же номер, что `gid` в ссылке на вкладку. */
+export interface SheetTitle {
+  readonly title: string;
+  readonly sheetId: number;
+}
+
 export interface SheetsClient {
   getSpreadsheet(id: string, options?: ReadOptions): Promise<SpreadsheetSnapshot>;
   /** Строки листа с `fromRow` (номер строки листа), не больше `count` — окно чтения. */
   readRows(id: string, sheet: string, fromRow: number, count: number): Promise<RowWindow>;
   /**
-   * Только имена листов книги — без сетки.
+   * Только листы книги — имя и `sheetId`, без сетки.
    *
    * Отдельным методом, потому что проверка занятого имени листа не имеет права опираться
    * на карту: карта строится из усечённого снимка, и её `otherSheets` пуст даже когда
    * листов семь (живой прогон 2026-09-04). А полное чтение книги ради имён стоило бы
-   * десятков тысяч ячеек.
+   * десятков тысяч ячеек. Тем же вызовом лист выбирается по `gid` ссылки (Q27) — до сетки.
    */
-  sheetTitles(id: string): Promise<readonly string[]>;
+  sheetTitles(id: string): Promise<readonly SheetTitle[]>;
   /**
    * Запись значений в A1-диапазон. `input: 'user'` (по умолчанию) — как ввёл бы человек:
    * «2025-06-01» станет датой; `'raw'` — текстом, как есть (D-23, таблица со шапкой).

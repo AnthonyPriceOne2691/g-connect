@@ -20,10 +20,11 @@ import { assertTargetKind, isDocOperation, runDocApply, runDocUndo } from './run
 import { limitOf, policyText, policyRules } from '../core/policy.js';
 import { DEFAULT_ACCOUNT } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
+import { chooseSheet, type SheetAsk } from '../core/sheets/sheet-choice.js';
 import { readDoc } from './read-doc.js';
 import { readValues } from './read-values.js';
 import type { ApplyOutcome } from '../core/sheets/rows.js';
-import { resolveTarget, type RegistryEntry } from '../core/targets.js';
+import { resolveTarget, type ResolvedTarget } from '../core/targets.js';
 import { undoLast } from '../core/undo.js';
 
 export type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
@@ -41,7 +42,7 @@ import { parseToolInput } from './boundary.js';
 import { gcGrant } from './grant-tool.js';
 import { gcTargets, profileIntro } from './targets-tool.js';
 import { gcUnlock } from './unlock-tool.js';
-import { targetArg } from './target-arg.js';
+import { sheetArg, targetArg } from './target-arg.js';
 
 // `gc_targets` живёт в своём модуле (D-25); прежний адрес импорта — здесь.
 export { gcTargets };
@@ -52,28 +53,12 @@ async function resolve(deps: ToolDeps, target: string) {
 }
 
 /**
- * Лист и строка шапки по умолчанию — из реестра, если вызов их не задал. Без этого
- * `gc_targets` обещал агенту «лист по умолчанию: Проекты», а операция уходила на ПЕРВЫЙ
- * лист книги (у владельца это «Инструкция»): нашла живая проба через протокол 2026-09-02.
- * Порядок старшинства: явный аргумент вызова → реестр → эвристика ядра.
+ * Лист — по старшинству `chooseSheet` (Q27): явный `sheet` → gid ссылки → реестр → первый лист.
+ * Выбор идёт до чтения сетки: расхождение `sheet` с вкладкой ссылки не стоит чтения листа.
  */
-const sheetDefaults = (
-  entry: RegistryEntry | null,
-  sheet: string | undefined,
-  headerRow: number | undefined,
-): { sheet?: string; headerRow?: number } => {
-  const wantedSheet = sheet ?? entry?.sheet;
-  const wantedHeaderRow = headerRow ?? entry?.headerRow;
-  return {
-    ...(wantedSheet === undefined ? {} : { sheet: wantedSheet }),
-    ...(wantedHeaderRow === undefined ? {} : { headerRow: wantedHeaderRow }),
-  };
-};
-
-const readSheet = async (deps: ToolDeps, target: string, sheet?: string, headerRow?: number) => {
-  const resolved = await resolve(deps, target);
-  const wanted = sheetDefaults(resolved.entry, sheet, headerRow);
+const readSheet = async (deps: ToolDeps, resolved: ResolvedTarget, ask: SheetAsk) => {
   const client = await deps.sheets();
+  const wanted = await chooseSheet(client, resolved, ask);
   // Карта — лёгкая: первые MAP_ROWS строк листа, и карта сама говорит, что лист может
   // продолжаться (D-26). Строки целиком читает окно `values`, запись — весь лист.
   const snapshot = await client.getSpreadsheet(
@@ -81,7 +66,7 @@ const readSheet = async (deps: ToolDeps, target: string, sheet?: string, headerR
     wanted.sheet === undefined ? {} : { sheet: wanted.sheet, maxRows: MAP_ROWS },
   );
   const data = buildSheetData(snapshot, wanted);
-  return { resolved, client, data };
+  return { client, data };
 };
 
 /** Сколько строк читает карта листа: ей нужны шапка, типы колонок и образцы, не весь лист. */
@@ -90,7 +75,7 @@ const MAP_ROWS = 500;
 const readInput = {
   target: targetArg,
   mode: z.enum(['map', 'values', 'text']).default('map'),
-  sheet: z.string().min(1).optional().describe('Таблица: имя листа; без него берётся первый'),
+  sheet: sheetArg,
   headerRow: z
     .number()
     .int()
@@ -152,7 +137,7 @@ export const gcRead: ToolDefinition = {
         detail: 'mode=text читает абзацы документа. У таблицы строки читает mode=values.',
       });
     }
-    const { client, data } = await readSheet(deps, input.target, input.sheet, input.headerRow);
+    const { client, data } = await readSheet(deps, resolved, input);
 
     if (input.mode === 'values') return readValues(client, resolved.id, data, input);
     return data.map;
@@ -299,7 +284,9 @@ export const gcApply: ToolDefinition = {
     }
 
     const client = await deps.sheets();
-    const wanted = sheetDefaults(resolved.entry, operation.sheet, operation.headerRow);
+    // Лист — до чтения сетки и до записи (Q27, Q28): правка по ссылке на вкладку идёт в неё, а
+    // расхождение с `sheet` или чужой gid отказывают, не прочитав лист и ничего не записав.
+    const wanted = await chooseSheet(client, resolved, operation);
     const snapshot = await client.getSpreadsheet(
       resolved.id,
       wanted.sheet === undefined ? {} : { sheet: wanted.sheet },

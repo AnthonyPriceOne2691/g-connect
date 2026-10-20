@@ -23,6 +23,7 @@ import type {
   SheetProperties,
   SheetRequest,
   SheetSnapshot,
+  SheetTitle,
   SheetsClient,
   SpreadsheetSnapshot,
   ValidationRule,
@@ -401,22 +402,25 @@ export class GoogleSheetsClient implements SheetsClient {
    * «сделать жирным» и «сделать жирным, стереть остальное».
    */
   /**
-   * Имена листов книги одним дешёвым вызовом: `fields` без сетки.
+   * Листы книги одним дешёвым вызовом: `fields` без сетки — имя и `sheetId` (он же `gid` в
+   * ссылке на вкладку, Q27).
    *
    * Цена названа: это дополнительный запрос там, где раньше врала карта. Полное чтение
    * книги ради имён стоило бы у владельца ~28 000 ячеек за проверку одного имени.
    */
-  async sheetTitles(id: string): Promise<readonly string[]> {
+  async sheetTitles(id: string): Promise<readonly SheetTitle[]> {
     try {
       const response = await this.retry(() =>
         this.sheets.spreadsheets.get({
           spreadsheetId: id,
-          fields: 'sheets(properties(title))',
+          fields: 'sheets.properties(sheetId,title)',
         }),
       );
-      return (response.data.sheets ?? []).flatMap((sheet) => {
-        const title = sheet.properties?.title;
-        return title === undefined || title === null ? [] : [title];
+      return (response.data.sheets ?? []).flatMap(({ properties }) => {
+        const title = properties?.title;
+        // Нет `sheetId` — 0, как в `toSheetSnapshot`: один лист не должен читаться двумя номерами.
+        const sheetId = properties?.sheetId ?? 0;
+        return title === undefined || title === null ? [] : [{ title, sheetId }];
       });
     } catch (error) {
       throw fromGoogleError(error, `Не удалось прочитать список листов ${id}.`);
