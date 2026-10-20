@@ -412,6 +412,7 @@ export function buildSheetData(
     rows: allRows,
     formats: allFormats,
     headerFormats: formatsToRecord(headerCells, columns),
+    cells: withData,
   };
 }
 

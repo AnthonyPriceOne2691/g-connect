@@ -245,6 +245,12 @@ export interface SheetData {
   readonly formats: readonly Readonly<Record<string, CellFormat>>[];
   /** Вид ячеек строки заголовков — для «сделай шапку жирной». */
   readonly headerFormats: Readonly<Record<string, CellFormat>>;
+  /**
+   * Те же строки ячейками по индексу колонки листа — с колонками без подписи и разрывом шапки
+   * (Q33, Q34). `rows` и `formats` знают только колонки карты, а строку Google удаляет и
+   * сортирует целиком: снимок по ним терял C3 «а) доступы» и писал значения D в C.
+   */
+  readonly cells: readonly (readonly Cell[])[];
 }
 
 export interface ReadOptions {
@@ -384,7 +390,8 @@ export interface MoveDimensionRequest {
 /**
  * Сортировка диапазона по одной колонке. Диапазон всегда начинается с колонки A: в
  * документации не сказано, относительно чего считается `dimensionIndex` у `sortSpecs` —
- * листа или диапазона, — а при начале от A оба чтения совпадают.
+ * листа или диапазона, — а при начале от A оба чтения совпадают. Кончается — последней колонкой
+ * строк данных (Q33): Google двигает только ячейки диапазона, остальные остаются на месте.
  */
 export interface SortRangeRequest {
   readonly kind: 'sortRange';

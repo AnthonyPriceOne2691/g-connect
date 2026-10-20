@@ -34,6 +34,12 @@ export function dataBounds(title: string, rows: Rows): string {
 /** Строк до последней со значением или формулой — высота других листов в карте (Q31). */
 export const dataHeight = (rows: Rows): number => extentOf(rows).height;
 
+/**
+ * Колонок от A до последней со значением или формулой — ширина строк данных (Q33, Q34): строку
+ * Google удаляет, перемещает и сортирует целиком, с колонками без подписи и разрывом шапки.
+ */
+export const dataWidth = (rows: Rows): number => extentOf(rows).width;
+
 function extentOf(rows: Rows): { height: number; width: number } {
   let height = 0;
   let width = 0;
