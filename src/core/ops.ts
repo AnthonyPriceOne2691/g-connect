@@ -145,6 +145,8 @@ export const insertRowsOp = z.object({
   count: z.number().int().positive().max(200).default(1),
   /** Ниже якоря, а не выше. */
   below: z.boolean().default(false),
+  /** Вставленные строки — с видом и проверкой данных строки N (Q43), номер — как до вставки. */
+  likeRow: z.number().int().positive().optional(),
   ...commonFields,
 });
 

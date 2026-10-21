@@ -143,6 +143,7 @@ const PASTE_TYPES: Record<PasteKind, string> = {
   all: 'PASTE_NORMAL',
   values: 'PASTE_VALUES',
   format: 'PASTE_FORMAT',
+  validation: 'PASTE_DATA_VALIDATION',
 };
 
 /** Доменный прямоугольник → `GridRange`: 1-based строка и полуинтервал Google. */

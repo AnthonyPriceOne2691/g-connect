@@ -109,6 +109,7 @@ const HANDLERS: {
     insertRows(client, data, operation.where, operation.count, {
       ...options,
       below: operation.below,
+      ...(operation.likeRow === undefined ? {} : { likeRow: operation.likeRow }),
     }),
   insertColumns: (client, data, operation, options) =>
     insertColumns(client, data, operation.column, operation.count, {

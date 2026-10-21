@@ -350,8 +350,13 @@ export interface DomainRange {
   readonly columnCount: number;
 }
 
-/** Что переносить при вставке: всё, только значения или только вид (§6.2, Ctrl+Shift+V). */
-export type PasteKind = 'all' | 'values' | 'format';
+/**
+ * Что переносить при вставке: всё, только значения, только вид (§6.2, Ctrl+Shift+V) или только
+ * проверку данных — выпадающий список (D-26, Q43). Вид без списка: `PASTE_FORMAT` проверку данных
+ * не переносит («Paste the format only, excluding data validation», документация Google,
+ * 2026-10-21), и новая строка отчёта приезжала со статусом без списка.
+ */
+export type PasteKind = 'all' | 'values' | 'format' | 'validation';
 
 export interface CopyPasteRequest {
   readonly kind: 'copyPaste';

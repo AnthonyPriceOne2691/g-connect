@@ -343,13 +343,13 @@ export async function appendRow(
 
   const layout =
     changes.length === 0
-      ? null
+      ? []
       : layoutFromAbove(map, rowNumber, data.rows.length, prepared.resolved);
-  if (layout === null) return finish(client, map, changes, prepared, options, 'appendRow');
+  if (layout.length === 0) return finish(client, map, changes, prepared, options, 'appendRow');
   // Копию вида называет план: человек видит её в превью, а не узнаёт по виду листа.
-  const note = `оформление строки ${rowNumber} — как у строки ${rowNumber - 1}`;
+  const note = `оформление строки ${rowNumber} — как у строки ${rowNumber - 1}, с проверкой данных`;
   const named: Prepared = { ...prepared, notes: [...prepared.notes, note] };
-  return finish(client, map, changes, named, options, 'appendRow', [layout]);
+  return finish(client, map, changes, named, options, 'appendRow', layout);
 }
 
 /**
@@ -357,7 +357,9 @@ export async function appendRow(
  *
  * values-API пишет только значения, и строка, дописанная ниже оформленных строк шаблона,
  * получала шрифт листа по умолчанию: «Реестр инфраструктуры» владелец выравнивал руками на
- * семи вкладках. Копия — один `copyPaste` с `PASTE_FORMAT`: источник — последняя строка данных,
+ * семи вкладках. Копия — `copyPaste` с `PASTE_FORMAT` и вторым — с `PASTE_DATA_VALIDATION`: вид
+ * Google переносит без проверки данных, а строка без выпадающего списка — та же неровность (Q44).
+ * Источник — последняя строка данных,
  * получатель — новая строка, колонки — ширина таблицы, от первой до последней колонки карты, а
  * колонка без подписи, в которую пишет дозапись (Q40), — тоже часть строки, как подписанная.
  * Строки данных над новой нет (лист из одной шапки) — копии нет: шапка оформлена иначе.
@@ -372,8 +374,8 @@ function layoutFromAbove(
   rowNumber: number,
   rowsAbove: number,
   written: Prepared['resolved'],
-): CopyPasteRequest | null {
-  if (rowsAbove === 0 || map.columns.length === 0) return null;
+): CopyPasteRequest[] {
+  if (rowsAbove === 0 || map.columns.length === 0) return [];
   const indices = [...map.columns, ...written.map(({ column }) => column)].map((c) => c.index);
   const first = Math.min(...indices);
   const line = (row: number) => ({
@@ -382,13 +384,13 @@ function layoutFromAbove(
     rowCount: 1,
     columnCount: Math.max(...indices) - first + 1,
   });
-  return {
+  return (['format', 'validation'] as const).map((paste) => ({
     kind: 'copyPaste',
     sheetId: map.sheetId,
     source: line(rowNumber - 1),
     destination: line(rowNumber),
-    paste: 'format',
-  };
+    paste,
+  }));
 }
 
 /**

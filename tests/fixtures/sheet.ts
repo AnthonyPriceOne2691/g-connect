@@ -22,6 +22,7 @@ import type {
   SheetTitle,
   SheetsClient,
   SpreadsheetSnapshot,
+  ValidationRule,
   ReadOptions,
   RowWindow,
 } from '../../src/core/sheets/types.js';
@@ -338,6 +339,8 @@ function withSort(data: SpreadsheetSnapshot, request: SortRangeRequest): Spreads
  */
 function pasted(from: Cell, to: Cell, paste: CopyPasteRequest['paste']): Cell {
   if (paste === 'all') return { ...from };
+  // Проверка данных — правило листа, а не поле ячейки: её переносит `pastedRules` (Q43).
+  if (paste === 'validation') return to;
   if (paste === 'values') {
     return { value: from.value, ...(to.format === undefined ? {} : { format: to.format }) };
   }
@@ -372,6 +375,7 @@ function withPaste(
           row[destination.column + dc] = pasted(from, row[destination.column + dc]!, paste);
         }
       }
+      const validations = pastedRules(sheet.validations ?? [], request);
       if (request.kind === 'cutPaste') {
         for (let sr = 0; sr < source.rowCount; sr += 1) {
           const row = rows[source.row - 1 + sr];
@@ -381,9 +385,47 @@ function withPaste(
           }
         }
       }
-      return { ...sheet, rows };
+      return { ...sheet, rows, ...(validations.length === 0 ? {} : { validations }) };
     }),
   };
+}
+
+/**
+ * Проверка данных при вставке, как у Google (Q43): `PASTE_DATA_VALIDATION` кладёт в каждую ячейку
+ * получателя правило ячейки-источника; `PASTE_FORMAT` и прочие виды вставки правил не трогают
+ * («Paste the format only, excluding data validation»). Строки — 1-based, колонки — 0-based.
+ */
+function pastedRules(
+  rules: readonly ValidationRule[],
+  request: CopyPasteRequest | CutPasteRequest | AutoFillRequest,
+): readonly ValidationRule[] {
+  if (request.kind !== 'copyPaste' || request.paste !== 'validation') return rules;
+  const { source, destination } = request;
+  const ruleAt = (row: number, column: number) =>
+    rules.find(
+      ({ range }) =>
+        row >= range.startRow &&
+        row <= range.endRow &&
+        column >= range.startColumn &&
+        column <= range.endColumn,
+    );
+  const added: ValidationRule[] = [];
+  for (let dr = 0; dr < destination.rowCount; dr += 1) {
+    for (let dc = 0; dc < destination.columnCount; dc += 1) {
+      const rule = ruleAt(
+        source.row + (dr % Math.max(1, source.rowCount)),
+        source.column + (dc % Math.max(1, source.columnCount)),
+      );
+      if (rule === undefined) continue;
+      const row = destination.row + dr;
+      const column = destination.column + dc;
+      added.push({
+        range: { startRow: row, endRow: row, startColumn: column, endColumn: column },
+        values: rule.values,
+      });
+    }
+  }
+  return [...rules, ...added];
 }
 
 /** Вставка и удаление измерения: строки или колонки, 1-based «перед этим номером». */
@@ -398,10 +440,14 @@ function withDimension(
       if (sheet.sheetId !== request.sheetId) return sheet;
       const rows = sheet.rows.map((r) => [...r]);
       const start = request.at - 1;
+      const rules =
+        sheet.validations === undefined
+          ? {}
+          : { validations: shiftedRules(sheet.validations, request) };
       if (request.dimension === 'rows') {
         if (insert) rows.splice(start, 0, ...Array.from({ length: request.count }, () => []));
         else rows.splice(start, request.count);
-        return { ...sheet, rows };
+        return { ...sheet, rows, ...rules };
       }
       const next = rows.map((row) => {
         const copy = [...row];
@@ -410,9 +456,55 @@ function withDimension(
         else copy.splice(start, request.count);
         return copy;
       });
-      return { ...sheet, rows: next };
+      return { ...sheet, rows: next, ...rules };
     }),
   };
+}
+
+/**
+ * Правила проверки данных едут вместе со строками и колонками, как у Google (Q43): правило за местом
+ * вставки сдвигается, вставка внутри правила его растягивает; удаление сжимает, а правило, удалённое
+ * целиком, уходит. Без этого образец, сдвинутый вставкой, в фейке оставался бы «без списка».
+ * Строки правила — 1-based, колонки — 0-based; `at` запроса — 1-based «перед этим номером».
+ */
+function shiftedRules(
+  rules: readonly ValidationRule[],
+  request: InsertDimensionRequest | DeleteDimensionRequest,
+): ValidationRule[] {
+  const byRows = request.dimension === 'rows';
+  const at = byRows ? request.at : request.at - 1;
+  const last = at + request.count - 1;
+  return rules.flatMap((rule) => {
+    const { range } = rule;
+    const [first, end] = byRows
+      ? [range.startRow, range.endRow]
+      : [range.startColumn, range.endColumn];
+    let span: readonly [number, number];
+    if (request.kind === 'insertDimension') {
+      span =
+        first >= at
+          ? [first + request.count, end + request.count]
+          : [first, end >= at ? end + request.count : end];
+    } else if (end < at) {
+      span = [first, end];
+    } else if (first > last) {
+      span = [first - request.count, end - request.count];
+    } else {
+      const kept = Math.max(0, at - first) + Math.max(0, end - last);
+      if (kept === 0) return [];
+      const from = Math.min(first, at);
+      span = [from, from + kept - 1];
+    }
+    const [a, b] = span;
+    return [
+      {
+        ...rule,
+        range: byRows
+          ? { ...range, startRow: a, endRow: b }
+          : { ...range, startColumn: a, endColumn: b },
+      },
+    ];
+  });
 }
 
 /**
