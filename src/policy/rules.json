@@ -228,10 +228,10 @@
     },
     {
       "id": "write.append-inherits-format",
-      "title": "Дописанная строка берёт вид строки над ней: копия формата — до значений, превью её называет (D-26, Q14)",
+      "title": "Дописанная строка берёт вид и проверку данных строки над ней: копии — до значений, превью их называет (D-26, Q14, Q44)",
       "kind": "invariant",
       "enforced_in": "src/core/sheets/rows.ts (appendRow, layoutFromAbove, finish)",
-      "probe": "appendRow под оформленной строкой: первым запросом — copyPaste с paste: format из строки над новой, потом значения; заметка превью называет копию"
+      "probe": "appendRow под оформленной строкой: первыми запросами — copyPaste с paste: format и с paste: validation из строки над новой, потом значения; заметка превью называет копию"
     },
     {
       "id": "columns.unlabeled-exact-key",
@@ -246,6 +246,13 @@
       "kind": "deny",
       "enforced_in": "src/core/sheets/format-source.ts (formatSourceOf, restyleOf) + src/core/ops.ts (parseOperation)",
       "probe": "formatCells без источника, с format и likeRow сразу и с format без columns → bad_request до Google; likeRow = шапка → like_row_outside_data; likeRow строки с жирным → план жирного в строке цели"
+    },
+    {
+      "id": "write.insert-like-row",
+      "title": "Вставка «как строка N»: вид и проверка данных строки данных N — тем же batchUpdate, что вставка; образец вне данных — отказ (D-26, Q43)",
+      "kind": "invariant",
+      "enforced_in": "src/core/sheets/structure-support.ts (likeRowPastes) + src/core/sheets/format-source.ts (sampleBounds)",
+      "probe": "insertRows с likeRow: одним batchUpdate — insertDimension, copyPaste format и copyPaste validation; likeRow = шапка → like_row_outside_data"
     },
     {
       "id": "write.replace-preview-lists-cells",

@@ -194,3 +194,8 @@ PR #19 (Q42) — агент N от `3d9672e`, сводит ведущий в `fe
 24. **Вид по образцу строки** (агент N; `src/core/sheets/format-source.ts` — `formatSourceOf`,
     `restyleOf`; `format-op.ts`, `ops.ts`, `apply-schema.ts`): источник вида — `format` или `likeRow`, ровно
     один; запись — тот же `batchUpdate` с `repeatCell` на ячейку и маской полей.
+
+PR #20 (Q43, Q44) — ведущий сам, от `f98c2b5`, в `feat/insert-like-row` поверх PR #19:
+
+25. **Новые строки со списком** (`likeRowPastes` в `structure-support.ts`, `insertRows`, `layoutFromAbove`
+    в `rows.ts`, `PasteKind` `validation` в шве; фейк — правила проверки данных при вставке и сдвиге).

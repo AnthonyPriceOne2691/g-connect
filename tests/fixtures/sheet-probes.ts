@@ -14,6 +14,7 @@ import { formatRows } from '../../src/core/sheets/format-op.js';
 import { buildSheetData } from '../../src/core/sheets/map.js';
 import { appendRow } from '../../src/core/sheets/rows.js';
 import { setRows } from '../../src/core/sheets/set-cells-op.js';
+import { insertRows } from '../../src/core/sheets/structure-op.js';
 import type { Cell, CellValue, SheetRequest } from '../../src/core/sheets/types.js';
 import { readValues } from '../../src/mcp/read-values.js';
 import { FakeSheetsClient } from './sheet.js';
@@ -246,6 +247,23 @@ export const sheetProbes: Record<string, () => Promise<void>> = {
       likeRow: 2,
     });
     expect(preview.changes.map((change) => change.a1)).toEqual(['Лист!A3']);
+  },
+
+  // Вставка «как строка N» (Q43): вид и список образца — тем же batchUpdate, что вставка; образец —
+  // только строка данных.
+  'write.insert-like-row': async () => {
+    const snapshot = longSnapshot(3);
+    const data = () => buildSheetData(snapshot, { headerRow: 1 });
+    await expect(
+      insertRows(new FakeSheetsClient(snapshot), data(), { Имя: 'строка 1' }, 1, { likeRow: 1 }),
+    ).rejects.toMatchObject({ payload: { code: 'bad_request', cause: 'like_row_outside_data' } });
+    const client = new Ordered(snapshot);
+    await insertRows(client, data(), { Имя: 'строка 1' }, 1, {
+      likeRow: 3,
+      dryRun: false,
+      authorize: () => ({ authorized: true }) as const,
+    });
+    expect(client.order).toEqual(['insertDimension', 'copyPaste:format', 'copyPaste:validation']);
   },
 };
 
