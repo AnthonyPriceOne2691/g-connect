@@ -452,7 +452,9 @@ describe('Q40 — значение в колонку без подписи — �
       expect(unlabeled.status).toBe('preview');
       expect(unlabeled.changes).toMatchObject([{ a1: 'Отчёт!A14', after: 'почти готово' }]);
       // Ни приведения, ни разбора значения — только копия вида строки выше (Q14).
-      expect(unlabeled.notes).toEqual(['оформление строки 14 — как у строки 13']);
+      expect(unlabeled.notes).toEqual([
+        'оформление строки 14 — как у строки 13, с проверкой данных',
+      ]);
     },
   );
 

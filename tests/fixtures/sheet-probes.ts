@@ -168,7 +168,7 @@ export const sheetProbes: Record<string, () => Promise<void>> = {
     const preview = await appendRow(new Ordered(snapshot), buildSheetData(snapshot), {
       Имя: 'строка 2',
     });
-    expect(preview.notes).toContain('оформление строки 3 — как у строки 2');
+    expect(preview.notes).toContain('оформление строки 3 — как у строки 2, с проверкой данных');
     const client = new Ordered(snapshot);
     await appendRow(
       client,
@@ -176,7 +176,7 @@ export const sheetProbes: Record<string, () => Promise<void>> = {
       { Имя: 'строка 2' },
       { dryRun: false, authorize: () => ({ authorized: true }) as const },
     );
-    expect(client.order).toEqual(['copyPaste:format', 'values']);
+    expect(client.order).toEqual(['copyPaste:format', 'copyPaste:validation', 'values']);
   },
 
   // Колонка без подписи — только точным ключом из карты (Q40): «(B)» пишется, «B» и «(b)» — вопрос.

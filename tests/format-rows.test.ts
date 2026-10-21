@@ -384,9 +384,13 @@ const gridRow = (index: number) => ({
 const COPY_ABOVE = {
   copyPaste: { source: gridRow(20), destination: gridRow(21), pasteType: 'PASTE_FORMAT' },
 };
+/** Список строки над новой — вторым запросом: `PASTE_FORMAT` проверку данных не переносит (Q44). */
+const LIST_ABOVE = {
+  copyPaste: { source: gridRow(20), destination: gridRow(21), pasteType: 'PASTE_DATA_VALIDATION' },
+};
 
 describe('Q14 — дописанная строка берёт оформление строки над ней: шов Google (D-26)', () => {
-  it('Q14: appendRow — ДО значений один copyPaste PASTE_FORMAT из строки над новой, по ширине таблицы', async () => {
+  it('Q14, Q44: appendRow — ДО значений copyPaste PASTE_FORMAT и PASTE_DATA_VALIDATION из строки над новой, по ширине таблицы', async () => {
     const g = google(registryRows(20));
     const result = await callMcp(
       gcApply,
@@ -395,7 +399,7 @@ describe('Q14 — дописанная строка берёт оформлен�
     );
     expect(result.data).toMatchObject({ status: 'ok' });
     expect(g.calls).toEqual(['batchUpdate', 'values.batchUpdate']);
-    expect(g.requests).toEqual([COPY_ABOVE]);
+    expect(g.requests).toEqual([COPY_ABOVE, LIST_ABOVE]);
     // Значения — по-прежнему одним запросом и в новую строку (Q10).
     expect(g.written).toHaveLength(3);
     for (const range of g.written) expect(range).toMatch(/22$/);
@@ -416,7 +420,7 @@ describe('Q14 — дописанная строка берёт оформлен�
     );
     expect(result.data).toMatchObject({ status: 'ok' });
     expect(g.calls).toEqual(['batchUpdate', 'values.batchUpdate']);
-    expect(g.requests).toEqual([COPY_ABOVE]);
+    expect(g.requests).toEqual([COPY_ABOVE, LIST_ABOVE]);
   });
 
   it('Q14: лист из одной шапки — копии нет: шапка оформлена иначе', async () => {
@@ -440,7 +444,7 @@ describe('Q14 — дописанная строка берёт оформлен�
     );
     expect(result.data).toMatchObject({ status: 'preview' });
     expect((result.data as { notes: string[] }).notes).toContain(
-      'оформление строки 22 — как у строки 21',
+      'оформление строки 22 — как у строки 21, с проверкой данных',
     );
     expect(g.calls).toEqual([]);
   });
@@ -515,6 +519,7 @@ describe('Q14 — дописанная строка берёт оформлен�
     const line = (at: number) => ({ row: at, column: 1, rowCount: 1, columnCount: 4 });
     expect(client.formatWrites).toEqual([
       { kind: 'copyPaste', sheetId: 3, source: line(2), destination: line(3), paste: 'format' },
+      { kind: 'copyPaste', sheetId: 3, source: line(2), destination: line(3), paste: 'validation' },
     ]);
   });
 

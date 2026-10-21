@@ -13,12 +13,14 @@ import { denyByRule, limitOf } from '../policy.js';
 import { needsClarification, resolveColumn } from '../resolver.js';
 import { dataWidth, unlabeledCells } from './bounds.js';
 import type { Prepared } from './commit.js';
+import { sampleBounds } from './format-source.js';
 import { columnQuestion, clarify, rowsUnderCondition } from './rows.js';
 import { buildSheetData } from './map.js';
 import {
   columnLetter,
   type CellValue,
   type ColumnProfile,
+  type CopyPasteRequest,
   type SheetData,
   type SheetMap,
   type SheetsClient,
@@ -105,6 +107,32 @@ export function rowChanges(data: SheetData, rows: readonly number[]): PlannedCha
       after: null,
     }));
   });
+}
+
+/**
+ * Вставленные строки «как строка N» (D-26, Q43): вид и проверка данных строки-образца — двумя
+ * `copyPaste` следом за вставкой, тем же `batchUpdate`. Новые дни отчёта приезжали со статусом без
+ * выпадающего списка: Google наследует вид соседней строки, а у строки дня списка нет. Образец — строка
+ * данных, номер — как в чтении до вставки: ниже места вставки он сдвигается на `count`. Ширина — вся
+ * строка данных (`rowWidth`), от A. Откат — прежний: удаление вставленных строк уносит и вид, и список.
+ */
+export function likeRowPastes(
+  data: SheetData,
+  at: number,
+  count: number,
+  likeRow: number,
+): CopyPasteRequest[] {
+  sampleBounds(data, likeRow);
+  const source = likeRow >= at ? likeRow + count : likeRow;
+  const columnCount = rowWidth(data);
+  const line = (row: number, rowCount: number) => ({ row, column: 0, rowCount, columnCount });
+  return (['format', 'validation'] as const).map((paste) => ({
+    kind: 'copyPaste',
+    sheetId: data.map.sheetId,
+    source: line(source, 1),
+    destination: line(at, count),
+    paste,
+  }));
 }
 
 /**

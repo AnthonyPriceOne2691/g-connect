@@ -25,6 +25,7 @@ import {
   columnAnchored,
   assertSnapshotBudget,
   columnSnapshot,
+  likeRowPastes,
   rowChanges,
   rowWidth,
   snapshotOf,
@@ -53,7 +54,7 @@ export async function insertRows(
   data: SheetData,
   where: RowValues,
   count: number,
-  options: RowOptions = {},
+  options: RowOptions & { readonly likeRow?: number } = {},
 ): Promise<ApplyOutcome> {
   const map = data.map;
   assertCount(count);
@@ -73,11 +74,25 @@ export async function insertRows(
     count,
     anchor: `строка, где ${anchorText(where)}`,
   };
-  const plan = prepared([], selected.assumptions);
+  // Вид и список строки-образца (Q43) — тем же batchUpdate, что вставка: строка без них не остаётся.
+  const { likeRow } = options;
+  const pastes = likeRow === undefined ? [] : likeRowPastes(data, at, count, likeRow);
+  const notes =
+    likeRow === undefined
+      ? []
+      : [
+          `оформление и проверка данных ${count === 1 ? `строки ${at}` : `строк ${at}–${at + count - 1}`}` +
+            ` — как у строки ${likeRow}`,
+        ];
+  const plan = prepared(notes, selected.assumptions);
   return finishWrite(client, contextOf(map), [], plan, options, 'insertRows', {
     structural,
     cells: count * Math.max(1, map.columns.length),
-    apply: (c) => insertDimension(c, map, 'rows', at, count),
+    apply: (c) =>
+      c.batchUpdate(map.spreadsheetId, [
+        { kind: 'insertDimension', sheetId: map.sheetId, dimension: 'rows', at, count },
+        ...pastes,
+      ]),
     precondition: (c) => assertAnchorRow(c, map, where, options, anchorRow),
   });
 }

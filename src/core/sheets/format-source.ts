@@ -14,7 +14,7 @@
  */
 
 import { gcError } from '../errors.js';
-import { dataBounds, spanText } from './row-selection.js';
+import { dataBounds, spanText, type DataBounds } from './row-selection.js';
 import type { CellFormat, ColumnProfile, SheetData } from './types.js';
 
 /** Вид — полями или образцом строки, ровно одно; держит это тип, а не договорённость. */
@@ -98,11 +98,18 @@ function sampleOf(
   data: SheetData,
   likeRow: number,
 ): (column: ColumnProfile) => CellFormat | undefined {
+  const bounds = sampleBounds(data, likeRow);
+  const formats = data.formats[likeRow - bounds.first] ?? {};
+  return (column) => formats[column.name];
+}
+
+/**
+ * Граница данных, если строка-образец внутри неё, — или отказ. Одна на правку вида (Q42) и вставку
+ * «как строка N» (Q43, `insertRows`): «строка-образец» у них одна и та же.
+ */
+export function sampleBounds(data: SheetData, likeRow: number): DataBounds {
   const bounds = dataBounds(data);
-  if (bounds !== null && likeRow >= bounds.first && likeRow <= bounds.last) {
-    const formats = data.formats[likeRow - bounds.first] ?? {};
-    return (column) => formats[column.name];
-  }
+  if (bounds !== null && likeRow >= bounds.first && likeRow <= bounds.last) return bounds;
   const { headerRow, sheet } = data.map;
   const place =
     likeRow > headerRow ? 'вне строк данных' : likeRow === headerRow ? 'шапка' : 'над шапкой';

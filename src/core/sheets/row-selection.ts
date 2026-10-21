@@ -156,7 +156,7 @@ function assertUsable(selection: RowSelection, op: RowSelectionOp): void {
 }
 
 /** Строки данных листа: от строки после шапки до последней строки с данными. */
-interface DataBounds {
+export interface DataBounds {
   readonly first: number;
   readonly last: number;
 }
