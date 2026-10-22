@@ -199,3 +199,8 @@ PR #20 (Q43, Q44) — ведущий сам, от `f98c2b5`, в `feat/insert-lik
 
 25. **Новые строки со списком** (`likeRowPastes` в `structure-support.ts`, `insertRows`, `layoutFromAbove`
     в `rows.ts`, `PasteKind` `validation` в шве; фейк — правила проверки данных при вставке и сдвиге).
+
+PR #21 (тестовые процессы) — ведущий сам, от `9fcba0f`, в `fix/test-agent-orphans` поверх PR #20:
+
+26. **Агент теста под сторожем** (`tests/fixtures/test-agent.ts`, `grant.test.ts`, `test-agent.test.ts`):
+    `sh` держит канал от процесса теста и гасит `ssh-agent`, когда канал закрылся.

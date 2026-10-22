@@ -7,7 +7,7 @@
  * живой прогон X3 (урок L15).
  */
 
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { copyFile, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -40,6 +40,7 @@ import {
 } from '../src/core/grant/secretive.js';
 import { GcError } from '../src/core/errors.js';
 import { KEYGEN, fileKeys, makeKey, type SoftKey } from './fixtures/grant-keys.js';
+import { startTestAgent, type TestAgent } from './fixtures/test-agent.js';
 
 const PROJECT_A = '/Users/someone/Documents/Ahrefs cases';
 const PROJECT_B = '/Users/someone/Documents/portfolio-site';
@@ -295,20 +296,13 @@ describe('список разрешений машины (gc grant)', () => {
 });
 
 describe('ключ из агента (путь Secretive на настоящем ssh-agent)', () => {
-  let agent: ChildProcess;
+  // Агент — под сторожем (`fixtures/test-agent.ts`): тест, убитый до afterAll, сироту не оставляет.
+  let agent: TestAgent;
   let socket: string;
 
   beforeAll(async () => {
-    socket = join(keysDir, 'agent.sock');
-    agent = spawn('/usr/bin/ssh-agent', ['-D', '-a', socket], { stdio: 'ignore' });
-    for (let i = 0; i < 50; i++) {
-      try {
-        await stat(socket);
-        break;
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-    }
+    agent = await startTestAgent(keysDir);
+    socket = agent.socket;
     // Первым в агенте — ключ с ТЕМ ЖЕ именем, но без метки Secretive: его брать нельзя.
     const impostor = makeKey(keysDir, 'impostor', 'G connect');
     for (const key of [impostor, owner]) {
@@ -316,8 +310,8 @@ describe('ключ из агента (путь Secretive на настоящем
     }
   });
 
-  afterAll(() => {
-    agent.kill();
+  afterAll(async () => {
+    await agent.stop();
   });
 
   it('имя ключа из комментария Secretive; регистр и пробелы не различаются', () => {
