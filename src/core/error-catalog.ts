@@ -15,6 +15,7 @@ export type ErrorCode =
   | 'offline'
   | 'google_unavailable'
   | 'quota_exceeded'
+  | 'storage_full'
   | 'forbidden'
   | 'not_found'
   | 'provider_key_invalid'
@@ -111,6 +112,14 @@ export const ERROR_CATALOG: Readonly<Record<ErrorCode, CatalogEntry>> = {
     retryable: true,
     action: 'wait_and_retry',
     actionLabel: 'Повторить позже',
+  },
+  // Место на Диске кончилось (403 storageQuotaExceeded): повтор не поможет, а «лимит запросов»
+  // увёл бы в три пустых повтора. Освободить место или выбрать папку решает человек.
+  storage_full: {
+    title: 'На Диске Google нет места',
+    retryable: false,
+    action: null,
+    actionLabel: null,
   },
   forbidden: {
     title: 'Нет доступа к файлу',

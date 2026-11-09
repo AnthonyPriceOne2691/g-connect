@@ -16,6 +16,7 @@ import { gcError, isGcError } from '../core/errors.js';
 import type { SearchQuery } from '../core/google/drive.js';
 import { runOperation } from './run-operation.js';
 import { runCreate } from './run-create.js';
+import { runUpload } from './run-upload.js';
 import { assertTargetKind, isDocOperation, runDocApply, runDocUndo } from './run-doc-operation.js';
 import { limitOf, policyText, policyRules } from '../core/policy.js';
 import { DEFAULT_ACCOUNT } from '../core/profiles.js';
@@ -244,12 +245,14 @@ export const gcScan: ToolDefinition = {
 
 export const gcApply: ToolDefinition = {
   name: 'gc_apply',
-  title: 'Записать в таблицу (по умолчанию — превью)',
+  title: 'Записать: таблица, документ, файл на Диске (по умолчанию — превью)',
   description:
     'Адресация по именам колонок и ключу строки, а не по A1. По умолчанию возвращает ПЛАН ' +
     '(status=preview) и ничего не пишет — покажи план человеку. Запись только с ' +
     'dryRun=false. Неизвестная колонка или значение вне списка допустимых дают ' +
-    'status=needs_clarification с вариантами: спроси, не угадывай.',
+    'status=needs_clarification с вариантами: спроси, не угадывай. Файл с компьютера — ' +
+    'op=uploadFile: target — папка Диска, localPath — путь от каталога проекта; одноимённый ' +
+    'файл папки получает свежую версию с той же ссылкой.',
   input: applyInput,
   // Вход судит ядро (`operationOf`): неизвестная операция, поля НАЗВАННОЙ операции, типы.
   // Общая схема `applyInput` — для `tools/list`, чтобы модель видела поля, а не для суда.
@@ -269,6 +272,8 @@ export const gcApply: ToolDefinition = {
     ) {
       return runCreate(operation, resolved, deps);
     }
+    // Загрузка файла — так же рано и по той же причине: цель — папка или сам файл (Q45–Q48).
+    if (operation.op === 'uploadFile') return runUpload(operation, resolved, deps);
 
     // Право проверяется ДО любого обращения к Google. Порядок не косметика: при
     // обратном порядке запрос на запись в чужой файл сначала лез в сеть, и человек
@@ -388,6 +393,7 @@ export const gcUndo: ToolDefinition = {
         const drive = await deps.drive();
         await drive.trash(fileId);
       },
+      drive: () => deps.drive(),
       ...(deps.project === undefined ? {} : { project: deps.project }),
       journal: journalOf(deps),
     });

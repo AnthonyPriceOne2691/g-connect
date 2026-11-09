@@ -253,7 +253,18 @@ export const applyInput = {
     .string()
     .min(1)
     .optional()
-    .describe('createSheet/createDoc/createFolder: имя создаваемого файла или папки'),
+    .describe(
+      'createSheet/createDoc/createFolder: имя создаваемого файла или папки; uploadFile: имя на ' +
+        'Диске (по умолчанию — имя локального файла) — одноимённый файл папки получит свежую версию',
+    ),
+  localPath: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'uploadFile: локальный файл — абсолютный путь или от каталога проекта сессии; только внутри ' +
+        'проекта, без скрытых путей и секретов',
+    ),
   title: z.string().min(1).optional().describe('addSheet/renameSheet/duplicateSheet: имя листа'),
   toColumn: z
     .string()
@@ -272,10 +283,15 @@ export const applyInput = {
       'Колонка по ИМЕНИ. Её едят insertColumns, deleteColumns, sortRange, copyRange, ' +
         'cutRange и autoFill',
     ),
+  // Два смысла у одного имени, как у `rows`: строка замены текста и флаг замены файла (Q46).
   replace: z
-    .string()
+    .union([z.string(), z.boolean()])
     .optional()
-    .describe('findReplace, replaceText, replaceAllText: на что заменить'),
+    .describe(
+      'findReplace, replaceText, replaceAllText: на что заменить (строка); uploadFile: true — ' +
+        'target это сам файл, его содержимое заменяется новой ревизией (ID и ссылка те же); файл ' +
+        'другого имени — разрушающая замена, подтверждается фразой «заменяю файл <имя>»',
+    ),
   matchCase: z.boolean().optional().describe('findReplace: учитывать регистр'),
   matchEntireCell: z.boolean().optional().describe('findReplace: совпадение по всей ячейке'),
   searchByRegex: z

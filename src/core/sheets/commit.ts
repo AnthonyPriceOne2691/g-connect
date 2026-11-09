@@ -13,7 +13,7 @@
  */
 
 import { gcError, newCorrelationId } from '../errors.js';
-import type { RangeSnapshot, StructuralChange, WriteRecord } from '../journal.js';
+import type { RangeSnapshot, StructuralChange, UploadDetail, WriteRecord } from '../journal.js';
 import { planId as planCode, type PlanCell, type PlanShape, type PlanTouch } from '../plan.js';
 import { assertChangeBudget } from '../policy.js';
 import { parseA1 } from './a1.js';
@@ -94,6 +94,8 @@ export const contextOf = (map: SheetMap): WriteContext => ({
 /** Что стало известно при записи, а не при планировании. */
 export interface StructuralFacts {
   readonly fileId?: string;
+  /** Загрузка (Q45–Q48): ревизию, размер и sha256 загруженного называет только ответ Drive. */
+  readonly upload?: UploadDetail;
 }
 
 type Base = Omit<ApplyOutcome, 'status' | 'revisionAfter'>;
@@ -301,6 +303,7 @@ function toStructuralChange(plan: StructuralPlan, facts: StructuralFacts): Struc
     // вернулось, но и что нет — иначе он отчитается успехом, вернув не всё (урок L5).
     ...(plan.irreversible === undefined ? {} : { irreversible: plan.irreversible }),
     ...(facts.fileId === undefined ? {} : { fileId: facts.fileId }),
+    ...(facts.upload === undefined ? {} : { upload: facts.upload }),
   };
 }
 

@@ -1,16 +1,27 @@
 /**
- * Поиск по Drive (DESIGN.md §7, §9.2).
+ * Поиск по Drive (DESIGN.md §7, §9.2), создание и загрузка файлов (D-27, Q45–Q48).
  *
  * Здесь живёт капкан, из-за которого «файлов нет» — самый частый ложный вывод:
  * без `supportsAllDrives`, `includeItemsFromAllDrives` и `corpora=allDrives` API молча
  * отдаёт НЕПОЛНЫЙ список, а не ошибку. Поэтому параметры стоят всегда, а не по флагу.
+ * Протокол загрузки содержимого (одним запросом и по частям) — в `drive-upload.ts`.
  */
 
 import { google, type drive_v3 } from 'googleapis';
 
-import { fromGoogleError, gcError } from '../errors.js';
+import { fromGoogleError, gcError, GcError } from '../errors.js';
 import { limitOf } from '../policy.js';
+import {
+  makeUploader,
+  restoreContent,
+  sendContent,
+  type UploadBody,
+  type Uploader,
+  type UploadOptions,
+} from './drive-upload.js';
 import { authorizedClient, makeRetry, type RetryReporter } from './support.js';
+
+export type { UploadBody } from './drive-upload.js';
 
 export type SearchScope = 'myDrive' | 'sharedWithMe' | 'sharedDrives' | 'folder';
 
@@ -63,7 +74,8 @@ const MIME_BY_TYPE: Readonly<Record<string, string>> = {
   folder: 'application/vnd.google-apps.folder',
 };
 
-const escape = (value: string): string => value.replace(/'/g, "\\'");
+/** Строка в `q`: обратная косая и кавычка — через обратную косую (документация Drive о `q`). */
+const escape = (value: string): string => value.replace(/['\\]/g, (char) => `\\${char}`);
 
 export function buildQuery(query: SearchQuery): string {
   const parts = ['trashed = false'];
@@ -163,7 +175,7 @@ export interface DriveFile {
 }
 
 /**
- * Файл Drive глазами загрузки (D-26, Q45–Q47): размер и sha256 — сверить загруженное с локальным,
+ * Файл Drive глазами загрузки (D-27, Q45–Q47): размер и sha256 — сверить загруженное с локальным,
  * ревизия — вернуть прежнее содержимое при откате замены, ссылка — отдать человеку. У файлов
  * Google (таблица, документ) размера, sha256 и ревизий содержимого нет.
  */
@@ -180,14 +192,6 @@ export interface DriveFileInfo {
   readonly headRevisionId?: string;
   readonly webViewLink?: string;
   readonly parents?: readonly string[];
-}
-
-/** Тело загрузки — локальный файл, уже проверенный `vetLocalFile` (`src/core/upload/local-file.ts`). */
-export interface UploadBody {
-  /** Абсолютный путь. */
-  readonly path: string;
-  readonly size: number;
-  readonly mimeType: string;
 }
 
 export interface DriveClient {
@@ -220,6 +224,8 @@ export interface DriveClient {
   keepRevision(fileId: string, revisionId: string): Promise<void>;
   /** Содержимое ревизии `revisionId` — новой ревизией того же файла (откат замены, Q47). */
   restoreRevision(fileId: string, revisionId: string): Promise<DriveFileInfo>;
+  /** Неудалённые файлы с ровно таким именем прямо в папке `parentId` (Q48): свежая версия заменяет одноимённый. */
+  findByName(parentId: string, name: string): Promise<DriveFileInfo[]>;
 }
 
 /** Тип → mimeType Google. Значения из документации Drive, менять нельзя. */
@@ -229,7 +235,8 @@ export const CREATE_MIME: Record<CreateKind, string> = {
   folder: 'application/vnd.google-apps.folder',
 };
 
-export interface GoogleDriveClientOptions {
+/** Загрузка (`UploadOptions`) судится тестом без сети: транспорт, порог и кусок — внедряемы. */
+export interface GoogleDriveClientOptions extends UploadOptions {
   readonly accessToken: string;
   /** Сообщает о повторе, чтобы наверху можно было показать «попытка 2 из 3». */
   readonly onRetry?: RetryReporter;
@@ -244,12 +251,21 @@ export interface GoogleDriveClientOptions {
 export class GoogleDriveClient implements DriveClient {
   private readonly drive: drive_v3.Drive;
   private readonly retry: ReturnType<typeof makeRetry>;
+  private readonly uploader: Uploader;
 
-  /** Повторы — только у чтения: создание и корзина не идемпотентны, их не повторяют. */
+  /**
+   * Повторы — только у чтения: создание, загрузка, замена и корзина не идемпотентны, их не
+   * повторяют. Исключение — закрепление ревизии: `keepForever: true` дважды — то же самое.
+   */
   constructor(options: GoogleDriveClientOptions) {
-    this.drive =
-      options.api ?? google.drive({ version: 'v3', auth: authorizedClient(options.accessToken) });
+    const auth = authorizedClient(options.accessToken);
+    this.drive = options.api ?? google.drive({ version: 'v3', auth });
     this.retry = makeRetry(options.onRetry);
+    this.uploader = makeUploader(
+      { drive: this.drive, retry: this.retry, fields: infoFields() },
+      options,
+      auth,
+    );
   }
 
   async fileKind(id: string): Promise<DriveFile> {
@@ -301,25 +317,78 @@ export class GoogleDriveClient implements DriveClient {
     }
   }
 
-  // Контракт PR #22: тела — у агента шва (U1). До них загрузка честно отказывает.
-  fileInfo(fileId: string): Promise<DriveFileInfo> {
-    return Promise.reject(notYet(`fileInfo ${fileId}`));
+  async fileInfo(fileId: string): Promise<DriveFileInfo> {
+    try {
+      const { data } = await this.retry(() =>
+        this.drive.files.get({ fileId, fields: infoFields(), supportsAllDrives: true }),
+      );
+      return toFileInfo(data, fileId);
+    } catch (error) {
+      throw failure(error, `Drive не отдал сведения о файле ${fileId}.`);
+    }
   }
 
-  upload(parentId: string, name: string): Promise<DriveFileInfo> {
-    return Promise.reject(notYet(`upload «${name}» в ${parentId}`));
+  /**
+   * `incompleteSearch` — в маске нарочно: с `corpora=allDrives` Drive вправе обыскать не все диски,
+   * и «одноимённого нет» тогда — догадка, а загрузка по ней сделала бы копию (Q48 — без копий).
+   */
+  async findByName(parentId: string, name: string): Promise<DriveFileInfo[]> {
+    try {
+      const { data } = await this.retry(() =>
+        this.drive.files.list({
+          q: `'${escape(parentId)}' in parents and name = '${escape(name)}' and trashed = false`,
+          fields: `incompleteSearch,files(${infoFields()})`,
+          pageSize: 10,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+          corpora: 'allDrives',
+        }),
+      );
+      if (data.incompleteSearch === true) {
+        throw gcError('google_unavailable', {
+          detail: 'Drive обыскал не все диски (incompleteSearch): одноимённый файл мог не найтись.',
+        });
+      }
+      return (data.files ?? []).map((file) => toFileInfo(file));
+    } catch (error) {
+      throw failure(error, `Не удалось проверить, есть ли «${name}» в папке ${parentId}.`);
+    }
   }
 
-  replace(fileId: string): Promise<DriveFileInfo> {
-    return Promise.reject(notYet(`replace ${fileId}`));
+  async upload(parentId: string, name: string, body: UploadBody): Promise<DriveFileInfo> {
+    try {
+      return toFileInfo(await sendContent(this.uploader, { kind: 'create', parentId, name }, body));
+    } catch (error) {
+      throw failure(error, `Не удалось загрузить «${name}» в папку ${parentId}.`);
+    }
   }
 
-  keepRevision(fileId: string, revisionId: string): Promise<void> {
-    return Promise.reject(notYet(`keepRevision ${fileId}@${revisionId}`));
+  async replace(fileId: string, body: UploadBody): Promise<DriveFileInfo> {
+    try {
+      const file = await sendContent(this.uploader, { kind: 'update', fileId }, body);
+      return toFileInfo(file, fileId);
+    } catch (error) {
+      throw failure(error, `Не удалось заменить содержимое ${fileId}.`);
+    }
   }
 
-  restoreRevision(fileId: string, revisionId: string): Promise<DriveFileInfo> {
-    return Promise.reject(notYet(`restoreRevision ${fileId}@${revisionId}`));
+  /** У `revisions.*` в Drive v3 нет `supportsAllDrives` (ни в API, ни в типах googleapis). */
+  async keepRevision(fileId: string, revisionId: string): Promise<void> {
+    try {
+      await this.retry(() =>
+        this.drive.revisions.update({ fileId, revisionId, requestBody: { keepForever: true } }),
+      );
+    } catch (error) {
+      throw failure(error, `Не удалось закрепить ревизию ${revisionId} файла ${fileId}.`);
+    }
+  }
+
+  async restoreRevision(fileId: string, revisionId: string): Promise<DriveFileInfo> {
+    try {
+      return toFileInfo(await restoreContent(this.uploader, fileId, revisionId), fileId);
+    } catch (error) {
+      throw failure(error, `Не удалось вернуть ревизию ${revisionId} файла ${fileId}.`);
+    }
   }
 
   async search(query: SearchQuery): Promise<SearchResult> {
@@ -341,7 +410,41 @@ export class GoogleDriveClient implements DriveClient {
   }
 }
 
-/** Загрузка ещё не собрана (контракт PR #22). */
-function notYet(what: string): Error {
-  return gcError('internal', { detail: `Загрузка файлов ещё не готова: ${what}.` });
+/** Поля файла для загрузки и замены (Q45–Q47) — одни на все вызовы, чтобы ответы были сравнимы. */
+function infoFields(): string {
+  return 'id,name,mimeType,size,sha256Checksum,modifiedTime,headRevisionId,webViewLink,parents';
+}
+
+/** `{ [key]: value }`, если значение есть: опциональное поле не появляется пустым. */
+function present<K extends string, V>(key: K, value: V | null | undefined): Partial<Record<K, V>> {
+  return value === undefined || value === null ? {} : ({ [key]: value } as Record<K, V>);
+}
+
+/** Ответ Drive → `DriveFileInfo`. Размер у Drive — строка (int64 в JSON); у файлов Google его нет. */
+function toFileInfo(file: drive_v3.Schema$File, knownId?: string): DriveFileInfo {
+  const id = file.id ?? knownId;
+  if (!id) throw gcError('internal', { detail: 'Drive не вернул id файла.' });
+  const size = typeof file.size === 'string' && file.size !== '' ? Number(file.size) : undefined;
+  return {
+    id,
+    name: file.name ?? id,
+    mimeType: file.mimeType ?? '',
+    ...present('size', size),
+    ...present('sha256', file.sha256Checksum),
+    ...present('modifiedTime', file.modifiedTime),
+    ...present('headRevisionId', file.headRevisionId),
+    ...present('webViewLink', file.webViewLink),
+    ...present('parents', file.parents),
+  };
+}
+
+/**
+ * Ошибка с конкретикой случая: что не удалось и, если ниже назвали, почему. `fromGoogleError`
+ * отдаёт готовую `GcError` как есть, а повтор отдаёт её без `detail` — и человек получил бы «Файл
+ * не найден» без имени файла.
+ */
+function failure(error: unknown, what: string): GcError {
+  const gc = fromGoogleError(error);
+  const detail = gc.payload.detail === undefined ? what : `${what} ${gc.payload.detail}`;
+  return new GcError({ ...gc.payload, detail });
 }

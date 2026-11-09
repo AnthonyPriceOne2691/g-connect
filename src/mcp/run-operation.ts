@@ -39,6 +39,7 @@ type Operation = Exclude<
       | 'createSheet'
       | 'createDoc'
       | 'createFolder'
+      | 'uploadFile'
       | 'appendText'
       | 'insertText'
       | 'deleteParagraph'

@@ -68,16 +68,23 @@ async function askDrive(drive: Pick<DriveClient, 'fileKind'>, id: string): Promi
   try {
     return await drive.fileKind(id);
   } catch (error) {
-    if (!isGcError(error)) throw error;
-    const { code, cause } = error.payload;
-    if (code !== 'not_found' && code !== 'forbidden') throw error;
-    throw gcError(code, {
-      detail:
-        `Drive этого профиля не видит ${id}: такого ID нет или к нему нет доступа — папку может ` +
+    throw unseenByDrive(
+      error,
+      `Drive этого профиля не видит ${id}: такого ID нет или к нему нет доступа — папку может ` +
         `видеть другой профиль G connect. Ничего не создано, и в корне «Мой диск» тоже. ${folderHint()}`,
-      ...(cause === undefined ? {} : { cause }),
-    });
+    );
   }
+}
+
+/**
+ * «Нет файла или доступа» у Drive — нашим текстом с причиной от Google, остальное — как есть: сбой
+ * сети, квоту и замок лечит повтор или касание. Один разбор на создание и откат загрузки (Q47).
+ */
+export function unseenByDrive(error: unknown, detail: string): unknown {
+  if (!isGcError(error)) return error;
+  const { code, cause } = error.payload;
+  if (code !== 'not_found' && code !== 'forbidden') return error;
+  return gcError(code, { detail, ...(cause === undefined ? {} : { cause }) });
 }
 
 /** Вид не-папки человеку, именительным: «Цель X — таблица, а не папка». */

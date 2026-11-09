@@ -40,6 +40,8 @@ export { FORMAT_FIELDS };
 import { formatSourceOf } from './sheets/format-source.js';
 import { rowSelectionOf, rowSpanSchema } from './sheets/row-selection.js';
 import type { CellFormat } from './sheets/types.js';
+// Загрузка файла с компьютера — своим модулем по гейту длины (D-27, Q45–Q48).
+import { uploadFileOp } from './upload/upload-schema.js';
 
 /** Значение ячейки, как его может прислать клиент. */
 const cellValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
@@ -286,6 +288,7 @@ export const operationSchema = z.discriminatedUnion('op', [
   createSheetOp,
   createDocOp,
   createFolderOp,
+  uploadFileOp,
   appendTextOp,
   insertTextOp,
   deleteParagraphOp,
@@ -331,6 +334,7 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'createSheet',
   'createDoc',
   'createFolder',
+  'uploadFile',
   'appendText',
   'insertText',
   'deleteParagraph',

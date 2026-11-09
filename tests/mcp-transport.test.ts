@@ -81,6 +81,7 @@ const SAMPLE: Record<string, unknown> = {
   right: false,
   startIndex: 5,
   endIndex: 9,
+  localPath: 'video/sales.mp4',
 };
 
 /** `rows` по операции; у остальных — число строк новой таблицы документа. */
@@ -107,6 +108,8 @@ function sampleFor(op: OperationName): Record<string, unknown> {
     // У createSheet `rows` — строки новой таблицы, у insertTable — их число (D-23), у
     // formatCells и setCells — номера строк листа (Q13, Q39).
     rows: ROWS_SAMPLE[op] ?? 2,
+    // У uploadFile `replace` — флаг замены файла (Q46), у замен текста — строка замены.
+    replace: op === 'uploadFile' ? true : SAMPLE['replace'],
     ...Object.fromEntries((FOREIGN_WAYS[op] ?? []).map((field) => [field, false])),
   };
   const sample: Record<string, unknown> = { op };

@@ -420,6 +420,42 @@
       "value": 50000,
       "enforced_in": "src/core/google/sheets.ts (WRITE_MAX_SHEET_ROWS)",
       "probe": "предел шва берётся из правила, а не из числа в коде"
+    },
+    {
+      "id": "upload.max-bytes",
+      "title": "Файл с компьютера выкладывается на Диск, только если он не больше 100 МиБ: больше — отказ до чтения содержимого (D-27)",
+      "kind": "limit",
+      "value": 104857600,
+      "enforced_in": "src/core/upload/local-file.ts (locateLocalFile, assertUploadSize)",
+      "probe": "файл проекта на байт больше предела → policy_denied upload.max-bytes с размером, и содержимое не читается; ровно предел — проходит"
+    },
+    {
+      "id": "upload.project-files-only",
+      "title": "Файл с компьютера G connect берёт только из каталога проекта сессии: вне проекта, ссылкой наружу, скрытый путь и имя секрета — отказ до чтения содержимого (D-27)",
+      "kind": "deny",
+      "enforced_in": "src/core/upload/local-file.ts (locateLocalFile, realFile, assertInside, assertNotSecret, assertNotHidden) + src/mcp/run-upload.ts (projectOf)",
+      "probe": "файл вне проекта, ссылка наружу, скрытый путь и prod.env → отказ с причиной; файл проекта проходит; клиент без каталога проекта → policy_denied до Диска"
+    },
+    {
+      "id": "upload.same-name-new-version",
+      "title": "Свежая версия одноимённого файла папки ложится новой ревизией того же файла — ID и ссылка те же, копии нет; несколько одноимённых — вопрос человеку, файл Google или папка с этим именем — отказ (D-27)",
+      "kind": "invariant",
+      "enforced_in": "src/core/upload/upload-op.ts (targetOf, sameNamed) + src/core/upload/upload-checks.ts (assertReplaceable) + src/core/upload/upload-plan.ts (sameNameQuestion)",
+      "probe": "в папке один sales.mp4 → ok, тот же ID и вторая ревизия, без кода плана; второй sales.mp4 → needs_clarification, ревизий не прибавилось"
+    },
+    {
+      "id": "upload.replace-other-name-named",
+      "title": "Заменить содержимое файла файлом с другим именем — только фразой человека «заменяю файл <имя>» с кодом плана, конверт и разрешение проекта её не открывают (D-20, D-27)",
+      "kind": "deny",
+      "enforced_in": "src/core/upload/upload-op.ts (structuralOf, contourOptions)",
+      "probe": "replace по ID файла old.mp4 файлом sales.mp4 под разрешением проекта → confirm_required с фразой «заменяю файл old.mp4», ревизий не прибавилось"
+    },
+    {
+      "id": "upload.verified-by-checksum",
+      "title": "Загруженное сверяется с файлом на диске по sha256: не совпало — новый файл в корзину, замена — прежней ревизией, ответ — ошибка, а не «готово» (D-27)",
+      "kind": "invariant",
+      "enforced_in": "src/core/upload/upload-checks.ts (checkedUpload, verdictOf)",
+      "probe": "файл дописан между проверкой и загрузкой → stale_value upload_checksum_mismatch, в папке файла нет"
     }
   ]
 }

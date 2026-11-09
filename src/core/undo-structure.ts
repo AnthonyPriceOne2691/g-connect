@@ -19,6 +19,7 @@ import {
   type SpreadsheetSnapshot,
 } from './sheets/types.js';
 import type { UndoOptions, UndoOutcome } from './undo-types.js';
+import { undoUpload } from './upload/upload-undo.js';
 
 /**
  * Откат правки геометрии (D-19): обратная структурная операция.
@@ -40,6 +41,8 @@ export async function undoStructure(
   // Создание файла откатывается не в таблице, а в Drive: обратная операция — корзина.
   if (structure.kind === 'createFile')
     return undoCreate(record, structure, options, journal, targetId);
+  // Загрузка — тоже в Drive (Q47): новый файл в корзину, замена — прежней ревизией.
+  if (structure.kind === 'uploadFile') return undoUpload(record, options, journal, targetId);
   const book = await client.getSpreadsheet(targetId);
 
   // Наши ли ещё ячейки. Живой прогон этого не увидел, а читатель без прогона увидел:

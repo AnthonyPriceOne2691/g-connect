@@ -37,6 +37,7 @@ import { loadRegistry } from '../core/targets.js';
 import { findAgeTools } from '../core/token/age.js';
 import { profileSealer, profileUnsealer } from '../core/token/sealing.js';
 import { tokenForClients, tokenVault } from '../core/token/vault.js';
+import { vetLocalFile } from '../core/upload/local-file.js';
 import { unknownToolResult } from './boundary.js';
 import {
   TOOLS,
@@ -115,6 +116,7 @@ function deps(call?: CallContext): ToolDeps {
       const snapshot = await client.getSpreadsheet(targetId);
       return snapshot.revisionId ?? null;
     },
+    vetLocalFile,
   };
 }
 

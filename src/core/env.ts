@@ -55,6 +55,15 @@ export function callerProject(): string | undefined {
   return read('CLAUDE_PROJECT_DIR');
 }
 
+/**
+ * Домашняя папка пользователя: `HOME`, как его видит этот процесс, иначе — по учётной записи.
+ * Не `os.homedir()` напрямую: тот читает окружение процесса мимо `process.env`, и в потоке
+ * тест-раннера подмена `HOME` до него не доходит.
+ */
+export function userHome(): string {
+  return read('HOME') ?? homedir();
+}
+
 /** Имя ключа Secretive, которым подписываются разрешения; задаётся при подключении. */
 export function grantKeyName(): string {
   return read('GCONNECT_GRANT_KEY') ?? 'G connect';

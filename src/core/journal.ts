@@ -45,7 +45,29 @@ export type StructuralKind =
   | 'cutRange'
   | 'autoFill'
   | 'duplicateSheet'
-  | 'createFile';
+  | 'createFile'
+  | 'uploadFile';
+
+/**
+ * Загрузка локального файла на Drive (D-27, Q45–Q48). Откат судит по ревизиям, а не по ячейкам:
+ * новый файл уходит в корзину, замена возвращает прежнюю ревизию — и то и другое, только пока
+ * голова файла — ревизия этой записи (после нас файл не меняли).
+ */
+export interface UploadDetail {
+  /** `new` — новый файл; `replace` — новая ревизия существующего: ID и ссылка те же. */
+  readonly mode: 'new' | 'replace';
+  /** Имя файла на Диске. */
+  readonly name: string;
+  /** Байты и sha256 (hex) загруженного содержимого. */
+  readonly size: number;
+  readonly sha256: string;
+  /** Ревизия, которую поставила запись; нет — Drive её не назвал. */
+  readonly revision?: string;
+  /** Замена: прежняя ревизия — удержана навсегда (`keepForever`), её содержимое вернёт откат. */
+  readonly previousRevision?: string;
+  readonly previousSize?: number;
+  readonly previousModifiedTime?: string;
+}
 
 export interface StructuralChange {
   readonly kind: StructuralKind;
@@ -65,6 +87,8 @@ export interface StructuralChange {
   readonly previousTitle?: string;
   /** Id созданного файла Drive: по нему откат кладёт его в корзину. */
   readonly fileId?: string;
+  /** Загрузка (Q45–Q48): что легло на Диск и по какой ревизии откат узнает, что файл ещё наш. */
+  readonly upload?: UploadDetail;
   /** Свойства удалённого листа, которые откат умеет вернуть (закрепления, цвет, ширины). */
   readonly properties?: SheetProperties;
   /**

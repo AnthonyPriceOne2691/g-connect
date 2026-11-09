@@ -16,6 +16,7 @@ import type { JournalSink, JournalSource } from '../core/journal.js';
 import type { SheetsClient } from '../core/sheets/types.js';
 import type { Registry } from '../core/targets.js';
 import type { TokenVault } from '../core/token/vault.js';
+import type { LocalFile } from '../core/upload/local-file.js';
 
 export interface ToolDeps {
   readonly account: string;
@@ -41,6 +42,11 @@ export interface ToolDeps {
    * Нет — Google открывать нечем (тесты с готовыми клиентами).
    */
   readonly google?: TokenVault;
+  /**
+   * Проверка локального файла для загрузки (D-27, Q45): внутри каталога проекта, не скрытый, не
+   * секрет. В сервере — настоящая (`vetLocalFile`), в тестах — двойник. Нет — загрузка отказывает.
+   */
+  readonly vetLocalFile?: (projectDir: string, localPath: string) => Promise<LocalFile>;
 }
 
 export interface ToolResult {

@@ -60,6 +60,21 @@ describe('ошибки Google API → коды ядра', () => {
     expect(denied.payload.action?.kind).toBe('request_access');
   });
 
+  it('403 «нет места на Диске» → storage_full без повтора, а лимит запросов — по-прежнему quota_exceeded', () => {
+    // Находка U1 (D-27, загрузка): «quota» в тексте делало переполненный Диск лимитом запросов,
+    // и загрузка трижды повторялась впустую.
+    const full = fromGoogleError({
+      code: 403,
+      message: "The user's Drive storage quota has been exceeded.",
+    });
+    expect(full.payload).toMatchObject({ code: 'storage_full', retryable: false });
+    expect(full.payload.title).toBe('На Диске Google нет места');
+    const reason = fromGoogleError({ code: 403, message: 'storageQuotaExceeded' });
+    expect(reason.payload.code).toBe('storage_full');
+    const rate = fromGoogleError({ code: 403, message: 'User rate limit exceeded: quota' });
+    expect(rate.payload).toMatchObject({ code: 'quota_exceeded', retryable: true });
+  });
+
   it('429 и 5xx повторяемы, 404 и 400 — нет', () => {
     expect(fromGoogleError({ code: 429, message: 'Quota exceeded' }).payload.retryable).toBe(true);
     expect(fromGoogleError({ code: 503, message: 'Backend error' }).payload.retryable).toBe(true);
