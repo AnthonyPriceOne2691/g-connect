@@ -20,6 +20,7 @@ import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { gcError } from '../src/core/errors.js';
+import type { DriveFileInfo } from '../src/core/google/drive.js';
 import { newGrant } from '../src/core/grant/document.js';
 import type { GrantState } from '../src/core/grant/grants.js';
 import type { WriteRecord } from '../src/core/journal.js';
@@ -780,6 +781,137 @@ describe('Q47 — откат', () => {
         'в истории версий файла',
     ]);
     expect(h.drive.revisionsOf(id).at(-1)?.sha256).toBe(sha(SALES_V1));
+  });
+});
+
+/**
+ * Ответ Drive без sha256. Есть ли `sha256Checksum` прямо в ответе загрузки, видно только живьём
+ * (T32), — без него сверка идёт по размеру, а откат узнаёт свой файл по ревизии.
+ */
+function withoutChecksum(info: DriveFileInfo): DriveFileInfo {
+  const copy: { -readonly [K in keyof DriveFileInfo]: DriveFileInfo[K] } = { ...info };
+  delete copy.sha256;
+  return copy;
+}
+
+describe('Q45, Q47 — Drive не назвал sha256: сверка по размеру, свой файл — по ревизии', () => {
+  it('новый файл — сверено по размеру, запись идёт', async () => {
+    const h = await harness();
+    const original = h.drive.upload.bind(h.drive);
+    h.drive.upload = async (parentId, name, body) =>
+      withoutChecksum(await original(parentId, name, body));
+    const data = await apply(h, { localPath: 'docs/guide.md', dryRun: false });
+    expect(data.status).toBe('ok');
+    expect(data.notes).toContain(
+      'Drive не назвал sha256 загруженного — сверено по размеру (20,5 КБ).',
+    );
+  });
+
+  it('размер разошёлся — загруженное в корзину, ошибка называет оба размера', async () => {
+    const h = await harness({ ownProject: true });
+    const original = h.drive.upload.bind(h.drive);
+    h.drive.upload = async (parentId, name, body) => {
+      await writeFile(body.path, 'дописалось');
+      return withoutChecksum(await original(parentId, name, body));
+    };
+    const result = await callMcp(
+      gcApply,
+      upload({ localPath: 'docs/guide.md', dryRun: false }),
+      h.deps,
+    );
+    expect(result.error).toMatchObject({ code: 'stale_value', cause: 'upload_checksum_mismatch' });
+    expect(result.error?.detail).toContain('у локального «guide.md» — 20,5 КБ');
+    expect(h.drive.trashed).toHaveLength(1);
+    expect(h.journalled).toEqual([]);
+  });
+
+  it('ни sha256, ни размера — запись идёт, а ответ велит проверить файл по ссылке', async () => {
+    const h = await harness();
+    const original = h.drive.upload.bind(h.drive);
+    h.drive.upload = async (parentId, name, body) => {
+      const { id, mimeType } = await original(parentId, name, body);
+      return { id, name, mimeType };
+    };
+    const data = await apply(h, { localPath: 'docs/guide.md', dryRun: false });
+    expect(data.status).toBe('ok');
+    expect(data.notes).toContain(
+      'Drive не назвал ни sha256, ни размер загруженного — сверить содержимое нечем: открой файл ' +
+        'по ссылке и проверь.',
+    );
+  });
+
+  it('расхождение, а корзина не удалась — write_outcome_unknown: что удалить руками', async () => {
+    const h = await harness({ ownProject: true });
+    const original = h.drive.upload.bind(h.drive);
+    h.drive.upload = async (parentId, name, body) => {
+      await writeFile(body.path, 'дописалось');
+      return original(parentId, name, body);
+    };
+    h.drive.trash = () => Promise.reject(new Error('корзина недоступна'));
+    const result = await callMcp(
+      gcApply,
+      upload({ localPath: 'docs/guide.md', dryRun: false }),
+      h.deps,
+    );
+    expect(result.error).toMatchObject({
+      code: 'write_outcome_unknown',
+      cause: 'upload_checksum_mismatch',
+    });
+    expect(result.error?.detail).toContain(
+      'Загруженное в корзину не ушло: https://drive.google.com/file/d/',
+    );
+    expect(result.error?.detail).toContain('удали его руками');
+    expect(h.journalled).toEqual([]);
+  });
+
+  it('откат замены без sha256: наш файл — по ревизии, чужая ревизия — отказ', async () => {
+    const h = await harness();
+    const id = putSales(h);
+    await apply(h, { dryRun: false });
+    const info = h.drive.fileInfo.bind(h.drive);
+    h.drive.fileInfo = async (fileId) => withoutChecksum(await info(fileId));
+    const undone = await callMcp(gcUndo, { target: FOLDER_ID }, h.deps);
+    expect((undone.data as UndoData).status).toBe('ok');
+    expect(h.drive.revisionsOf(id).at(-1)?.sha256).toBe(sha(SALES_V1));
+
+    const other = await harness();
+    const otherId = putSales(other);
+    await apply(other, { dryRun: false });
+    other.drive.foreignRevision(otherId, 'правка человека');
+    const otherInfo = other.drive.fileInfo.bind(other.drive);
+    other.drive.fileInfo = async (fileId) => withoutChecksum(await otherInfo(fileId));
+    const before = other.drive.revisionsOf(otherId).length;
+    const refused = await callMcp(gcUndo, { target: FOLDER_ID }, other.deps);
+    expect(refused.error).toMatchObject({
+      code: 'revision_conflict',
+      cause: 'file_changed_after_write',
+    });
+    expect(other.drive.revisionsOf(otherId)).toHaveLength(before);
+  });
+
+  it('файл Google другого вида с тем же именем и папка по голому ID — отказ с видом', async () => {
+    const h = await harness();
+    h.drive.put({
+      name: 'sales.mp4',
+      parentId: FOLDER_ID,
+      mimeType: 'application/vnd.google-apps.presentation',
+    });
+    const slides = await callMcp(gcApply, upload({ dryRun: false }), h.deps);
+    expect(slides.error).toMatchObject({ code: 'bad_request', cause: 'upload_not_a_file' });
+    expect(slides.error?.detail).toContain(
+      '«sales.mp4» — файл Google (application/vnd.google-apps.presentation), а не загруженный файл',
+    );
+    const folderId = h.drive.put({ name: 'Архив', parentId: FOLDER_ID, mimeType: FOLDER_MIME });
+    const folder = await callMcp(
+      gcApply,
+      upload({ target: folderId, replace: true, dryRun: false }),
+      h.deps,
+    );
+    expect(folder.error).toMatchObject({ code: 'bad_request', cause: 'upload_not_a_file' });
+    expect(folder.error?.detail).toContain(
+      'Цель «Архив» — папка: у папки содержимого нет. В папку загружают без replace',
+    );
+    expect(h.drive.calls).not.toContain('upload');
   });
 });
 
