@@ -204,3 +204,19 @@ PR #21 (тестовые процессы) — ведущий сам, от `9fcb
 
 26. **Агент теста под сторожем** (`tests/fixtures/test-agent.ts`, `grant.test.ts`, `test-agent.test.ts`):
     `sh` держит канал от процесса теста и гасит `ssh-agent`, когда канал закрылся.
+
+PR #22 (Q45–Q48, D-27) — четыре агента параллельно от `21a71b0` по контракту ведущего (`308057c`: `DriveClient`
+и `vetLocalFile`), сводит ведущий в `feat/upload-file` поверх PR #21:
+
+27. **zod 4** (агент Z; `ops.ts`, `op-fields.ts`, `field-check.ts`, `format-fields.ts`, `docs/ops.ts`, `boundary.ts`,
+    `server.ts`): русский отказ перечисления — картой ошибок разбора `enumRefusal`; поведение сверено на
+    25 620 входах по сборкам на zod 3 и 4.
+28. **Шов загрузки Drive** (агент U1; `drive.ts`, `drive-upload.ts`): multipart до 5 МиБ, свой resumable-протокол
+    больше; ревизии — `keepRevision`, `restoreRevision` (скачать и залить ревизией); `findByName` с отказом на
+    `incompleteSearch`.
+29. **Файл с компьютера** (агент U2 и ведущий; `upload/local-file.ts`, `upload/mime.ts`, `userHome` в `env.ts`):
+    проект, путь, ссылки, скрытое, секреты, вид и предел — до чтения содержимого.
+30. **Операция `uploadFile`** (агент U3; `upload/upload-op.ts`, `upload-plan.ts`, `upload-checks.ts`,
+    `upload-undo.ts`, `upload-schema.ts`, `mcp/run-upload.ts`, журнал и откат): контур записи создания файла
+    (`finishWrite`), свежая версия по имени, сверка sha256, откат по ревизиям. При сведении (ведущий): правила
+    58–62 с пробами, D-27, `storage_full`, отказ «нет проекта» — правилом.
