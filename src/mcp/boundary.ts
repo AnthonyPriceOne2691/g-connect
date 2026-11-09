@@ -11,7 +11,12 @@
 import { z } from 'zod';
 
 import { gcError } from '../core/errors.js';
-import { issuesDetail, unknownFields, unknownFieldsDetail } from '../core/field-check.js';
+import {
+  enumRefusal,
+  issuesDetail,
+  unknownFields,
+  unknownFieldsDetail,
+} from '../core/field-check.js';
 import type { ToolDefinition, ToolResult } from './deps.js';
 
 /** Строгий разбор по схеме инструмента: незнакомое поле — отказ, умолчания подставлены. */
@@ -24,7 +29,7 @@ function strictInput(definition: ToolDefinition, args: Record<string, unknown>) 
       cause: 'unknown_field',
     });
   }
-  const parsed = z.object(definition.input).safeParse(args);
+  const parsed = z.object(definition.input).safeParse(args, { error: enumRefusal });
   if (!parsed.success) {
     throw gcError('bad_request', {
       detail: `Запрос ${definition.name} не проходит проверку — ${issuesDetail(parsed.error.issues)}.`,

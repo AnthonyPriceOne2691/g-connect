@@ -41,17 +41,13 @@ export const commonFields = {
  * форма — отказ самой схемы, а не новое молчаливое принятие. Разбор — `preprocess`, поэтому в
  * `tools/list` строка не появляется: модель видит прежние формы, строка — запасной путь клиента.
  */
-export function orJsonText<T extends z.ZodTypeAny>(schema: T) {
+export function orJsonText<T extends z.ZodType>(schema: T) {
   return z.preprocess((value, ctx) => {
     if (typeof value !== 'string') return value;
     try {
       return JSON.parse(value) as unknown;
     } catch {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'строка не разбирается как JSON',
-        fatal: true,
-      });
+      ctx.addIssue({ code: 'custom', message: 'строка не разбирается как JSON', continue: false });
       return z.NEVER;
     }
   }, schema);

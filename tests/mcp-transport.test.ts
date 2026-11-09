@@ -24,10 +24,10 @@ import { applyInput, operationOf } from '../src/mcp/apply-schema.js';
 /** Проверка по опубликованной схеме — так вызов может проверить сам клиент. */
 const transport = z.object(applyInput);
 
-const shapeOf = (op: OperationName): Record<string, z.ZodTypeAny> => {
+const shapeOf = (op: OperationName): Record<string, z.ZodType> => {
   const schema = operationSchema.options.find((o) => o.shape.op.value === op);
   if (schema === undefined) throw new Error(`в ядре нет схемы ${op}`);
-  return schema.shape as Record<string, z.ZodTypeAny>;
+  return schema.shape;
 };
 
 /**
@@ -190,7 +190,7 @@ describe('схема транспорта gc_apply против ядра — п�
       ),
     );
     const silent = [...docFields].filter(
-      (field) => (applyInput as Record<string, z.ZodTypeAny>)[field]?.description === undefined,
+      (field) => (applyInput as Record<string, z.ZodType>)[field]?.description === undefined,
     );
     expect(silent).toEqual([]);
   });

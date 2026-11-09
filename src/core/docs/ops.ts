@@ -144,7 +144,7 @@ const docTextStyle = z
     italic: z.boolean().optional(),
     underline: z.boolean().optional(),
     strikethrough: z.boolean().optional(),
-    link: z.string().url().optional(),
+    link: z.url().optional(),
     fontSize: z.number().int().min(6).max(96).optional(),
     color: z
       .string()

@@ -10,7 +10,7 @@
 import { z } from 'zod';
 
 import { gcError } from './errors.js';
-import { issuesDetail, unknownFields, unknownFieldsDetail } from './field-check.js';
+import { enumRefusal, issuesDetail, unknownFields, unknownFieldsDetail } from './field-check.js';
 import { commonFields, orJsonText } from './op-fields.js';
 import {
   appendTextOp,
@@ -380,8 +380,8 @@ export type DocOperation = Extract<Operation, { op: (typeof DOC_NAMES)[number] }
 /**
  * Битое регулярное выражение — отказ на границе, а не падение в середине плана (V10).
  *
- * Проверка здесь, а не в схеме: `superRefine` возвращает `ZodEffects`, которому нет места
- * в `discriminatedUnion`, а разбор операции и есть граница ядра.
+ * Проверка здесь, а не в схеме: у отказа свой `cause` (`bad_regex`) и текст движка выражений, а
+ * проверка в схеме ушла бы в общий `schema_violation`. Разбор операции и есть граница ядра.
  */
 function assertUsableRegex(operation: Operation): void {
   if (operation.op !== 'findReplace' || !operation.searchByRegex) return;
@@ -399,7 +399,8 @@ function assertUsableRegex(operation: Operation): void {
 
 /** Поля операции по её имени — из схемы ядра, а не вторым списком (урок L21). */
 export function fieldsOfOperation(op: OperationName): readonly string[] {
-  return Object.keys(operationSchema.optionsMap.get(op)?.shape ?? {});
+  const schema = operationSchema.options.find((option) => option.shape.op.value === op);
+  return Object.keys(schema?.shape ?? {});
 }
 
 const unknownOperation = (named: unknown) =>
@@ -433,7 +434,7 @@ function assertKnownFields(input: unknown, op: OperationName): void {
  * узнать его иначе неоткуда, схема вида в `tools/list` вложенная. У `rows` три смысла на одно
  * имя, и «Expected object» не говорит, какой объект (Q19): ожидаемая форма — по операции.
  */
-function shapeHint(op: OperationName, issues: readonly z.ZodIssue[]): string {
+function shapeHint(op: OperationName, issues: readonly z.core.$ZodIssue[]): string {
   const about = (field: string): boolean => issues.some((issue) => issue.path[0] === field);
   const span = '{from, to}: номера строк листа включительно; объектом';
   const rowsForms: Partial<Record<OperationName, string>> = {
@@ -459,7 +460,7 @@ export function parseOperation(input: unknown): Operation {
   }
   assertKnownFields(input, named as OperationName);
 
-  const parsed = operationSchema.safeParse(input);
+  const parsed = operationSchema.safeParse(input, { error: enumRefusal });
   if (parsed.success) {
     assertUsableRegex(parsed.data);
     // Строки правки вида и записи значений — ровно одним способом своей операции (Q13, Q17, Q39):

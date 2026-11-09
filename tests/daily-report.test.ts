@@ -469,7 +469,7 @@ describe('Q41 — граница: numberFormat "none"', () => {
       'format.numberFormat.pattern: шаблон — до 100 знаков: dd.mm.yyyy или #,##0.00',
     );
     const typo = refusal({ numberFormat: { type: 'TIME', patern: 'h:mm' } });
-    expect(typo.detail).toContain("format.numberFormat: Unrecognized key(s) in object: 'patern'");
+    expect(typo.detail).toContain('format.numberFormat: Unrecognized key: "patern"');
     expect(typo.detail).toContain('Допустимые поля вида: bold, italic');
   });
 });

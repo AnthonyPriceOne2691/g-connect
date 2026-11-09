@@ -130,12 +130,15 @@ const POLICY = {
 /**
  * Инструмент в `tools/list` — та же функция SDK и те же параметры, что у `McpServer`:
  * модель видит прежнюю схему. Это сверяет тест-двойник (`tests/mcp-protocol.test.ts`).
+ *
+ * Объект — строгий: zod 4 в схеме входа пишет `additionalProperties: false` только строгому
+ * объекту, а незнакомое поле граница отклоняет (`boundary.ts`) — схема говорит это, как при zod 3.
  */
 const listing = (definition: ToolDefinition): Tool => ({
   name: definition.name,
   title: definition.title,
   description: definition.description,
-  inputSchema: toJsonSchemaCompat(z.object(definition.input), {
+  inputSchema: toJsonSchemaCompat(z.strictObject(definition.input), {
     strictUnions: true,
     pipeStrategy: 'input',
   }) as Tool['inputSchema'],

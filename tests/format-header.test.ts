@@ -329,9 +329,9 @@ describe('Q19 — rows строкой JSON: та же схема, что у фо
         `JSON.${form}`,
     );
     const crooked: [string, string][] = [
-      ['[3, 12]', 'rows: Expected object, received array'],
-      ['{"from": 3}', 'rows.to: Required'],
-      ['{"from": 3, "to": 12, "step": 1}', "Unrecognized key(s) in object: 'step'"],
+      ['[3, 12]', 'rows: Invalid input: expected object, received array'],
+      ['{"from": 3}', 'rows.to: Invalid input: expected number, received undefined'],
+      ['{"from": 3, "to": 12, "step": 1}', 'Unrecognized key: "step"'],
     ];
     for (const [rows, problem] of crooked) {
       const result = await callMcp(gcApply, spanCall(rows), withoutGoogle());
@@ -356,7 +356,7 @@ describe('Q19 — rows строкой JSON: та же схема, что у фо
       withoutGoogle(),
     );
     expect(result.error).toMatchObject({ code: 'bad_request', cause: 'schema_violation' });
-    expect(result.error?.detail).toContain('rows: Expected array, received object');
+    expect(result.error?.detail).toContain('rows: Invalid input: expected array, received object');
     expect(result.error?.detail).toContain('rows у createSheet — массив строк');
   });
 
@@ -410,13 +410,15 @@ describe('Q19 — rows строкой JSON: та же схема, что у фо
       withoutGoogle(),
     );
     expect(columns.error).toMatchObject({ code: 'bad_request', cause: 'schema_violation' });
-    expect(columns.error?.detail).toContain('columns: Expected array, received string');
+    expect(columns.error?.detail).toContain(
+      'columns: Invalid input: expected array, received string',
+    );
     const table = await callMcp(
       gcApply,
       { op: 'insertTable', target: 'acc', rows: '3', columns: 2 },
       withoutGoogle(),
     );
     expect(table.error).toMatchObject({ code: 'bad_request', cause: 'schema_violation' });
-    expect(table.error?.detail).toContain('rows: Expected number, received string');
+    expect(table.error?.detail).toContain('rows: Invalid input: expected number, received string');
   });
 });

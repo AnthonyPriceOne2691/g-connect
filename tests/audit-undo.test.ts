@@ -268,7 +268,9 @@ describe('B10 — откат при чужих правках', () => {
   });
 
   it('источник по файлу подключается тем же контрактом', async () => {
-    await appendRecord(record());
+    // Запись — сегодняшняя: источник читает журналы последних месяцев от «сейчас», и запись
+    // 2026-09-01 выпала из него в ноябре (тест зависел от даты прогона, а не от контракта).
+    await appendRecord(record({ at: new Date().toISOString() }));
     const history = await fileJournalSource.recent('SHEET1', 10);
     expect(history).toHaveLength(1);
   });

@@ -115,15 +115,11 @@ describe('D-22: модель видит прежнюю схему — серве
       }[];
       const before = JSON.parse(JSON.stringify((await client.listTools()).tools)) as Listed;
       const after = JSON.parse(JSON.stringify((await session.client.listTools()).tools)) as Listed;
-      // Единственная разница, и она честнее прежнего: пустые схемы (`gc_targets`, `gc_unlock`)
-      // McpServer строил другой версией zod, без `additionalProperties: false`, — у остальных
-      // он был и раньше. Незнакомое поле теперь отклоняется и здесь, и схема это говорит.
-      const empty = before.filter(
-        (tool) => Object.keys(tool.inputSchema.properties ?? {}).length === 0,
-      );
-      expect(empty.map((tool) => tool.name)).toEqual(['gc_targets', 'gc_unlock']);
-      for (const tool of empty) {
-        expect(tool.inputSchema.additionalProperties).toBeUndefined();
+      // Единственная разница, и она честнее прежнего: zod 4 в схеме входа не пишет нестрогому
+      // объекту `additionalProperties: false`, и McpServer отдаёт схемы без него. У нас он есть
+      // у каждого инструмента, как при zod 3: незнакомое поле отклоняется, и схема это говорит.
+      for (const tool of before) {
+        expect(tool.inputSchema.additionalProperties, tool.name).toBeUndefined();
         tool.inputSchema.additionalProperties = false;
       }
       expect(after).toEqual(before);

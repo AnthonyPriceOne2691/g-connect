@@ -7,6 +7,7 @@
 
 import { z } from 'zod';
 
+import { enumRefusal } from './field-check.js';
 import { NUMBER_FORMAT_TYPES } from './sheets/number-format.js';
 
 /** `null` — слово отката (сброс к виду листа, D-26): правка его не пишет, и отказ это называет. */
@@ -15,6 +16,15 @@ const NO_NULL = 'null (сброс к виду листа) пишет тольк�
 /** Кегль — целые пункты, как в меню Google: дробный и вне 6–96 отклоняется этим текстом. */
 const FONT_SIZE = 'кегль — целое число пунктов от 6 до 96';
 const FONT_FAMILY = 'гарнитура — имя шрифта до 100 знаков: Carlito, Arial';
+
+/**
+ * Свой текст — только неверному типу, как у `invalid_type_error` zod 3: у проверок (`min`, `int`)
+ * свои тексты, а незнакомое поле строгого объекта называет сам zod.
+ */
+const typeRefusal =
+  (text: string) =>
+  (issue: z.core.$ZodRawIssue): string | undefined =>
+    issue.code === 'invalid_type' ? text : undefined;
 
 /**
  * Формат числа объектом: тип Google и шаблон — `{type: 'DATE', pattern: 'dd.mm.yyyy'}`. Без
@@ -31,9 +41,10 @@ function numberFormatObject() {
         pattern: z.string().min(1, pattern).max(100, pattern).optional(),
       },
       {
-        invalid_type_error:
+        error: typeRefusal(
           `формат числа — объект {type, pattern} или "none" (формат листа, «автоматический»); ` +
-          NO_NULL,
+            NO_NULL,
+        ),
       },
     )
     .strict();
@@ -52,9 +63,10 @@ function numberFormatOrNone() {
     .unknown()
     .transform((value, context) => {
       if (value === 'none') return null;
-      const parsed = numberFormatObject().safeParse(value);
+      // Свой разбор — со своей картой перечисления: отказ типа вне списка уходит готовым текстом.
+      const parsed = numberFormatObject().safeParse(value, { error: enumRefusal });
       if (parsed.success) return parsed.data;
-      for (const issue of parsed.error.issues) context.addIssue(issue);
+      for (const issue of parsed.error.issues) context.addIssue({ ...issue });
       return z.NEVER;
     })
     .optional();
@@ -73,7 +85,7 @@ function colorOrNone(refusal: string) {
     .superRefine((value, context) => {
       const hex = typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value);
       if (hex || value === 'none') return;
-      context.addIssue({ code: z.ZodIssueCode.custom, message: refusal });
+      context.addIssue({ code: 'custom', message: refusal });
     })
     .transform((value) => (value === 'none' ? null : (value as string)))
     .optional();
@@ -97,13 +109,13 @@ export const cellFormat = z
     align: z.enum(['left', 'center', 'right']).optional(),
     background: colorOrNone('фон — #RRGGBB или "none" (без заливки)'),
     fontFamily: z
-      .string({ invalid_type_error: `${FONT_FAMILY}; ${NO_NULL}` })
+      .string({ error: typeRefusal(`${FONT_FAMILY}; ${NO_NULL}`) })
       .trim()
       .min(1, FONT_FAMILY)
       .max(100, FONT_FAMILY)
       .optional(),
     fontSize: z
-      .number({ invalid_type_error: `${FONT_SIZE}; ${NO_NULL}` })
+      .number({ error: typeRefusal(`${FONT_SIZE}; ${NO_NULL}`) })
       .int(FONT_SIZE)
       .min(6, FONT_SIZE)
       .max(96, FONT_SIZE)
