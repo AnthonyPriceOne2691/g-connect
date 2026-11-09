@@ -1,5 +1,10 @@
 import { gcError } from '../../src/core/errors.js';
-import type { CreateKind, DriveClient, DriveFile } from '../../src/core/google/drive.js';
+import type {
+  CreateKind,
+  DriveClient,
+  DriveFile,
+  DriveFileInfo,
+} from '../../src/core/google/drive.js';
 
 /**
  * Фейк Drive: помнит созданное и отправленное в корзину — этим и проверяем откат.
@@ -43,5 +48,26 @@ export class FakeDriveClient implements DriveClient {
   trash(fileId: string): Promise<void> {
     this.trashed.push(fileId);
     return Promise.resolve();
+  }
+
+  // Контракт PR #22: загрузку фейк научит агент операции (U3).
+  fileInfo(): Promise<DriveFileInfo> {
+    return Promise.reject(gcError('internal', { detail: 'фейк: fileInfo ещё не готов' }));
+  }
+
+  upload(): Promise<DriveFileInfo> {
+    return Promise.reject(gcError('internal', { detail: 'фейк: upload ещё не готов' }));
+  }
+
+  replace(): Promise<DriveFileInfo> {
+    return Promise.reject(gcError('internal', { detail: 'фейк: replace ещё не готов' }));
+  }
+
+  keepRevision(): Promise<void> {
+    return Promise.reject(gcError('internal', { detail: 'фейк: keepRevision ещё не готов' }));
+  }
+
+  restoreRevision(): Promise<DriveFileInfo> {
+    return Promise.reject(gcError('internal', { detail: 'фейк: restoreRevision ещё не готов' }));
   }
 }

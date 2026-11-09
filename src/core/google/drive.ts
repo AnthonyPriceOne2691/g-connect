@@ -162,6 +162,34 @@ export interface DriveFile {
   readonly mimeType: string;
 }
 
+/**
+ * Файл Drive глазами загрузки (D-26, Q45–Q47): размер и sha256 — сверить загруженное с локальным,
+ * ревизия — вернуть прежнее содержимое при откате замены, ссылка — отдать человеку. У файлов
+ * Google (таблица, документ) размера, sha256 и ревизий содержимого нет.
+ */
+export interface DriveFileInfo {
+  readonly id: string;
+  readonly name: string;
+  readonly mimeType: string;
+  /** Байты. */
+  readonly size?: number;
+  /** `sha256Checksum` Drive, hex. */
+  readonly sha256?: string;
+  /** RFC 3339. */
+  readonly modifiedTime?: string;
+  readonly headRevisionId?: string;
+  readonly webViewLink?: string;
+  readonly parents?: readonly string[];
+}
+
+/** Тело загрузки — локальный файл, уже проверенный `vetLocalFile` (`src/core/upload/local-file.ts`). */
+export interface UploadBody {
+  /** Абсолютный путь. */
+  readonly path: string;
+  readonly size: number;
+  readonly mimeType: string;
+}
+
 export interface DriveClient {
   search(query: SearchQuery): Promise<SearchResult>;
   /**
@@ -182,6 +210,16 @@ export interface DriveClient {
    * содержимым папки — такого инструмента у агента не будет.
    */
   trash(fileId: string): Promise<void>;
+  /** Сведения о файле для загрузки и замены (Q45–Q47). Нет файла или доступа — ошибка Drive. */
+  fileInfo(fileId: string): Promise<DriveFileInfo>;
+  /** Новый файл в папке `parentId` из локального файла; большой — по частям (resumable). */
+  upload(parentId: string, name: string, body: UploadBody): Promise<DriveFileInfo>;
+  /** Новая ревизия содержимого существующего файла: ID и ссылка те же (Q46). */
+  replace(fileId: string, body: UploadBody): Promise<DriveFileInfo>;
+  /** Удержать ревизию навсегда (`keepForever`): откат замены вернёт её содержимое. */
+  keepRevision(fileId: string, revisionId: string): Promise<void>;
+  /** Содержимое ревизии `revisionId` — новой ревизией того же файла (откат замены, Q47). */
+  restoreRevision(fileId: string, revisionId: string): Promise<DriveFileInfo>;
 }
 
 /** Тип → mimeType Google. Значения из документации Drive, менять нельзя. */
@@ -263,6 +301,27 @@ export class GoogleDriveClient implements DriveClient {
     }
   }
 
+  // Контракт PR #22: тела — у агента шва (U1). До них загрузка честно отказывает.
+  fileInfo(fileId: string): Promise<DriveFileInfo> {
+    return Promise.reject(notYet(`fileInfo ${fileId}`));
+  }
+
+  upload(parentId: string, name: string): Promise<DriveFileInfo> {
+    return Promise.reject(notYet(`upload «${name}» в ${parentId}`));
+  }
+
+  replace(fileId: string): Promise<DriveFileInfo> {
+    return Promise.reject(notYet(`replace ${fileId}`));
+  }
+
+  keepRevision(fileId: string, revisionId: string): Promise<void> {
+    return Promise.reject(notYet(`keepRevision ${fileId}@${revisionId}`));
+  }
+
+  restoreRevision(fileId: string, revisionId: string): Promise<DriveFileInfo> {
+    return Promise.reject(notYet(`restoreRevision ${fileId}@${revisionId}`));
+  }
+
   async search(query: SearchQuery): Promise<SearchResult> {
     const limit = clampLimit(query.limit);
     try {
@@ -280,4 +339,9 @@ export class GoogleDriveClient implements DriveClient {
       throw fromGoogleError(error, 'Поиск по Drive не удался.');
     }
   }
+}
+
+/** Загрузка ещё не собрана (контракт PR #22). */
+function notYet(what: string): Error {
+  return gcError('internal', { detail: `Загрузка файлов ещё не готова: ${what}.` });
 }
