@@ -63,9 +63,19 @@ jobs:
         run: npm ci
 
       # Тесты шва токена (D-24) гоняют НАСТОЯЩИЙ age с программным ключом (урок L32): без него
-      # они пропускаются с названной причиной, а мутанты шва выживали бы молча.
+      # они пропускаются с названной причиной, а мутанты шва выживали бы молча. Зеркала Ubuntu на
+      # раннере бывают недоступны (2026-11-11: «Temporary failure resolving 'security.ubuntu.com'»
+      # больше часа во всех задачах PR #22–#23) — тогда та же 1.2.1 из релиза age на GitHub,
+      # со сверкой sha256: подменённый архив роняет шаг, а не тесты.
       - name: age для тестов шва токена
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends age
+        run: |
+          if ! (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends age); then
+            curl -fsSL --retry 3 -o /tmp/age.tar.gz \
+              https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-amd64.tar.gz
+            echo "7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50  /tmp/age.tar.gz" | sha256sum -c -
+            sudo tar -xzf /tmp/age.tar.gz -C /usr/local/bin --strip-components=1 age/age age/age-keygen
+          fi
+          age --version
 
       # Шаги независимы и с `if: always()`: гейт за упавшим шагом не запускается
       # вовсе, и «зелёное» ниже означало бы «не проверялось» (Delivery §3.1a вопрос 2).
@@ -149,9 +159,19 @@ jobs:
         run: npm ci
 
       # Тесты шва токена (D-24) гоняют НАСТОЯЩИЙ age с программным ключом (урок L32): без него
-      # они пропускаются с названной причиной, а мутанты шва выживали бы молча.
+      # они пропускаются с названной причиной, а мутанты шва выживали бы молча. Зеркала Ubuntu на
+      # раннере бывают недоступны (2026-11-11: «Temporary failure resolving 'security.ubuntu.com'»
+      # больше часа во всех задачах PR #22–#23) — тогда та же 1.2.1 из релиза age на GitHub,
+      # со сверкой sha256: подменённый архив роняет шаг, а не тесты.
       - name: age для тестов шва токена
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends age
+        run: |
+          if ! (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends age); then
+            curl -fsSL --retry 3 -o /tmp/age.tar.gz \
+              https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-amd64.tar.gz
+            echo "7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50  /tmp/age.tar.gz" | sha256sum -c -
+            sudo tar -xzf /tmp/age.tar.gz -C /usr/local/bin --strip-components=1 age/age age/age-keygen
+          fi
+          age --version
 
       - name: Мутационный гейт (доля — счёт)
         env:
