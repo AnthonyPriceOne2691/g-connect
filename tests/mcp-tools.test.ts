@@ -149,6 +149,10 @@ describe('B1 — набор инструментов', () => {
     expect(gcApply.description).toMatch(/ПЛАН|preview/);
     expect(gcApply.description).toContain('dryRun=false');
     expect(gcApply.description.toLowerCase()).toContain('не угадывай');
+    // Весть сессии профиля work 2026-11-11: операция в op.enum есть, но описание о шапке молчало —
+    // модель, которая читает описание, путь «подпиши шапку» не находила.
+    expect(gcApply.description).toMatch(/op=setHeader/);
+    expect(gcApply.description).toMatch(/op=addSheet с columns и rows/);
     expect(gcRead.description).toContain('ПРЕДУПРЕЖДЕНИЯ');
   });
 });
