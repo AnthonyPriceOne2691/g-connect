@@ -76,7 +76,9 @@ async function restoreChanges(
   const restored: UndoOutcome['restored'][number][] = [];
   for (const change of [...record.changes].reverse()) {
     if (change.afterFormat === undefined) {
-      await client.updateValues(targetId, change.a1, [[change.before]]);
+      // «Было пусто» уходит пустой строкой: `null` values-API Google ПРОПУСКАЕТ (LR-2), и откат
+      // дозаписи отвечал ok, оставляя строку в листе (нашёл тест Q14 на фейке с семантикой Google).
+      await client.updateValues(targetId, change.a1, [[change.before ?? '']]);
       restored.push({ a1: change.a1, column: change.column, kind: 'value', value: change.before });
       continue;
     }
@@ -108,9 +110,11 @@ function cellAt(a1: string): { row: number; column: number } {
  * значение: пустого формата в Google не существует, и снять жирность можно только
  * записав `bold: false`.
  *
- * Названная непокрытость: у фона нейтральное значение — белый. Если до правки фон был
- * унаследован от темы, откат сделает его явно белым, а не вернёт наследование. Ядро судит
- * и откатывает только явный формат ячейки, и это записано в спеке.
+ * У шрифта, кегля, формата числа, фона и цвета текста нейтрального значения нет вовсе — шрифт
+ * листа по умолчанию у каждой книги свой, а белый фон — не «без заливки»: он прячет сетку (Q16).
+ * Им ставится `null`: «сбросить к виду листа» (D-26), и шов пишет его полями маски без значения —
+ * так ячейка возвращается к унаследованному, а не к выдуманному виду. Прежняя непокрытость
+ * «откат делает фон явно белым» с Q16 закрыта: фон, которого до правки не было, откат снимает.
  */
 function undoFormat(change: JournalChange): CellFormat {
   const before = change.beforeFormat ?? {};
@@ -119,7 +123,11 @@ function undoFormat(change: JournalChange): CellFormat {
     italic: false,
     underline: false,
     align: 'left',
-    background: '#ffffff',
+    background: null,
+    textColor: null,
+    fontFamily: null,
+    fontSize: null,
+    numberFormat: null,
   };
   const keys = Object.keys(change.afterFormat ?? {});
   const out: Record<string, unknown> = {};
@@ -130,16 +138,29 @@ function undoFormat(change: JournalChange): CellFormat {
   return out;
 }
 
-/** Вид нашей ячейки после записи не должны были менять — иначе откат перетрёт чужое. */
+/**
+ * Вид нашей ячейки после записи не должны были менять — иначе откат перетрёт чужое.
+ *
+ * Сверяются только ключи, которые запись задала (ключи `afterFormat`): их и вернёт откат. Чтение
+ * вида растёт — с D-26 оно видит шрифт, кегль и формат числа, — и запись журнала, сделанная до
+ * этого, получала бы ложный `revision_conflict` на ячейке, где теперь читается `fontFamily`.
+ * Чужую правку записанного ключа это не пропускает: она по-прежнему отказ.
+ */
 function assertFormatIntact(snapshot: SpreadsheetSnapshot, change: JournalChange): void {
-  const current = formatAt(snapshot, change.a1);
-  if (sameFormat(current, change.afterFormat)) return;
+  const written = change.afterFormat ?? {};
+  const current = onlyKeys(formatAt(snapshot, change.a1), Object.keys(written));
+  if (sameFormat(current, written)) return;
   throw gcError('revision_conflict', {
     detail:
       `Вид ячейки ${change.a1} (${change.column}) после записи изменили. Откат перетёр бы ` +
       'чужое оформление, поэтому не выполнен: перечитай и реши, что вернуть.',
     cause: 'format_changed_after_write',
   });
+}
+
+/** Вид, суженный до названных ключей: остальное в сверке отката не участвует. */
+function onlyKeys(format: CellFormat | undefined, keys: readonly string[]): CellFormat {
+  return Object.fromEntries(Object.entries(format ?? {}).filter(([key]) => keys.includes(key)));
 }
 
 const same = sameCell;

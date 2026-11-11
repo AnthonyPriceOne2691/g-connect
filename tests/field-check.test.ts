@@ -71,3 +71,43 @@ describe('граница ядра: parseOperation не срезает поля �
     expect(op).toMatchObject({ op: 'appendText', text: 'Судья', dryRun: true });
   });
 });
+
+describe('перечисление — по-русски со списком допустимого (enumRefusal, zod 4)', () => {
+  const formatWith = (format: unknown) => ({
+    op: 'formatCells',
+    target: 'log',
+    allRows: true,
+    columns: ['Статус'],
+    format,
+  });
+
+  it('значение вне перечисления названо, и названо всё допустимое — на любом уровне вложенности', () => {
+    const align = refusal(formatWith({ align: 'middle' }));
+    expect(align).toMatchObject({ code: 'bad_request', cause: 'schema_violation' });
+    expect(align.detail).toContain(
+      'format.align: значения «middle» нет; допустимы: left, center, right',
+    );
+    const paste = refusal({
+      op: 'copyRange',
+      target: 'log',
+      column: 'A',
+      toColumn: 'B',
+      paste: 'всё',
+    });
+    expect(paste.detail).toContain('paste: значения «всё» нет; допустимы: all, values, format');
+  });
+
+  it('литерал и не строка в перечислении — текст zod без списка, как было на zod 3', () => {
+    // Строка, а не false: литерал отличает от перечисления схема, а не тип значения.
+    const literal = refusal({
+      op: 'deleteParagraph',
+      target: 'doc',
+      where: { firstParagraph: 'true' },
+    });
+    expect(literal.detail).toContain('where.firstParagraph: ');
+    expect(literal.detail).not.toContain('нет; допустимы');
+    const notString = refusal(formatWith({ align: 5 }));
+    expect(notString.detail).toContain('format.align: ');
+    expect(notString.detail).not.toContain('нет; допустимы');
+  });
+});

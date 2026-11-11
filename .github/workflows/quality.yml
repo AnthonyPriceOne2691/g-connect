@@ -63,9 +63,19 @@ jobs:
         run: npm ci
 
       # Тесты шва токена (D-24) гоняют НАСТОЯЩИЙ age с программным ключом (урок L32): без него
-      # они пропускаются с названной причиной, а мутанты шва выживали бы молча.
+      # они пропускаются с названной причиной, а мутанты шва выживали бы молча. Зеркала Ubuntu на
+      # раннере бывают недоступны (2026-11-11: «Temporary failure resolving 'security.ubuntu.com'»
+      # больше часа во всех задачах PR #22–#23) — тогда та же 1.2.1 из релиза age на GitHub,
+      # со сверкой sha256: подменённый архив роняет шаг, а не тесты.
       - name: age для тестов шва токена
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends age
+        run: |
+          if ! (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends age); then
+            curl -fsSL --retry 3 -o /tmp/age.tar.gz \
+              https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-amd64.tar.gz
+            echo "7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50  /tmp/age.tar.gz" | sha256sum -c -
+            sudo tar -xzf /tmp/age.tar.gz -C /usr/local/bin --strip-components=1 age/age age/age-keygen
+          fi
+          age --version
 
       # Шаги независимы и с `if: always()`: гейт за упавшим шагом не запускается
       # вовсе, и «зелёное» ниже означало бы «не проверялось» (Delivery §3.1a вопрос 2).
@@ -114,14 +124,18 @@ jobs:
   # До 2026-10-17 здесь стоял `npx stryker run` по ВСЕМУ ядру без бюджета: 4993 мутанта
   # и 22 минуты в сентябре, 45+ минут после уровня 3 (61 файл) — 85–90% времени PR.
   # Теперь канонный гейт по ИЗМЕНЁННЫМ файлам ядра в маске stryker.config.json, четыре
-  # доли параллельно, бюджет 600 с на долю, «не просудил» — красное (cqg@2.64). Доля только
+  # доли параллельно, бюджет 1500 с на долю, «не просудил» — красное (cqg@2.64). Доля только
   # СЧИТАЕТ и выгружает счёт, порог судит джоба mutation-sum по сумме (CQG §3.7, урок L31:
   # порог на доле делал вердикт функцией разбиения). Полный прогон ядра — `npx stryker run`.
+  # Бюджет — по самому тяжёлому файлу, а не по среднему: доля делится по файлам, и файл в
+  # ней целиком. `src/core/sheets/map.ts` (609 мутантов, 33 статических гоняют весь набор) —
+  # ~17 мин на раннере (замер 2026-10-19: 306 с локально, раннер медленнее в 3,3 раза);
+  # при 600 с доля дважды не просудила ничего (PR #9).
   mutation:
     if: github.event_name == 'pull_request'
     name: mutation (доля ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -145,16 +159,26 @@ jobs:
         run: npm ci
 
       # Тесты шва токена (D-24) гоняют НАСТОЯЩИЙ age с программным ключом (урок L32): без него
-      # они пропускаются с названной причиной, а мутанты шва выживали бы молча.
+      # они пропускаются с названной причиной, а мутанты шва выживали бы молча. Зеркала Ubuntu на
+      # раннере бывают недоступны (2026-11-11: «Temporary failure resolving 'security.ubuntu.com'»
+      # больше часа во всех задачах PR #22–#23) — тогда та же 1.2.1 из релиза age на GitHub,
+      # со сверкой sha256: подменённый архив роняет шаг, а не тесты.
       - name: age для тестов шва токена
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends age
+        run: |
+          if ! (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends age); then
+            curl -fsSL --retry 3 -o /tmp/age.tar.gz \
+              https://github.com/FiloSottile/age/releases/download/v1.2.1/age-v1.2.1-linux-amd64.tar.gz
+            echo "7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50  /tmp/age.tar.gz" | sha256sum -c -
+            sudo tar -xzf /tmp/age.tar.gz -C /usr/local/bin --strip-components=1 age/age age/age-keygen
+          fi
+          age --version
 
       - name: Мутационный гейт (доля — счёт)
         env:
           LINT_TS_SRC: src
           LINT_FE_DIR: .
           MIN_KILLED: '60'
-          BUDGET_SEC: '600'
+          BUDGET_SEC: '1500'
           MUTATION_SHARD: ${{ matrix.shard }}/4
         run: bash scripts/lint/check_mutation_gate.sh
 

@@ -6,7 +6,7 @@
  * разъехалась бы с первой молча — и разъезд был бы виден только на живой таблице.
  */
 
-import type { CellFormat, CellValue, SheetSnapshot } from './types.js';
+import type { CellFormat, CellValue, NumberFormat, SheetSnapshot } from './types.js';
 
 /** `Лист1!D3` → лист и индексы (1-based строка, 0-based колонка). `null` — не адрес. */
 export function parseA1(a1: string): { sheet: string; row: number; column: number } | null {
@@ -70,13 +70,37 @@ export function sameFormat(a: CellFormat | undefined, b: CellFormat | undefined)
  *
  * Выравнивание и фон так не сворачиваются: у выравнивания значение по умолчанию зависит
  * от типа данных (числа Google равняет вправо), а белый фон — осознанный выбор, а не
- * «фона нет». Схлопывать их значило бы врать в другую сторону.
+ * «фона нет»: белая заливка прячет сетку листа (Q16). Схлопывать их значило бы врать в другую
+ * сторону. «Фона нет» — это `null`, на границе — слово `"none"`.
+ *
+ * `null` у шрифта, кегля, формата числа, фона и цвета текста (D-26, Q16, Q18) — «сброшено к виду
+ * листа», то есть то же, что «не задано»: откат, сбросивший поле, оставляет ячейку такой, какой
+ * её прочтёт Google. Формат числа сравнивается по типу и шаблону — порядок его ключей вид не
+ * меняет; цвет — без регистра: `#FFFFFF` агента и `#ffffff`, каким Google отдаёт цвет при чтении,
+ * — один вид, иначе откат такой записи всегда упирался бы в «вид изменили после записи».
  */
 export function formatKey(format: CellFormat | undefined): string {
   const entries = Object.entries(format ?? {}).filter(([key, value]) => {
-    if (value === undefined) return false;
+    if (value === undefined || value === null) return false;
     const isFlag = key === 'bold' || key === 'italic' || key === 'underline';
     return !(isFlag && value === false);
   });
-  return JSON.stringify(entries.sort(([x], [y]) => (x < y ? -1 : 1)));
+  const canonical = entries.map(([key, value]): readonly [string, unknown] => [
+    key,
+    comparable(key, value),
+  ]);
+  return JSON.stringify(canonical.sort(([x], [y]) => (x < y ? -1 : 1)));
 }
+
+/** Значение поля вида для сравнения: формат числа — парой «тип, шаблон», цвет — без регистра. */
+function comparable(key: string, value: unknown): unknown {
+  if (key === 'numberFormat') return numberFormatKey(value as NumberFormat);
+  if (key === 'background' || key === 'textColor') return (value as string).toLowerCase();
+  return value;
+}
+
+/** Формат числа как пара «тип, шаблон»: `{pattern, type}` и `{type, pattern}` — один вид. */
+const numberFormatKey = (format: NumberFormat): readonly [string, string | null] => [
+  format.type,
+  format.pattern ?? null,
+];

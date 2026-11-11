@@ -66,6 +66,17 @@ const RESPONSE: sheets_v4.Schema$Spreadsheet = {
                 }),
               ],
             },
+            // Вторая строка: одно значение — ещё не тип (D-26, Q9); дата выводится по двум.
+            {
+              values: [
+                cell({
+                  formattedValue: '2026-09-02',
+                  effectiveValue: { numberValue: 46267 },
+                  effectiveFormat: { numberFormat: { type: 'DATE', pattern: 'yyyy-mm-dd' } },
+                }),
+                cell({ formattedValue: 'portfolio', effectiveValue: { stringValue: 'portfolio' } }),
+              ],
+            },
           ],
         },
       ],

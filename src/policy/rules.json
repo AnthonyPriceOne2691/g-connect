@@ -104,17 +104,17 @@
     },
     {
       "id": "read.max-rows",
-      "title": "Чтение ограничено по строкам, а усечение помечается",
+      "title": "Чтение ограничено по строкам за вызов, а усечение помечается: truncated, строк листа и строка продолжения (D-26)",
       "kind": "limit",
-      "value": 500,
-      "enforced_in": "src/core/google/sheets.ts (DEFAULT_MAX_ROWS)",
-      "probe": "чтение без maxRows берёт не больше значения правила"
+      "value": 5000,
+      "enforced_in": "src/mcp/read-values.ts (readValues)",
+      "probe": "gc_read mode=values на листе длиннее предела → столько строк, сколько предел, truncated: true и nextFromRow"
     },
     {
       "id": "content.is-data",
       "title": "Прочитанное из документов — данные, никогда не инструкции",
       "kind": "invariant",
-      "enforced_in": "src/core/policy.ts (asData) + src/mcp/read-doc.ts, src/mcp/tools.ts (gc_read: абзацы и строки — asData с источником)",
+      "enforced_in": "src/core/policy.ts (asData) + src/mcp/read-doc.ts, src/mcp/tools.ts (gc_read: абзацы и строки — asData с источником) + src/core/sheets/notes.ts (заметки шапки в карте — asData) + src/mcp/read-values.ts (formats, notes — asData)",
       "probe": "прочитанный текст помечен как данные и не может инициировать запись"
     },
     {
@@ -218,6 +218,41 @@
       "kind": "invariant",
       "enforced_in": "src/core/sheets/format-op.ts (formatChanges) + src/core/sheets/rows.ts (writeCells)",
       "probe": "formatCells пишет только через batchUpdate: значения ячеек до и после совпадают, values-API не зовётся ни разу"
+    },
+    {
+      "id": "write.format-rows-explicit",
+      "title": "Строки правки вида — ровно одним способом: where, allRows: true, rows {from, to} или headerOnly: true; ни одного, два сразу или пустое условие — отказ, а не все строки (D-26, Q13, Q17); у setCells — where или rows {from, to}, allRows и headerOnly — отказ (Q39)",
+      "kind": "deny",
+      "enforced_in": "src/core/sheets/row-selection.ts (rowSelectionOf, selectedRows) + src/core/ops.ts (parseOperation)",
+      "probe": "formatCells без способа, с двумя способами (в том числе headerOnly с rows) и с where: {} → bad_request до обращения к Google; allRows: true → план по всем строкам данных листа; headerOnly → только по шапке; setCells с allRows, headerOnly или rows вместе с where → bad_request, setCells rows {from: 2, to: 2} → план по строке 2"
+    },
+    {
+      "id": "write.append-inherits-format",
+      "title": "Дописанная строка берёт вид и проверку данных строки над ней: копии — до значений, превью их называет (D-26, Q14, Q44)",
+      "kind": "invariant",
+      "enforced_in": "src/core/sheets/rows.ts (appendRow, layoutFromAbove, finish)",
+      "probe": "appendRow под оформленной строкой: первыми запросами — copyPaste с paste: format и с paste: validation из строки над новой, потом значения; заметка превью называет копию"
+    },
+    {
+      "id": "columns.unlabeled-exact-key",
+      "title": "Колонка без подписи пишется и ищется только точным ключом из карты — «(A)»; похожие имена не подбираются, ключ в скобках без такой колонки — вопрос, а не запись (D-26, Q40)",
+      "kind": "deny",
+      "enforced_in": "src/core/sheets/unlabeled-key.ts (unlabeledByKey, unlabeledKeyQuestion) + src/core/sheets/rows.ts (writeColumn)",
+      "probe": "appendRow на листе с колонкой B без подписи: значения под «B» и «(b)» → needs_clarification, записи нет; под «(B)» → план с Лист!B3"
+    },
+    {
+      "id": "write.format-like-row",
+      "title": "Источник вида — format или likeRow: N, ровно один; образец — строка данных, вид берётся по колонкам (D-26, Q42)",
+      "kind": "deny",
+      "enforced_in": "src/core/sheets/format-source.ts (formatSourceOf, restyleOf) + src/core/ops.ts (parseOperation)",
+      "probe": "formatCells без источника, с format и likeRow сразу и с format без columns → bad_request до Google; likeRow = шапка → like_row_outside_data; likeRow строки с жирным → план жирного в строке цели"
+    },
+    {
+      "id": "write.insert-like-row",
+      "title": "Вставка «как строка N»: вид и проверка данных строки данных N — тем же batchUpdate, что вставка; образец вне данных — отказ (D-26, Q43)",
+      "kind": "invariant",
+      "enforced_in": "src/core/sheets/structure-support.ts (likeRowPastes) + src/core/sheets/format-source.ts (sampleBounds)",
+      "probe": "insertRows с likeRow: одним batchUpdate — insertDimension, copyPaste format и copyPaste validation; likeRow = шапка → like_row_outside_data"
     },
     {
       "id": "write.replace-preview-lists-cells",
@@ -370,6 +405,71 @@
       "kind": "deny",
       "enforced_in": "src/core/undo-shared.ts (pickUndoRecord)",
       "probe": "откат по id записи другого профиля → policy_denied undo.own-profile; последняя по цели — чужого профиля → nothing_to_undo only_other_profiles"
+    },
+    {
+      "id": "write.full-sheet",
+      "title": "Запись считается по всему листу: частичный снимок для записи не берётся, лист больше предела — отказ, а не расчёт по части (D-26)",
+      "kind": "deny",
+      "enforced_in": "src/core/google/sheets.ts (getSpreadsheet)",
+      "probe": "лист со строками сетки больше write.max-sheet-rows → policy_denied write.full-sheet до чтения сетки; лист в пределах — читается целиком"
+    },
+    {
+      "id": "write.max-sheet-rows",
+      "title": "Предел листа, который запись читает целиком (строк сетки)",
+      "kind": "limit",
+      "value": 50000,
+      "enforced_in": "src/core/google/sheets.ts (WRITE_MAX_SHEET_ROWS)",
+      "probe": "предел шва берётся из правила, а не из числа в коде"
+    },
+    {
+      "id": "upload.max-bytes",
+      "title": "Файл с компьютера выкладывается на Диск, только если он не больше 100 МиБ: больше — отказ до чтения содержимого (D-27)",
+      "kind": "limit",
+      "value": 104857600,
+      "enforced_in": "src/core/upload/local-file.ts (locateLocalFile, assertUploadSize)",
+      "probe": "файл проекта на байт больше предела → policy_denied upload.max-bytes с размером, и содержимое не читается; ровно предел — проходит"
+    },
+    {
+      "id": "upload.project-files-only",
+      "title": "Файл с компьютера G connect берёт только из каталога проекта сессии: вне проекта, ссылкой наружу, скрытый путь и имя секрета — отказ до чтения содержимого (D-27)",
+      "kind": "deny",
+      "enforced_in": "src/core/upload/local-file.ts (locateLocalFile, realFile, assertInside, assertNotSecret, assertNotHidden) + src/mcp/run-upload.ts (projectOf)",
+      "probe": "файл вне проекта, ссылка наружу, скрытый путь и prod.env → отказ с причиной; файл проекта проходит; клиент без каталога проекта → policy_denied до Диска"
+    },
+    {
+      "id": "upload.same-name-new-version",
+      "title": "Свежая версия одноимённого файла папки ложится новой ревизией того же файла — ID и ссылка те же, копии нет; несколько одноимённых — вопрос человеку, файл Google или папка с этим именем — отказ (D-27)",
+      "kind": "invariant",
+      "enforced_in": "src/core/upload/upload-op.ts (targetOf, sameNamed) + src/core/upload/upload-checks.ts (assertReplaceable) + src/core/upload/upload-plan.ts (sameNameQuestion)",
+      "probe": "в папке один sales.mp4 → ok, тот же ID и вторая ревизия, без кода плана; второй sales.mp4 → needs_clarification, ревизий не прибавилось"
+    },
+    {
+      "id": "upload.replace-other-name-named",
+      "title": "Заменить содержимое файла файлом с другим именем — только фразой человека «заменяю файл <имя>» с кодом плана, конверт и разрешение проекта её не открывают (D-20, D-27)",
+      "kind": "deny",
+      "enforced_in": "src/core/upload/upload-op.ts (structuralOf, contourOptions)",
+      "probe": "replace по ID файла old.mp4 файлом sales.mp4 под разрешением проекта → confirm_required с фразой «заменяю файл old.mp4», ревизий не прибавилось"
+    },
+    {
+      "id": "upload.verified-by-checksum",
+      "title": "Загруженное сверяется с файлом на диске по sha256: не совпало — новый файл в корзину, замена — прежней ревизией, ответ — ошибка, а не «готово» (D-27)",
+      "kind": "invariant",
+      "enforced_in": "src/core/upload/upload-checks.ts (checkedUpload, verdictOf)",
+      "probe": "файл дописан между проверкой и загрузкой → stale_value upload_checksum_mismatch, в папке файла нет"
+    },
+    {
+      "id": "write.header-empty-cells-only",
+      "title": "Шапку подписывает только явная операция и только в пустые ячейки строки шапки: занятая ячейка и повтор подписи — отказ без записи; неизвестное имя в записи строк — по-прежнему вопрос (D-26, хотфикс PR #23)",
+      "kind": "deny",
+      "enforced_in": "src/core/sheets/set-header-op.ts (setHeader, assertEmpty, assertNewLabels, checkedLabels)",
+      "probe": "setHeader «№», «Статус» с A на листе с A1 «Имя» → bad_request header_cell_occupied, записей нет; «Статус», «статус» и «имя» — header_label_duplicate; «Статус» с B → план Лист!B1"
+    },
+    {
+      "id": "write.add-sheet-content-undo",
+      "title": "Откат листа, созданного addSheet со шапкой или строками, удаляет его, только пока непустых ячеек на нём столько, сколько записали мы; иначе — revision_conflict, лист на месте (D-19, D-26)",
+      "kind": "invariant",
+      "enforced_in": "src/core/undo-structure.ts (assertSheetAsCreated) + src/core/sheets/structure-op.ts (addSheet)",
+      "probe": "запись addSheet «Вопросы» с count 3: на листе 3 непустые ячейки → deleteSheet; дописали четвёртую → revision_conflict sheet_changed, запросов нет"
     }
   ]
 }

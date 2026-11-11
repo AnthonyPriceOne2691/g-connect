@@ -10,8 +10,8 @@
 import { z } from 'zod';
 
 import { gcError } from './errors.js';
-import { issuesDetail, unknownFields, unknownFieldsDetail } from './field-check.js';
-import { commonFields } from './op-fields.js';
+import { enumRefusal, issuesDetail, unknownFields, unknownFieldsDetail } from './field-check.js';
+import { cellValue, commonFields, contentFields, orJsonText } from './op-fields.js';
 import {
   appendTextOp,
   createParagraphBulletsOp,
@@ -34,10 +34,16 @@ import {
 } from './docs/ops.js';
 
 export * from './docs/ops.js';
+// Вид ячейки — своим модулем (D-26, Q12): у шрифта, кегля и формата числа свои отказы.
+import { cellFormat, FORMAT_FIELDS } from './format-fields.js';
+export { FORMAT_FIELDS };
+import { formatSourceOf } from './sheets/format-source.js';
+import { rowSelectionOf, rowSpanSchema } from './sheets/row-selection.js';
 import type { CellFormat } from './sheets/types.js';
-
-/** Значение ячейки, как его может прислать клиент. */
-const cellValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+// Загрузка файла с компьютера — своим модулем по гейту длины (D-27, Q45–Q48).
+import { uploadFileOp } from './upload/upload-schema.js';
+// Подпись пустых ячеек шапки — своим модулем по той же причине (хотфикс 2026-11-11).
+import { setHeaderOp } from './sheets/set-header-op.js';
 
 /** Имена колонок — ключи; значения примитивны. Объект в ячейку не пишется (§8.3). */
 const rowValues = z.record(z.string().min(1), cellValue);
@@ -57,45 +63,36 @@ export const upsertRowOp = z.object({
 
 export const setCellsOp = z.object({
   op: z.literal('setCells'),
-  where: rowValues,
+  /**
+   * Какие строки — ровно одним способом (Q39, `rowSelectionOf`): `where` — условие, как прежде;
+   * `rows` — номера строк листа внутри данных, объектом или строкой JSON: у пустой вставленной
+   * строки уникального условия нет. `allRows` и `headerOnly` — способы правки вида: они объявлены,
+   * чтобы отказ (`row_selection`) назвал способы setCells, а не «незнакомое поле».
+   */
+  where: rowValues.optional(),
+  rows: orJsonText(rowSpanSchema).optional(),
+  allRows: z.boolean().optional(),
+  headerOnly: z.boolean().optional(),
   values: rowValues,
   ...commonFields,
 });
 
-/**
- * Вид ячейки на внешней границе. `.strict()` не косметика: `{fontSize: 14}` должен
- * отклоняться С ПЕРЕЧИСЛЕНИЕМ допустимых полей (пример V11), а не проходить в никуда —
- * иначе агент будет уверен, что размер шрифта поменялся.
- */
-const cellFormat = z
-  .object({
-    bold: z.boolean().optional(),
-    italic: z.boolean().optional(),
-    underline: z.boolean().optional(),
-    align: z.enum(['left', 'center', 'right']).optional(),
-    background: z
-      .string()
-      .regex(/^#[0-9a-fA-F]{6}$/, 'цвет задаётся как #RRGGBB')
-      .optional(),
-  })
-  .strict();
-
-export const FORMAT_FIELDS: readonly string[] = [
-  'bold',
-  'italic',
-  'underline',
-  'align',
-  'background',
-];
-
 export const formatCellsOp = z.object({
   op: z.literal('formatCells'),
-  /** Какие строки: то же условие, что у `setCells` — по ключу или по любой колонке. */
-  where: rowValues,
-  /** Какие колонки — по именам, а не по буквам: колонки переставляют (§5). */
-  columns: z.array(z.string().min(1)).min(1),
   /**
-   * Правка частичная: `{bold: true}` не сбрасывает выравнивание и фон.
+   * Какие строки — РОВНО одним способом (Q13, Q17, `rowSelectionOf`): `where` — то же условие,
+   * что у `setCells`; `allRows: true` — все строки данных листа; `rows` — номера строк листа,
+   * объектом или той же формой строкой JSON (Q19); `headerOnly: true` — одна строка шапки.
+   */
+  where: rowValues.optional(),
+  allRows: z.boolean().optional(),
+  rows: orJsonText(rowSpanSchema).optional(),
+  headerOnly: z.boolean().optional(),
+  /** Какие колонки — по именам, а не по буквам (§5); без них — только у likeRow: все (Q42). */
+  columns: z.array(z.string().min(1)).min(1).optional(),
+  /**
+   * Правка частичная: `{bold: true}` не сбрасывает выравнивание и фон. Вид — этими полями или
+   * образцом `likeRow`, ровно одно (Q42, `formatSourceOf`).
    *
    * `transform` убирает ключи со значением `undefined`: при `exactOptionalPropertyTypes`
    * `{bold: undefined}` и «поля нет» — разные типы, и чистка обязана быть на границе, а не
@@ -105,8 +102,14 @@ export const formatCellsOp = z.object({
     .refine((f) => Object.values(f).some((v) => v !== undefined), 'не задано ни одного поля вида')
     .transform(
       (f) => Object.fromEntries(Object.entries(f).filter(([, v]) => v !== undefined)) as CellFormat,
-    ),
-  /** Заодно поправить ячейку заголовка этих колонок — «сделай шапку жирной». */
+    )
+    .optional(),
+  /** Вид как у строки N (Q42): у каждой колонки — вид её ячейки в строке данных N. */
+  likeRow: z.number().int().positive().optional(),
+  /**
+   * Заодно поправить ячейку заголовка этих колонок — «сделай шапку жирной». Только шапку —
+   * `headerOnly`; вместе с ним `includeHeader` ничего не добавляет (Q17).
+   */
   includeHeader: z.boolean().default(false),
   ...commonFields,
 });
@@ -143,6 +146,8 @@ export const insertRowsOp = z.object({
   count: z.number().int().positive().max(200).default(1),
   /** Ниже якоря, а не выше. */
   below: z.boolean().default(false),
+  /** Вставленные строки — с видом и проверкой данных строки N (Q43), номер — как до вставки. */
+  likeRow: z.number().int().positive().optional(),
   ...commonFields,
 });
 
@@ -178,10 +183,12 @@ export const deleteSheetOp = z.object({
   ...commonFields,
 });
 
+/** Новый лист; со шапкой (`columns`) — она в строке 1, строки под ней; только `rows` — с A1. */
 export const addSheetOp = z.object({
   op: z.literal('addSheet'),
   title: z.string().min(1),
   ...commonFields,
+  ...contentFields,
 });
 
 export const renameSheetOp = z.object({
@@ -244,17 +251,11 @@ const createFields = {
   ...commonFields,
 };
 
-/**
- * Таблица со шапкой и строками (D-23): запрос «создай таблицу с шапкой и строкой» ядро
- * раньше выполнить не могло — в пустой лист шапку не вписать. Значения по умолчанию —
- * текстом (RAW): дата, которую продиктовал человек, остаётся строкой, а не догадкой.
- */
+/** Таблица — сразу со шапкой и строками (D-23): поля содержимого те же, что у нового листа. */
 export const createSheetOp = z.object({
   op: z.literal('createSheet'),
   ...createFields,
-  columns: z.array(z.string().min(1)).min(1).optional(),
-  rows: z.array(z.array(cellValue)).optional(),
-  asText: z.boolean().default(true),
+  ...contentFields,
 });
 export const createDocOp = z.object({ op: z.literal('createDoc'), ...createFields });
 export const createFolderOp = z.object({ op: z.literal('createFolder'), ...createFields });
@@ -263,6 +264,7 @@ export const operationSchema = z.discriminatedUnion('op', [
   appendRowOp,
   upsertRowOp,
   setCellsOp,
+  setHeaderOp,
   formatCellsOp,
   findReplaceOp,
   insertRowsOp,
@@ -281,6 +283,7 @@ export const operationSchema = z.discriminatedUnion('op', [
   createSheetOp,
   createDocOp,
   createFolderOp,
+  uploadFileOp,
   appendTextOp,
   insertTextOp,
   deleteParagraphOp,
@@ -308,6 +311,7 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'appendRow',
   'upsertRow',
   'setCells',
+  'setHeader',
   'formatCells',
   'findReplace',
   'insertRows',
@@ -326,6 +330,7 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'createSheet',
   'createDoc',
   'createFolder',
+  'uploadFile',
   'appendText',
   'insertText',
   'deleteParagraph',
@@ -375,8 +380,8 @@ export type DocOperation = Extract<Operation, { op: (typeof DOC_NAMES)[number] }
 /**
  * Битое регулярное выражение — отказ на границе, а не падение в середине плана (V10).
  *
- * Проверка здесь, а не в схеме: `superRefine` возвращает `ZodEffects`, которому нет места
- * в `discriminatedUnion`, а разбор операции и есть граница ядра.
+ * Проверка здесь, а не в схеме: у отказа свой `cause` (`bad_regex`) и текст движка выражений, а
+ * проверка в схеме ушла бы в общий `schema_violation`. Разбор операции и есть граница ядра.
  */
 function assertUsableRegex(operation: Operation): void {
   if (operation.op !== 'findReplace' || !operation.searchByRegex) return;
@@ -394,7 +399,8 @@ function assertUsableRegex(operation: Operation): void {
 
 /** Поля операции по её имени — из схемы ядра, а не вторым списком (урок L21). */
 export function fieldsOfOperation(op: OperationName): readonly string[] {
-  return Object.keys(operationSchema.optionsMap.get(op)?.shape ?? {});
+  const schema = operationSchema.options.find((option) => option.shape.op.value === op);
+  return Object.keys(schema?.shape ?? {});
 }
 
 const unknownOperation = (named: unknown) =>
@@ -421,6 +427,31 @@ function assertKnownFields(input: unknown, op: OperationName): void {
 }
 
 /**
+ * Подсказка к отказу формы: допустимое называется там, где из ошибки схемы его не узнать.
+ *
+ * «Unrecognized key strikethrough» говорит, чего НЕЛЬЗЯ, и молчит о том, что можно — агент
+ * после такого ответа угадывает. Список допустимых полей вида дописывается явно (пример V11):
+ * узнать его иначе неоткуда, схема вида в `tools/list` вложенная. У `rows` три смысла на одно
+ * имя, и «Expected object» не говорит, какой объект (Q19): ожидаемая форма — по операции.
+ */
+function shapeHint(op: OperationName, issues: readonly z.core.$ZodIssue[]): string {
+  const about = (field: string): boolean => issues.some((issue) => issue.path[0] === field);
+  const span = '{from, to}: номера строк листа включительно; объектом';
+  const matrix = 'массив строк, каждая — массив значений в порядке колонок шапки; массивом';
+  const rowsForms: Partial<Record<OperationName, string>> = {
+    formatCells: span,
+    setCells: span,
+    createSheet: matrix,
+    addSheet: matrix,
+  };
+  const rowsForm = about('rows') ? rowsForms[op] : undefined;
+  return (
+    (about('format') ? ` Допустимые поля вида: ${FORMAT_FIELDS.join(', ')}.` : '') +
+    (rowsForm === undefined ? '' : ` rows у ${op} — ${rowsForm} или той же формой строкой JSON.`)
+  );
+}
+
+/**
  * Разбор операции. Ошибка — `bad_request` с перечислением допустимого: агент, назвавший
  * операцию или поле неверно, должен узнать список, а не получить «invalid union».
  */
@@ -431,19 +462,21 @@ export function parseOperation(input: unknown): Operation {
   }
   assertKnownFields(input, named as OperationName);
 
-  const parsed = operationSchema.safeParse(input);
+  const parsed = operationSchema.safeParse(input, { error: enumRefusal });
   if (parsed.success) {
     assertUsableRegex(parsed.data);
-    return parsed.data;
+    // Строки правки вида и записи значений — ровно одним способом своей операции (Q13, Q17, Q39):
+    // отказ до Google, а не после чтения.
+    const { data } = parsed;
+    if (data.op === 'formatCells' || data.op === 'setCells') rowSelectionOf(data, data.op);
+    // Вид правки — полями или строкой-образцом, ровно одно (Q42): отказ тоже до Google.
+    if (data.op === 'formatCells') formatSourceOf(data);
+    return data;
   }
-  // «Unrecognized key fontSize» говорит, чего НЕЛЬЗЯ, и молчит о том, что можно — агент
-  // после такого ответа угадывает. Список допустимых полей вида дописывается явно
-  // (пример V11): узнать его иначе неоткуда, схема вида в `tools/list` вложенная.
-  const aboutFormat = parsed.error.issues.some((issue) => issue.path[0] === 'format');
   throw gcError('bad_request', {
     detail:
       `Запрос операции «${named}» не проходит проверку — ${issuesDetail(parsed.error.issues)}.` +
-      (aboutFormat ? ` Допустимые поля вида: ${FORMAT_FIELDS.join(', ')}.` : ''),
+      shapeHint(named as OperationName, parsed.error.issues),
     cause: 'schema_violation',
   });
 }

@@ -7,7 +7,7 @@
  */
 
 import { gcError } from '../errors.js';
-import type { RangeSnapshot, SnapshotCell } from '../journal.js';
+import { listed, unlabeledCells } from './bounds.js';
 import { contextOf, finishWrite } from './commit.js';
 import { rowsUnderCondition } from './rows.js';
 import {
@@ -17,12 +17,13 @@ import {
   assertContiguous,
   assertNamedRows,
   assertSnapshotBudget,
+  rowWidth,
   snapshotOf,
   columnAnchored,
   subjectOf,
   prepared,
 } from './structure-support.js';
-import { columnLetter, type SheetData, type SheetMap, type SheetsClient } from './types.js';
+import type { SheetData, SheetMap, SheetsClient } from './types.js';
 import type { ApplyOutcome, RowOptions, RowValues, StructuralPlan } from './write-types.js';
 
 /**
@@ -81,9 +82,11 @@ export async function moveRows(
     `Поедет ${count === 1 ? 'строка' : `${count} строк`}: ${moved} — станет ` +
       `${anchor < at ? 'выше' : 'ниже'} строки «${anchorKey}». Значения не меняются, ` +
       'меняется порядок; откат вернёт строки на прежнее место.',
+    ...wholeRowNote(data, rows),
   ];
-  assertSnapshotBudget(count * Math.max(1, map.columns.length));
-  return finishWrite(client, contextOf(map), [], prepared(notes), options, 'moveRows', {
+  assertSnapshotBudget(count * rowWidth(data));
+  const plan = prepared(notes, [...(source.assumptions ?? []), ...(target.assumptions ?? [])]);
+  return finishWrite(client, contextOf(map), [], plan, options, 'moveRows', {
     structural,
     // Снимок перемещаемых строк — обещание четырёх документов и вторая линия обороны:
     // вся обратимость иначе держалась бы на арифметике `inverseMove`, чья ошибка выглядит
@@ -110,6 +113,8 @@ export async function moveRows(
  * Диапазон — от первой строки данных до последней и от колонки A: так снимается
  * неоднозначность документации про `dimensionIndex` (относительно листа или диапазона —
  * не сказано, а при начале от A оба чтения совпадают). Шапка в сортировку не попадает.
+ * Правый край — последняя колонка строк данных (Q33), а не число колонок карты: Google двигает
+ * только ячейки диапазона, и колонка за его краем оставалась на месте, пока строка уезжала.
  *
  * Откат — только снимком: порядок строк обратной операцией не восстановить, потому что
  * сортировка не запоминает, откуда какая строка приехала.
@@ -130,9 +135,10 @@ export async function sortRange(
       cause: 'nothing_to_sort',
     });
   }
-  const width = map.columns.length;
+  const width = rowWidth(data);
   assertSnapshotBudget(rows * width);
   const range = { row: map.headerRow + 1, column: 0, rowCount: rows, columnCount: width };
+  const block = Array.from({ length: rows }, (_unused, index) => range.row + index);
   const structural: StructuralPlan = {
     kind: 'sortRange',
     sheet: map.sheet,
@@ -155,10 +161,13 @@ export async function sortRange(
       `строки идут так: ${current}${rows > 5 ? ' …' : ''}. Итоговый порядок задаёт Google ` +
       '(его правила сравнения), поэтому план его не обещает — но снимок в журнале ' +
       'позволяет вернуть прежний порядок целиком.',
+    ...wholeRowNote(data, block),
   ];
   return finishWrite(client, contextOf(map), [], prepared(notes), options, 'sortRange', {
     structural,
-    snapshots: [sortSnapshot(map, data, rows)],
+    // Снимок всего блока данных — той же ширины, что диапазон: порядок строк восстанавливается
+    // только заливкой, и каждая ячейка — в свою колонку (Q33).
+    snapshots: [snapshotOf(map, data, block)],
     // Колонка сортировки всё ещё на том же месте: иначе Google отсортирует по чужому
     // индексу, а снимок в журнале окажется от другого порядка.
     precondition: (c) => assertColumnStill(c, map, column.name, column.index),
@@ -175,22 +184,23 @@ export async function sortRange(
   });
 }
 
-/** Снимок всего блока данных: порядок строк восстанавливается только заливкой. */
-function sortSnapshot(map: SheetMap, data: SheetData, rows: number): RangeSnapshot {
-  const first = map.headerRow + 1;
-  const last = columnLetter(map.columns.length - 1);
-  return {
-    a1Range: `${map.sheet}!A${first}:${last}${first + rows - 1}`,
-    rows: data.rows.map((row, index) =>
-      map.columns.map((col): SnapshotCell => {
-        const format = data.formats[index]?.[col.name];
-        return {
-          value: row[col.name] ?? null,
-          ...(format === undefined ? {} : { format }),
-        };
-      }),
-    ),
-  };
+/**
+ * Строки едут целиком (Q33, Q34) — вместе с колонками без подписи, и план называет их ключами
+ * (Q37), пять и многоточие, как предупреждение карты: подписанные колонки видны в плане сами, а о
+ * подпунктах в C человек узнавал, только когда они уже уехали. Значений без подписи в этих строках
+ * нет — заметки нет.
+ */
+function wholeRowNote(data: SheetData, rows: readonly number[]): string[] {
+  const { map } = data;
+  const moving = new Set(
+    rows
+      .flatMap((row) => unlabeledCells(map.unlabeled, data.cells[row - map.headerRow - 1] ?? []))
+      .map(({ column }) => column),
+  );
+  if (moving.size === 0) return [];
+  // По порядку листа, а не строк: подпункт в E выше по листу, чем в C, — ключи всё равно (C), (E).
+  const keys = [...moving].sort((left, right) => left.index - right.index).map(({ key }) => key);
+  return [`строки едут целиком — вместе с колонками без подписи ${listed(keys)}`];
 }
 
 /** Ключ строки словами: им человек узнаёт строку в плане, а не по номеру. */

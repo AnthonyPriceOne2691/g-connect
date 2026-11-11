@@ -9,6 +9,16 @@
 
 import { gcError } from '../errors.js';
 import {
+  dataBounds,
+  dataHeight,
+  sideBlockWarning,
+  unlabeledIn,
+  type KeyedColumn,
+} from './bounds.js';
+import { detectDateFormat, withDateStyle } from './date-style.js';
+import { headerNotes } from './notes.js';
+import { unlabeledProfiles } from './unlabeled-key.js';
+import {
   columnLetter,
   type Cell,
   type CellValue,
@@ -25,13 +35,32 @@ import {
 const HEADER_SEARCH_DEPTH = 8;
 const SAMPLE_ROWS = 3;
 /** Порог «колонка похожа на перечисление»: мало уникальных на много строк. */
+/**
+ * Выведенный список — только при СИЛЬНЫХ признаках (D-26, Q8). Раньше хватало четырёх
+ * значений с одним повтором, и свободный текст («Кто имеет доступ», «Ссылка на вход») становился
+ * списком: каждое новое значение получало `not_in_enum`, а подтвердить его было нечем —
+ * «Реестр инфраструктуры» встал на 26 строках из 55. Настоящая проверка данных не меняется.
+ */
 const ENUM_MAX_UNIQUE = 8;
-const ENUM_MIN_ROWS = 4;
+const ENUM_MIN_ROWS = 10;
+/** Строк хотя бы втрое больше, чем разных значений: список — это повторение. */
+const ENUM_MIN_REPEAT = 3;
+/** Значение списка — короткая метка, а не фраза. */
+const ENUM_MAX_LENGTH = 40;
+/**
+ * Тип, ограничивающий запись (число, дата, да/нет), — от двух значений и 80% колонки (Q9): одно
+ * значение — не тип. Два, а не три: на короткой таблице (две строки данных) число и дата
+ * обязаны оставаться числом и датой — «3ч» в числовую колонку пишется числом 3.
+ */
+const TYPE_MIN_VALUES = 2;
+const TYPE_MIN_SHARE = 0.8;
 
 const text = (cell: Cell | undefined): string =>
   cell?.value === null || cell?.value === undefined ? '' : String(cell.value).trim();
 
 const isBlank = (cell: Cell | undefined): boolean => text(cell) === '';
+/** В строке есть значение: пусто и одни пробелы — не значение. */
+const filled = (row: readonly Cell[]): boolean => row.some((cell) => !isBlank(cell));
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$|^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/;
 const NUMBER_RE = /^-?\d+([.,]\d+)?$/;
@@ -48,33 +77,48 @@ function valueType(raw: string): ColumnType {
 
 /** Тип колонки — самый частый непустой тип значений; ничья решается в пользу строки. */
 function dominantType(values: readonly string[]): ColumnType {
-  const counts = new Map<ColumnType, number>();
-  for (const v of values) {
-    const t = valueType(v);
-    if (t === 'unknown') continue;
-    counts.set(t, (counts.get(t) ?? 0) + 1);
-  }
   let best: ColumnType = 'unknown';
   let bestCount = 0;
-  for (const [type, count] of counts) {
+  let total = 0;
+  for (const [type, count] of typeCounts(values)) {
+    total += count;
     if (count > bestCount || (count === bestCount && type === 'string')) {
       best = type;
       bestCount = count;
     }
   }
-  return best;
+  return heldType(best, bestCount, total);
 }
 
-/** Формат даты берётся у самой колонки: писать «2026-09-01» в колонку с «01.09.2026» — порча. */
-function detectDateFormat(values: readonly string[]): 'iso' | 'dotted' | null {
-  let iso = 0;
-  let dotted = 0;
+function typeCounts(values: readonly string[]): Map<ColumnType, number> {
+  const counts = new Map<ColumnType, number>();
   for (const v of values) {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) iso += 1;
-    else if (/^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/.test(v)) dotted += 1;
+    const t = valueType(v);
+    if (t !== 'unknown') counts.set(t, (counts.get(t) ?? 0) + 1);
   }
-  if (iso === 0 && dotted === 0) return null;
-  return iso >= dotted ? 'iso' : 'dotted';
+  return counts;
+}
+
+/**
+ * Ограничивающий тип — по сильным признакам (Q9): «Стоимость/мес.» стала числовой от
+ * одного «0», и любой текст в ней получал `not_a_number`. Не держится — колонка текстовая.
+ */
+function heldType(best: ColumnType, bestCount: number, total: number): ColumnType {
+  const constraining = best === 'number' || best === 'date' || best === 'boolean';
+  const weak = bestCount < TYPE_MIN_VALUES || bestCount < TYPE_MIN_SHARE * total;
+  return constraining && weak ? 'string' : best;
+}
+
+/** Список, выведенный из записанного (Q8): только у текстовой колонки с явным повторением. */
+function inferEnum(
+  values: readonly string[],
+  nonEmpty: readonly string[],
+  unique: ReadonlySet<string>,
+): string[] | null {
+  if (dominantType(values) !== 'string' || nonEmpty.length < ENUM_MIN_ROWS) return null;
+  if (unique.size > ENUM_MAX_UNIQUE || nonEmpty.length < ENUM_MIN_REPEAT * unique.size) return null;
+  if (nonEmpty.some((v) => v.length > ENUM_MAX_LENGTH)) return null;
+  return [...new Set(nonEmpty)];
 }
 
 interface HeaderGuess {
@@ -150,7 +194,7 @@ function isProtected(sheet: SheetSnapshot, columnIndex: number, firstDataRow: nu
 /** Строка сетки → запись по именам колонок. Было скопировано дважды (нашёл jscpd). */
 function rowToRecord(
   row: readonly Cell[],
-  columns: readonly ColumnProfile[],
+  columns: readonly KeyedColumn[],
 ): Record<string, CellValue> {
   const out: Record<string, CellValue> = {};
   for (const column of columns) out[column.name] = row[column.index]?.value ?? null;
@@ -158,25 +202,20 @@ function rowToRecord(
 }
 
 /**
- * Пустая колонка внутри шапки делит лист на блоки: справа от неё обычно отдельная
- * таблица (или врезка), а не продолжение данных. Молча втянуть её значит выдать
- * колонку с одной заполненной ячейкой и не сказать почему — §9.3 требует обратного.
+ * Окно строк листа → записи по колонкам (D-26, `gc_read mode=values`): колонки карты и ключи
+ * колонок без подписи (Q30). Тот же разбор, что у строк карты: хвост пустых строк срезан,
+ * пропуски в середине остаются — строка окна под номером `i` — это строка листа `fromRow + i`.
+ * `marked` — что ещё держит строку хвоста (Q38): вид или заметка в колонке окна, о которых просили;
+ * такая строка — той же формы, что пустая в середине окна. Вид за краем колонок окна её не держит.
  */
-function detectSideBlock(
-  headerCells: readonly Cell[],
-): { gapAt: number; rightFrom: number } | null {
-  const filledAt: number[] = [];
-  headerCells.forEach((cell, index) => {
-    if (!isBlank(cell)) filledAt.push(index);
-  });
-  if (filledAt.length < 2) return null;
-
-  for (let i = 1; i < filledAt.length; i += 1) {
-    const previous = filledAt[i - 1]!;
-    const current = filledAt[i]!;
-    if (current - previous > 1) return { gapAt: previous + 1, rightFrom: current };
-  }
-  return null;
+export function windowRecords(
+  rows: readonly (readonly Cell[])[],
+  columns: readonly KeyedColumn[],
+  marked: (cell: Cell | undefined) => boolean,
+): Record<string, CellValue>[] {
+  const held = (row: readonly Cell[]): boolean =>
+    filled(row) || columns.some((column) => marked(row[column.index]));
+  return withoutEmptyTail(rows, held).map((row) => rowToRecord(row, columns));
 }
 
 /** Объединённые ячейки, задевающие шапку или область данных. */
@@ -241,9 +280,10 @@ export function buildSheetData(
       : { row: options.headerRow, reason: 'строка заголовков задана вызывающим', confident: true };
   const headerCells = rows[guess.row - 1] ?? [];
   const dataRows = rows.slice(guess.row);
-  const warnings: string[] = [];
+  // Заметки шапки — правила заполнения (Q24): предупреждение о них идёт первым, до записи.
+  const notes = headerNotes(rows, guess.row, { id: snapshot.id, sheet: sheet.title });
+  const warnings: string[] = [...notes.warnings];
 
-  const width = rows.reduce((max, row) => Math.max(max, row.length), 0);
   const columns: ColumnProfile[] = [];
   const seen = new Map<string, number>();
 
@@ -267,13 +307,7 @@ export function buildSheetData(
     // объявлены на данных. Проверка по шапке молча теряла enum из таблицы.
     const firstDataRow = guess.row + 1;
     const validation = validationValues(sheet, index, firstDataRow);
-    const inferredEnum =
-      validation === null &&
-      nonEmpty.length >= ENUM_MIN_ROWS &&
-      uniqueValues.size <= ENUM_MAX_UNIQUE &&
-      uniqueValues.size < nonEmpty.length
-        ? [...new Set(nonEmpty)]
-        : null;
+    const inferredEnum = validation === null ? inferEnum(values, nonEmpty, uniqueValues) : null;
 
     columns.push({
       name,
@@ -290,24 +324,19 @@ export function buildSheetData(
       // Вид шапки и вид первой строки данных — только когда задан явно. Пустой объект в
       // карту не кладём: карта должна оставаться десятками строк, а не тысячами (§7).
       ...formatFields(headerCells[index]?.format, cells[0]?.format),
+      ...notes.column(index),
     });
   }
 
   if (columns.length === 0) {
     warnings.push(`в строке ${guess.row} не нашлось ни одной подписи колонки`);
   }
+  // Значения под пустой ячейкой шапки и правее последней подписи — полем и предупреждением (Q30).
+  const unlabeled = unlabeledIn(dataRows, guess.row + 1, columns, 'map');
 
-  const side = detectSideBlock(headerCells);
-  if (side !== null) {
-    const gap = columnLetter(side.gapAt);
-    const right = columnLetter(side.rightFrom);
-    warnings.push(
-      `колонка ${gap} пуста, а правее (с ${right}) снова есть подписи — похоже, на листе ДВА блока. ` +
-        `Правая часть в данные втянута как обычные колонки; если это отдельная таблица или врезка, ` +
-        `читай её отдельным вызовом или задай область явно`,
-    );
-  }
-  warnings.push(...mergeWarnings(sheet, guess.row));
+  warnings.push(...sideBlockWarning(headerCells));
+  warnings.push(...unlabeled.warnings, ...mergeWarnings(sheet, guess.row));
+  warnings.push(...partialReadWarning(snapshot.rowLimit, rows.length, sheet.gridRows));
   if (!guess.confident && options.headerRow === undefined) {
     warnings.push(
       `строка заголовков выбрана неуверенно (${guess.reason}) — проверь и при нужде задай headerRow`,
@@ -319,16 +348,13 @@ export function buildSheetData(
   }
 
   const dataRowCount = dataRows.filter((row) => row.some((c) => !isBlank(c))).length;
-  const usedRange =
-    rows.length === 0 || width === 0
-      ? `${sheet.title}!A1:A1`
-      : `${sheet.title}!A1:${columnLetter(width - 1)}${rows.length}`;
 
-  const withData = withoutEmptyTail(dataRows);
-  const allRows = withData.map((row) => rowToRecord(row, columns));
-  const allFormats = withData.map((row) => formatsToRecord(row, columns));
-  const headerFormats = formatsToRecord(headerCells, columns);
-  const sampleRows = allRows.slice(0, SAMPLE_ROWS);
+  const withData = withoutEmptyTail(dataRows, filled);
+  // Колонки без подписи — в строках записи под ключом «(C)» (Q40); образцы строк карты — без них.
+  const keyed = unlabeledProfiles(unlabeled.columns, dataRows, (index) =>
+    isProtected(sheet, index, guess.row + 1),
+  );
+  const writable = [...columns, ...keyed];
 
   const map: SheetMap = {
     spreadsheetId: snapshot.id,
@@ -339,13 +365,20 @@ export function buildSheetData(
     headerRow: guess.row,
     headerRowReason: guess.reason,
     headerRowConfident: guess.confident,
-    usedRange,
+    // Границы данных — по значениям и формулам, а не по оформлению (Q31).
+    usedRange: dataBounds(sheet.title, rows),
     dataRowCount,
-    columns,
-    sampleRows,
+    // Пустой колонке — вид дат листа или локали книги (Q15): первая дата в неё уходила как её
+    // прислал агент. Записи строк выше берут только имена и индексы — вид дат им не нужен.
+    columns: withDateStyle(columns, snapshot.locale),
+    sampleRows: withData.slice(0, SAMPLE_ROWS).map((row) => rowToRecord(row, columns)),
+    // Высота других листов — тоже по данным: строки с одним оформлением — не строки листа (Q31).
     otherSheets: snapshot.sheets
       .filter((s) => s.title !== sheet.title)
-      .map((s) => ({ title: s.title, rowCount: s.rows.length })),
+      .map((s) => ({ title: s.title, rowCount: dataHeight(s.rows) })),
+    ...(sheet.gridRows === undefined ? {} : { sheetRows: sheet.gridRows }),
+    ...notes.fields,
+    ...unlabeled.fields,
     // Снимок усечён по листу — значит список других листов НЕ полон, и молчать об этом
     // нельзя: пустой список читается как «других листов нет». Живой прогон 2026-09-04
     // получил `otherSheets: []` на книге из семи листов.
@@ -359,7 +392,34 @@ export function buildSheetData(
         : warnings,
   };
 
-  return { map, rows: allRows, formats: allFormats, headerFormats };
+  return {
+    map,
+    rows: withData.map((row) => rowToRecord(row, writable)),
+    formats: withData.map((row) => formatsToRecord(row, writable)),
+    headerFormats: formatsToRecord(headerCells, writable),
+    cells: withData,
+    unlabeled: keyed,
+  };
+}
+
+/** Префикс предупреждения о части листа — по нему `values` его не повторяет (D-26). */
+export const PARTIAL_READ_WARNING = 'карта построена по первым';
+
+/**
+ * Лёгкая карта (первые строки листа) обязана сказать, что лист может продолжаться: иначе
+ * `dataRowCount` и `usedRange` читаются как размер листа (D-26, пример Q7).
+ */
+function partialReadWarning(
+  rowLimit: number | undefined,
+  read: number,
+  gridRows: number | undefined,
+): string[] {
+  if (rowLimit === undefined || read < rowLimit) return [];
+  return [
+    `${PARTIAL_READ_WARNING} ${rowLimit} строкам листа` +
+      `${gridRows === undefined ? '' : ` из ${gridRows} строк сетки`}: dataRowCount и usedRange — ` +
+      'только по ним; строки дальше читай gc_read mode=values (с fromRow)',
+  ];
 }
 
 /** Только карта — когда данные не нужны (ответ агенту на «что в этой таблице»). */
@@ -371,12 +431,15 @@ export function buildSheetData(
  * строки ГДЕ УГОДНО, и срез по нему потерял бы данные после пустой строки в середине —
  * такую таблицу («блок, пропуск, блок») дизайн допускает и предупреждает о ней (§9.3).
  */
-function withoutEmptyTail(rows: readonly (readonly Cell[])[]): readonly (readonly Cell[])[] {
-  let lastFilled = 0;
+function withoutEmptyTail(
+  rows: readonly (readonly Cell[])[],
+  held: (row: readonly Cell[]) => boolean,
+): readonly (readonly Cell[])[] {
+  let lastHeld = 0;
   rows.forEach((row, index) => {
-    if (row.some((cell) => !isBlank(cell))) lastFilled = index + 1;
+    if (held(row)) lastHeld = index + 1;
   });
-  return rows.slice(0, lastFilled);
+  return rows.slice(0, lastHeld);
 }
 
 /** Вид ячеек строки → запись по именам колонок. Ячейки без вида в запись не попадают. */

@@ -8,6 +8,7 @@
 
 import { gcError } from './errors.js';
 import { normalizeName } from './resolver.js';
+import { dayAndMonth } from './sheets/date-style.js';
 import type { CellValue, ColumnProfile } from './sheets/types.js';
 
 export type ValueOutcome =
@@ -201,5 +202,36 @@ export function normalizeValue(
     }
   }
 
-  return { status: 'ok', value: typeof raw === 'number' ? raw : asText, note: null };
+  return (
+    inDateStyle(asText, column, options.now ?? new Date()) ?? {
+      status: 'ok',
+      value: typeof raw === 'number' ? raw : asText,
+      note: null,
+    }
+  );
+}
+
+/**
+ * Дата в колонку не типа «дата», у которой вид дат известен — своими датами, листом или
+ * локалью книги (Q15), — пишется этим видом. Первая дата пустой колонки уходила как её прислал
+ * агент, и «Дата старта» встала 2026-09-10 при 19.10.2026 во всей книге; после Q9 колонка с
+ * одной датой — текстовая, и следующая дата тоже уходила как есть. Слова («сегодня») и
+ * несуществующий день («31.02.2026») не переписываются: тип «дата» колонке не присвоен, и
+ * значение уходит как прислано.
+ */
+function inDateStyle(asText: string, column: ColumnProfile, now: Date): ValueOutcome | null {
+  const parts = dayAndMonth(asText);
+  if (column.dateFormat === null || parts === null) return null;
+  const parsed = parseDate(asText, now);
+  if (parsed === null || parsed.getDate() !== parts.day || parsed.getMonth() + 1 !== parts.month) {
+    return null;
+  }
+  const formatted = formatDate(parsed, column.dateFormat);
+  if (formatted === asText) return null;
+  const whose = column.filled === 0 ? 'вид дат таблицы' : 'вид дат колонки';
+  return {
+    status: 'ok',
+    value: formatted,
+    note: `«${asText}» записано как ${formatted} — ${whose}`,
+  };
 }

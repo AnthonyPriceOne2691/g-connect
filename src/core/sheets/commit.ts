@@ -13,7 +13,7 @@
  */
 
 import { gcError, newCorrelationId } from '../errors.js';
-import type { RangeSnapshot, StructuralChange, WriteRecord } from '../journal.js';
+import type { RangeSnapshot, StructuralChange, UploadDetail, WriteRecord } from '../journal.js';
 import { planId as planCode, type PlanCell, type PlanShape, type PlanTouch } from '../plan.js';
 import { assertChangeBudget } from '../policy.js';
 import { parseA1 } from './a1.js';
@@ -94,6 +94,8 @@ export const contextOf = (map: SheetMap): WriteContext => ({
 /** Что стало известно при записи, а не при планировании. */
 export interface StructuralFacts {
   readonly fileId?: string;
+  /** Загрузка (Q45–Q48): ревизию, размер и sha256 загруженного называет только ответ Drive. */
+  readonly upload?: UploadDetail;
 }
 
 type Base = Omit<ApplyOutcome, 'status' | 'revisionAfter'>;
@@ -173,13 +175,15 @@ export async function writeCells(
   map: SheetMap,
   changes: readonly PlannedChange[],
 ): Promise<void> {
-  for (const change of changes) {
-    if (change.kind === 'format') continue;
-    // План обещал «станет пусто» — обещание исполняется: `null` в values-API Google
-    // значит «пропустить ячейку», и setCells с пустотой отвечал ok, ничего не записав
-    // (живой прогон 2026-09-06, LR-2). Пустая строка в USER_ENTERED очищает.
-    await client.updateValues(map.spreadsheetId, change.a1, [[change.after ?? '']]);
-  }
+  // Все значения правки — ОДНИМ запросом (D-26, Q10): по запросу на ячейку 429 посреди строки
+  // оставлял её записанной наполовину (M-1: A…J), и строка в 10 ячеек стоила 10 запросов
+  // квоты. План обещал «станет пусто» — обещание исполняется: `null` в values-API Google
+  // значит «пропустить ячейку», и setCells с пустотой отвечал ok, ничего не записав (живой
+  // прогон 2026-09-06, LR-2). Пустая строка в USER_ENTERED очищает.
+  const cells = changes
+    .filter((change) => change.kind !== 'format')
+    .map((change) => ({ range: change.a1, value: change.after ?? '' }));
+  if (cells.length > 0) await client.batchUpdateValues(map.spreadsheetId, cells);
   const formats = changes
     .filter((c) => c.kind === 'format' && c.afterFormat !== undefined)
     .map((c) => formatRequest(map, c.a1, c.afterFormat as CellFormat));
@@ -261,7 +265,8 @@ export async function finishWrite(
   if (shape.structural === undefined) assertChangeBudget(changes.length);
   const base: Base = {
     changes,
-    assumptions: prepared.assumptions,
+    // Одна оговорка — один раз: ключ колонки без подписи в условии и в значениях — одна строка (Q40).
+    assumptions: [...new Set(prepared.assumptions)],
     notes: prepared.notes,
     questions: [] as readonly Question[],
     baseRevision: map.revisionId,
@@ -298,6 +303,7 @@ function toStructuralChange(plan: StructuralPlan, facts: StructuralFacts): Struc
     // вернулось, но и что нет — иначе он отчитается успехом, вернув не всё (урок L5).
     ...(plan.irreversible === undefined ? {} : { irreversible: plan.irreversible }),
     ...(facts.fileId === undefined ? {} : { fileId: facts.fileId }),
+    ...(facts.upload === undefined ? {} : { upload: facts.upload }),
   };
 }
 

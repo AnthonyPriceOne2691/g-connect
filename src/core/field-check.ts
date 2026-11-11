@@ -8,7 +8,7 @@
  * вопрос вместо догадки. Отказ называет поле, ближайшее известное и всё, что здесь есть.
  */
 
-import type { z } from 'zod';
+import { z } from 'zod';
 
 /** Расстояние правки (Левенштейн): сколько вставок, удалений и замен между строками. */
 function editDistance(a: string, b: string): number {
@@ -71,17 +71,28 @@ export const unknownFields = (input: unknown, known: readonly string[]): string[
     : [];
 
 /**
- * Проблемы формы запроса человеческим текстом: путь и что не так. Перечисление — по-русски
- * и со списком допустимого: «значения «x» нет; допустимы: …», иначе агент угадывает.
+ * Перечисление — по-русски и со списком допустимого: «значения «x» нет; допустимы: …», иначе
+ * агент угадывает. Это карта ошибок РАЗБОРА (`safeParse(вход, { error: enumRefusal })`), а не
+ * разбор готового отказа: только она видит схему проблемы, а у перечисления и литерала в zod 4
+ * один код отказа. Литерал (`firstParagraph: true`) и не строка в перечислении остаются при тексте
+ * zod — как было на zod 3.
  */
-export function issuesDetail(issues: readonly z.ZodIssue[]): string {
+export const enumRefusal = (issue: z.core.$ZodRawIssue): string | undefined =>
+  issue.code === 'invalid_value' &&
+  issue.inst instanceof z.core.$ZodEnum &&
+  typeof issue.input === 'string'
+    ? `значения «${issue.input}» нет; допустимы: ${issue.values.join(', ')}`
+    : undefined;
+
+/**
+ * Проблемы формы запроса человеческим текстом: путь и что не так. Текст отказа перечисления
+ * готовит `enumRefusal` при разборе.
+ */
+export function issuesDetail(issues: readonly z.core.$ZodIssue[]): string {
   return issues
     .slice(0, 5)
     .map((issue) => {
       const path = issue.path.length === 0 ? 'корень запроса' : issue.path.join('.');
-      if (issue.code === 'invalid_enum_value') {
-        return `${path}: значения «${String(issue.received)}» нет; допустимы: ${issue.options.join(', ')}`;
-      }
       return `${path}: ${issue.message}`;
     })
     .join('; ');

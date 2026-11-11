@@ -9,8 +9,12 @@
 
 import { appendRow, upsertRow, type ApplyOutcome } from '../core/sheets/rows.js';
 import { findReplace } from '../core/sheets/find-replace-op.js';
-import { formatCells } from '../core/sheets/format-op.js';
-import { setCells } from '../core/sheets/set-cells-op.js';
+import { formatRows } from '../core/sheets/format-op.js';
+import { formatSourceOf } from '../core/sheets/format-source.js';
+import { rowSelectionOf } from '../core/sheets/row-selection.js';
+import { setRows } from '../core/sheets/set-cells-op.js';
+import { setHeader } from '../core/sheets/set-header-op.js';
+import { sheetContentOf } from '../core/sheets/sheet-content.js';
 import { autoFill, copyRange, cutRange, duplicateSheet } from '../core/sheets/range-op.js';
 import {
   addSheet,
@@ -37,6 +41,7 @@ type Operation = Exclude<
       | 'createSheet'
       | 'createDoc'
       | 'createFolder'
+      | 'uploadFile'
       | 'appendText'
       | 'insertText'
       | 'deleteParagraph'
@@ -76,13 +81,20 @@ const HANDLERS: {
     appendRow(client, data, operation.values, options),
   upsertRow: (client, data, operation, options) =>
     upsertRow(client, data, operation.key, operation.values, options),
+  // Строки — ровно одним способом своей операции (Q13, Q17, Q39), вид — полями или образцом
+  // строки (Q42): неверный выбор отказан ещё разбором ядра, здесь поля только сужаются до типа.
   setCells: (client, data, operation, options) =>
-    setCells(client, data, operation.where, operation.values, options),
+    setRows(client, data, rowSelectionOf(operation, 'setCells'), operation.values, options),
+  setHeader: (client, data, operation, options) => setHeader(client, data, operation, options),
   formatCells: (client, data, operation, options) =>
-    formatCells(client, data, operation.where, operation.columns, operation.format, {
-      ...options,
-      includeHeader: operation.includeHeader,
-    }),
+    formatRows(
+      client,
+      data,
+      rowSelectionOf(operation, 'formatCells'),
+      operation.columns,
+      formatSourceOf(operation),
+      { ...options, includeHeader: operation.includeHeader },
+    ),
   findReplace: (client, data, operation, options) =>
     findReplace(
       client,
@@ -101,6 +113,7 @@ const HANDLERS: {
     insertRows(client, data, operation.where, operation.count, {
       ...options,
       below: operation.below,
+      ...(operation.likeRow === undefined ? {} : { likeRow: operation.likeRow }),
     }),
   insertColumns: (client, data, operation, options) =>
     insertColumns(client, data, operation.column, operation.count, {
@@ -112,7 +125,9 @@ const HANDLERS: {
   deleteColumns: (client, data, operation, options) =>
     deleteColumns(client, data, operation.column, options),
   deleteSheet: (client, data, _operation, options) => deleteSheet(client, data, options),
-  addSheet: (client, data, operation, options) => addSheet(client, data, operation.title, options),
+  // Шапка и строки нового листа — тем же разбором, что у новой таблицы (D-23).
+  addSheet: (client, data, operation, options) =>
+    addSheet(client, data, operation.title, { ...options, content: sheetContentOf(operation) }),
   renameSheet: (client, data, operation, options) =>
     renameSheet(client, data, operation.title, options),
   copyRange: (client, data, operation, options) =>

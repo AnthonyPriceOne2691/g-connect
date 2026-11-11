@@ -115,18 +115,25 @@ function codeForStatus(status: number, message: string): { code: ErrorCode; caus
       ? { code: 'auth_expired', cause: 'invalid_grant' }
       : { code: 'auth_expired', cause: `HTTP 401: ${message}` };
   }
-  if (status === 403) {
-    if (/insufficient|scope/i.test(message)) return { code: 'scope_missing', cause: message };
-    if (/rate limit|quota|userRateLimitExceeded/i.test(message)) {
-      return { code: 'quota_exceeded', cause: message };
-    }
-    return { code: 'forbidden', cause: `HTTP 403: ${message}` };
-  }
+  if (status === 403) return codeFor403(message);
   if (status === 404) return { code: 'not_found', cause: `HTTP 404: ${message}` };
   if (status === 429) return { code: 'quota_exceeded', cause: `HTTP 429: ${message}` };
   if (status === 400) return { code: 'bad_request', cause: `HTTP 400: ${message}` };
   if (status >= 500) return { code: 'google_unavailable', cause: `HTTP ${status}: ${message}` };
   return { code: 'internal', cause: `HTTP ${status}: ${message}` };
+}
+
+/** 403 — четыре разных случая с разными действиями: право, место на Диске, лимит, доступ. */
+function codeFor403(message: string): { code: ErrorCode; cause: string } {
+  if (/insufficient|scope/i.test(message)) return { code: 'scope_missing', cause: message };
+  // Раньше «quota» в тексте делало и переполненный Диск лимитом запросов — с повтором.
+  if (/storageQuotaExceeded|storage quota/i.test(message)) {
+    return { code: 'storage_full', cause: message };
+  }
+  if (/rate limit|quota|userRateLimitExceeded/i.test(message)) {
+    return { code: 'quota_exceeded', cause: message };
+  }
+  return { code: 'forbidden', cause: `HTTP 403: ${message}` };
 }
 
 export function fromGoogleError(error: unknown, detail?: string): GcError {

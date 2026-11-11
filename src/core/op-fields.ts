@@ -1,9 +1,13 @@
 /**
  * Общие поля операций на внешней границе — модуль-низ: их читают и табличные схемы
- * (`ops.ts`), и документные (`docs/ops.ts`), а две копии разъехались бы молча (L21).
+ * (`ops.ts`), и документные (`docs/ops.ts`), а две копии разъехались бы молча (L21). Здесь же
+ * разбор поля, пришедшего строкой JSON (`orJsonText`): его делят ядро и схема транспорта.
  */
 
 import { z } from 'zod';
+
+/** Значение ячейки, как его может прислать клиент. */
+export const cellValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 
 export const commonFields = {
   /** alias реестра, ссылка или ID. */
@@ -28,4 +32,39 @@ export const commonFields = {
   planId: z.string().min(1).optional(),
   /** Ревизия, на которой строилась карта: защита от гонки с живой правкой. */
   expectRevision: z.string().min(1).optional(),
+};
+
+/**
+ * Поле формой — или той же формой строкой JSON (D-26, Q19). Клиент со старой схемой `gc_apply`
+ * в кэше шлёт строкой форму, которой та схема не знала: после Reconnect у сессии, выравнивавшей
+ * «Реестр инфраструктуры», `rows: {from, to}` пришёл строкой, и ядро ответило «rows: Expected
+ * object, received string».
+ *
+ * Строка разбирается и судится ТОЙ ЖЕ схемой, что форма: не JSON — отказ с названием, не та
+ * форма — отказ самой схемы, а не новое молчаливое принятие. Разбор — `preprocess`, поэтому в
+ * `tools/list` строка не появляется: модель видит прежние формы, строка — запасной путь клиента.
+ */
+export function orJsonText<T extends z.ZodType>(schema: T) {
+  return z.preprocess((value, ctx) => {
+    if (typeof value !== 'string') return value;
+    try {
+      return JSON.parse(value) as unknown;
+    } catch {
+      ctx.addIssue({ code: 'custom', message: 'строка не разбирается как JSON', continue: false });
+      return z.NEVER;
+    }
+  }, schema);
+}
+
+/**
+ * Шапка и строки нового листа или новой таблицы (D-23): запрос «создай таблицу с шапкой и строкой»
+ * ядро раньше выполнить не могло — в пустой лист шапку не вписать. Поля одни у `createSheet` и
+ * `addSheet` («создай лист, сделай там шапку, занеси данные», 2026-11-11). Значения по умолчанию —
+ * текстом (RAW): дата, которую продиктовал человек, остаётся строкой, а не догадкой. Строки —
+ * массивом или той же формой строкой JSON (Q19): так их шлёт клиент со старой схемой.
+ */
+export const contentFields = {
+  columns: z.array(z.string().min(1)).min(1).optional(),
+  rows: orJsonText(z.array(z.array(cellValue))).optional(),
+  asText: z.boolean().default(true),
 };

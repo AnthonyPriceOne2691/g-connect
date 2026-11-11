@@ -149,6 +149,10 @@ describe('B1 — набор инструментов', () => {
     expect(gcApply.description).toMatch(/ПЛАН|preview/);
     expect(gcApply.description).toContain('dryRun=false');
     expect(gcApply.description.toLowerCase()).toContain('не угадывай');
+    // Весть сессии профиля work 2026-11-11: операция в op.enum есть, но описание о шапке молчало —
+    // модель, которая читает описание, путь «подпиши шапку» не находила.
+    expect(gcApply.description).toMatch(/op=setHeader/);
+    expect(gcApply.description).toMatch(/op=addSheet с columns и rows/);
     expect(gcRead.description).toContain('ПРЕДУПРЕЖДЕНИЯ');
   });
 });
@@ -446,6 +450,8 @@ describe('V10 — битое выражение на границе', () => {
 describe('V11 — вид на границе инструмента', () => {
   it('неизвестное поле вида отклонено ДО обращения к Google, с перечислением допустимых', async () => {
     const { deps, client } = harness();
+    // Незнакомое поле — то, чего вид по-прежнему не умеет: `fontSize` с D-26 (Q12) законен, и
+    // оракул на нём проверял бы уже другое (новая граница краснит старый оракул — урок L10).
     const result = await callMcp(
       gcApply,
       {
@@ -453,14 +459,25 @@ describe('V11 — вид на границе инструмента', () => {
         target: 'log',
         where: { Проект: 'G connect' },
         columns: ['Часы'],
-        format: { fontSize: 14 },
+        format: { strikethrough: true },
       },
       deps,
     );
     expect(result.ok).toBe(false);
     const text = JSON.stringify(result.error);
+    expect(text).toContain('strikethrough');
     // Агент должен узнать, что вообще можно: без списка он будет угадывать.
-    for (const field of ['bold', 'italic', 'underline', 'align', 'background']) {
+    for (const field of [
+      'bold',
+      'italic',
+      'underline',
+      'align',
+      'background',
+      'fontFamily',
+      'fontSize',
+      'numberFormat',
+      'textColor',
+    ]) {
       expect(text, field).toContain(field);
     }
     expect(client.formatWrites).toHaveLength(0);

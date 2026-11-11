@@ -24,10 +24,10 @@ import { applyInput, operationOf } from '../src/mcp/apply-schema.js';
 /** Проверка по опубликованной схеме — так вызов может проверить сам клиент. */
 const transport = z.object(applyInput);
 
-const shapeOf = (op: OperationName): Record<string, z.ZodTypeAny> => {
+const shapeOf = (op: OperationName): Record<string, z.ZodType> => {
   const schema = operationSchema.options.find((o) => o.shape.op.value === op);
   if (schema === undefined) throw new Error(`в ядре нет схемы ${op}`);
-  return schema.shape as Record<string, z.ZodTypeAny>;
+  return schema.shape;
 };
 
 /**
@@ -46,7 +46,10 @@ const SAMPLE: Record<string, unknown> = {
   key: { Проект: 'G connect' },
   values: { Статус: 'готово' },
   format: { bold: true },
+  likeRow: 7,
   includeHeader: true,
+  allRows: true,
+  headerOnly: true,
   find: 'Fluminense',
   replace: 'Fluminense FC',
   matchCase: true,
@@ -78,6 +81,24 @@ const SAMPLE: Record<string, unknown> = {
   right: false,
   startIndex: 5,
   endIndex: 9,
+  localPath: 'video/sales.mp4',
+  startColumn: 'C',
+};
+
+/** `rows` по операции; у остальных — число строк новой таблицы документа. */
+const ROWS_SAMPLE: Partial<Record<OperationName, unknown>> = {
+  createSheet: [['x.com', '2025-06-01']],
+  addSheet: [['x.com', '2025-06-01']],
+  formatCells: { from: 3, to: 4 },
+  setCells: { from: 3, to: 4 },
+};
+
+/**
+ * Способы выбора строк, которых у операции нет (Q39): поля объявлены, чтобы отказ назвал её
+ * способы, а не «незнакомое поле», — образец `false`, то есть «способ не выбран».
+ */
+const FOREIGN_WAYS: Partial<Record<OperationName, readonly string[]>> = {
+  setCells: ['allRows', 'headerOnly'],
 };
 
 /** Поля, чей смысл зависит от вида цели: у документа `where` — селектор абзаца. */
@@ -86,8 +107,12 @@ function sampleFor(op: OperationName): Record<string, unknown> {
   const special: Record<string, unknown> = {
     where: isDoc ? { textStartsWith: 'Составы' } : { Проект: 'G connect' },
     columns: op === 'insertTable' ? 3 : ['Статус'],
-    // У createSheet `rows` — строки новой таблицы, у insertTable — их число (D-23).
-    rows: op === 'createSheet' ? [['x.com', '2025-06-01']] : 2,
+    // У createSheet и addSheet `rows` — строки новой таблицы и листа, у insertTable — их число, у
+    // formatCells и setCells — номера строк листа (Q13, Q39).
+    rows: ROWS_SAMPLE[op] ?? 2,
+    // У uploadFile `replace` — флаг замены файла (Q46), у замен текста — строка замены.
+    replace: op === 'uploadFile' ? true : SAMPLE['replace'],
+    ...Object.fromEntries((FOREIGN_WAYS[op] ?? []).map((field) => [field, false])),
   };
   const sample: Record<string, unknown> = { op };
   for (const field of Object.keys(shapeOf(op))) {
@@ -95,6 +120,33 @@ function sampleFor(op: OperationName): Record<string, unknown> {
     sample[field] = field in special ? special[field] : SAMPLE[field];
   }
   return sample;
+}
+
+/**
+ * Поля, из которых операция берёт РОВНО одно (Q13, Q17, Q39, Q42): строки правки вида выбирает
+ * `where`, `allRows`, `rows` или `headerOnly`, записи значений — `where` или `rows`; вид правки —
+ * `format` или `likeRow`. Образец со всеми сразу ядро законно отклонит, поэтому у такой операции
+ * образцов несколько — в i-м из каждой группы оставлено её i-е поле (по кругу), — а «заполнены все
+ * поля» судит их объединение.
+ */
+const ONE_OF: Partial<Record<OperationName, readonly (readonly string[])[]>> = {
+  formatCells: [
+    ['where', 'allRows', 'rows', 'headerOnly'],
+    ['format', 'likeRow'],
+  ],
+  setCells: [['where', 'rows']],
+};
+
+function samplesFor(op: OperationName): Record<string, unknown>[] {
+  const full = sampleFor(op);
+  const groups = ONE_OF[op];
+  if (groups === undefined) return [full];
+  const count = Math.max(...groups.map((group) => group.length));
+  return Array.from({ length: count }, (_, i) => {
+    const kept = groups.map((group) => group[i % group.length]);
+    const dropped = groups.flat().filter((field) => !kept.includes(field));
+    return Object.fromEntries(Object.entries(full).filter(([field]) => !dropped.includes(field)));
+  });
 }
 
 describe('схема транспорта gc_apply против ядра — по полям (живой прогон 2026-10-02)', () => {
@@ -111,23 +163,28 @@ describe('схема транспорта gc_apply против ядра — п�
   it('образец каждой операции заполняет ВСЕ её поля и сам проходит ядро', () => {
     // Оракул ниже пуст, если образец неполон или ядро его отклоняет: проверяем сам образец.
     for (const op of OPERATION_NAMES) {
-      const sample = sampleFor(op);
-      expect(Object.keys(sample).sort(), op).toEqual(Object.keys(shapeOf(op)).sort());
-      expect(Object.values(sample).includes(undefined), `${op}: поле без образца`).toBe(false);
-      const core = operationSchema.safeParse(sample);
-      expect(core.success, `${op}: ${core.success ? '' : core.error.message}`).toBe(true);
+      const samples = samplesFor(op);
+      const covered = [...new Set(samples.flatMap((sample) => Object.keys(sample)))].sort();
+      expect(covered, op).toEqual(Object.keys(shapeOf(op)).sort());
+      for (const sample of samples) {
+        expect(Object.values(sample).includes(undefined), `${op}: поле без образца`).toBe(false);
+        const core = operationSchema.safeParse(sample);
+        expect(core.success, `${op}: ${core.success ? '' : core.error.message}`).toBe(true);
+        expect(() => parseOperation(sample), op).not.toThrow();
+      }
     }
   });
 
   it('каждая операция ядра проходит транспорт без потерь: ядро получает тот же запрос', () => {
     for (const op of OPERATION_NAMES) {
-      const sample = sampleFor(op);
-      const carried = transport.safeParse(sample);
-      expect(carried.success, `${op}: транспорт отклонил — ${carried.error?.message ?? ''}`).toBe(
-        true,
-      );
-      // Тем же путём, что обработчик: поля транспорта сняты, ядро разбирает строго.
-      expect(operationOf(carried.data!), op).toEqual(parseOperation(sample));
+      for (const sample of samplesFor(op)) {
+        const carried = transport.safeParse(sample);
+        expect(carried.success, `${op}: транспорт отклонил — ${carried.error?.message ?? ''}`).toBe(
+          true,
+        );
+        // Тем же путём, что обработчик: поля транспорта сняты, ядро разбирает строго.
+        expect(operationOf(carried.data!), op).toEqual(parseOperation(sample));
+      }
     }
   });
 
@@ -138,7 +195,7 @@ describe('схема транспорта gc_apply против ядра — п�
       ),
     );
     const silent = [...docFields].filter(
-      (field) => (applyInput as Record<string, z.ZodTypeAny>)[field]?.description === undefined,
+      (field) => (applyInput as Record<string, z.ZodType>)[field]?.description === undefined,
     );
     expect(silent).toEqual([]);
   });

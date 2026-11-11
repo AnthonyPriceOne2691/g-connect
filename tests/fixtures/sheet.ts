@@ -19,8 +19,12 @@ import type {
   InsertDimensionRequest,
   SheetRequest,
   SheetSnapshot,
+  SheetTitle,
   SheetsClient,
   SpreadsheetSnapshot,
+  ValidationRule,
+  ReadOptions,
+  RowWindow,
 } from '../../src/core/sheets/types.js';
 
 const cell = (value: CellValue, formula?: string): Cell =>
@@ -202,11 +206,28 @@ function withFormat(data: SpreadsheetSnapshot, request: FormatRequest): Spreadsh
   const row = rows[request.row - 1];
   if (row === undefined) return data;
   const cell = row[request.column] ?? { value: null };
-  row[request.column] = { ...cell, format: { ...cell.format, ...request.format } };
+  const format = mergedFormat(cell.format, request.format);
+  row[request.column] = {
+    value: cell.value,
+    ...(cell.formula === undefined ? {} : { formula: cell.formula }),
+    ...(format === undefined ? {} : { format }),
+  };
   return {
     ...data,
     sheets: data.sheets.map((s) => (s.sheetId === request.sheetId ? { ...s, rows } : s)),
   };
+}
+
+type Format = FormatRequest['format'];
+
+/**
+ * Вид после правки — как его прочтёт Google: сброс `null` (поле в маске без значения) значит
+ * «поля нет», а не «поле null», и ячейка без единого поля вида читается без вида вовсе. Раньше
+ * фейк хранил `null`, и оракул на сброс видел то, чего Google не вернёт (замечание агента A).
+ */
+function mergedFormat(current: Format | undefined, patch: Format): Format | undefined {
+  const fields = Object.entries({ ...current, ...patch }).filter(([, value]) => value !== null);
+  return fields.length === 0 ? undefined : Object.fromEntries(fields);
 }
 
 /**
@@ -278,23 +299,55 @@ function withMove(data: SpreadsheetSnapshot, request: MoveDimensionRequest): Spr
   };
 }
 
-/** Сортировка диапазона по колонке: строки внутри диапазона, остальные не двигаются. */
+/**
+ * Сортировка диапазона по колонке — как Google: едут только ячейки диапазона, а строки вне его и
+ * ячейки левее и правее его краёв остаются на месте (Q33). Раньше фейк сортировал строки целиком,
+ * и сортировка A–C при данных до D рвала строки только в настоящем Google (урок L23).
+ */
 function withSort(data: SpreadsheetSnapshot, request: SortRangeRequest): SpreadsheetSnapshot {
+  const { row, rowCount, column, columnCount } = request.range;
+  // `column` запроса — индекс колонки листа; в вырезанном блоке он сдвинут на начало диапазона.
+  const key = request.column - column;
   return {
     ...data,
     sheets: data.sheets.map((sheet) => {
       if (sheet.sheetId !== request.sheetId) return sheet;
       const rows = sheet.rows.map((r) => [...r]);
-      const from = request.range.row - 1;
-      const block = rows.splice(from, request.range.rowCount);
+      const block = rows
+        .slice(row - 1, row - 1 + rowCount)
+        .map((r) => Array.from({ length: columnCount }, (_u, i) => r[column + i] ?? cell(null)));
       block.sort((a, b) => {
-        const left = String(a[request.column]?.value ?? '');
-        const right = String(b[request.column]?.value ?? '');
+        const left = String(a[key]?.value ?? '');
+        const right = String(b[key]?.value ?? '');
         return request.descending === true ? right.localeCompare(left) : left.localeCompare(right);
       });
-      rows.splice(from, 0, ...block);
+      block.forEach((cells, offset) => {
+        const target = rows[row - 1 + offset] as Cell[];
+        while (target.length < column) target.push(cell(null));
+        target.splice(column, columnCount, ...cells);
+      });
       return { ...sheet, rows };
     }),
+  };
+}
+
+/**
+ * Ячейка получателя после вставки — как вставляет Google (`pasteType`): `all` — ячейка целиком,
+ * `values` — только значение, без формулы и вида; `format` — только вид, значение и формула
+ * получателя остаются. Раньше фейк копировал ячейку целиком при любом `paste`, и копия вида
+ * строки над дописанной (Q14) тащила бы в новую строку и значения строки выше.
+ */
+function pasted(from: Cell, to: Cell, paste: CopyPasteRequest['paste']): Cell {
+  if (paste === 'all') return { ...from };
+  // Проверка данных — правило листа, а не поле ячейки: её переносит `pastedRules` (Q43).
+  if (paste === 'validation') return to;
+  if (paste === 'values') {
+    return { value: from.value, ...(to.format === undefined ? {} : { format: to.format }) };
+  }
+  return {
+    value: to.value,
+    ...(to.formula === undefined ? {} : { formula: to.formula }),
+    ...(from.format === undefined ? {} : { format: from.format }),
   };
 }
 
@@ -318,9 +371,11 @@ function withPaste(
           while (rows.length <= targetRow) rows.push([]);
           const row = rows[targetRow] as Cell[];
           while (row.length <= destination.column + dc) row.push({ value: null });
-          row[destination.column + dc] = { ...from };
+          const paste = request.kind === 'autoFill' ? 'all' : request.paste;
+          row[destination.column + dc] = pasted(from, row[destination.column + dc]!, paste);
         }
       }
+      const validations = pastedRules(sheet.validations ?? [], request);
       if (request.kind === 'cutPaste') {
         for (let sr = 0; sr < source.rowCount; sr += 1) {
           const row = rows[source.row - 1 + sr];
@@ -330,9 +385,47 @@ function withPaste(
           }
         }
       }
-      return { ...sheet, rows };
+      return { ...sheet, rows, ...(validations.length === 0 ? {} : { validations }) };
     }),
   };
+}
+
+/**
+ * Проверка данных при вставке, как у Google (Q43): `PASTE_DATA_VALIDATION` кладёт в каждую ячейку
+ * получателя правило ячейки-источника; `PASTE_FORMAT` и прочие виды вставки правил не трогают
+ * («Paste the format only, excluding data validation»). Строки — 1-based, колонки — 0-based.
+ */
+function pastedRules(
+  rules: readonly ValidationRule[],
+  request: CopyPasteRequest | CutPasteRequest | AutoFillRequest,
+): readonly ValidationRule[] {
+  if (request.kind !== 'copyPaste' || request.paste !== 'validation') return rules;
+  const { source, destination } = request;
+  const ruleAt = (row: number, column: number) =>
+    rules.find(
+      ({ range }) =>
+        row >= range.startRow &&
+        row <= range.endRow &&
+        column >= range.startColumn &&
+        column <= range.endColumn,
+    );
+  const added: ValidationRule[] = [];
+  for (let dr = 0; dr < destination.rowCount; dr += 1) {
+    for (let dc = 0; dc < destination.columnCount; dc += 1) {
+      const rule = ruleAt(
+        source.row + (dr % Math.max(1, source.rowCount)),
+        source.column + (dc % Math.max(1, source.columnCount)),
+      );
+      if (rule === undefined) continue;
+      const row = destination.row + dr;
+      const column = destination.column + dc;
+      added.push({
+        range: { startRow: row, endRow: row, startColumn: column, endColumn: column },
+        values: rule.values,
+      });
+    }
+  }
+  return [...rules, ...added];
 }
 
 /** Вставка и удаление измерения: строки или колонки, 1-based «перед этим номером». */
@@ -347,10 +440,14 @@ function withDimension(
       if (sheet.sheetId !== request.sheetId) return sheet;
       const rows = sheet.rows.map((r) => [...r]);
       const start = request.at - 1;
+      const rules =
+        sheet.validations === undefined
+          ? {}
+          : { validations: shiftedRules(sheet.validations, request) };
       if (request.dimension === 'rows') {
         if (insert) rows.splice(start, 0, ...Array.from({ length: request.count }, () => []));
         else rows.splice(start, request.count);
-        return { ...sheet, rows };
+        return { ...sheet, rows, ...rules };
       }
       const next = rows.map((row) => {
         const copy = [...row];
@@ -359,27 +456,134 @@ function withDimension(
         else copy.splice(start, request.count);
         return copy;
       });
-      return { ...sheet, rows: next };
+      return { ...sheet, rows: next, ...rules };
     }),
   };
+}
+
+/**
+ * Правила проверки данных едут вместе со строками и колонками, как у Google (Q43): правило за местом
+ * вставки сдвигается, вставка внутри правила его растягивает; удаление сжимает, а правило, удалённое
+ * целиком, уходит. Без этого образец, сдвинутый вставкой, в фейке оставался бы «без списка».
+ * Строки правила — 1-based, колонки — 0-based; `at` запроса — 1-based «перед этим номером».
+ */
+function shiftedRules(
+  rules: readonly ValidationRule[],
+  request: InsertDimensionRequest | DeleteDimensionRequest,
+): ValidationRule[] {
+  const byRows = request.dimension === 'rows';
+  const at = byRows ? request.at : request.at - 1;
+  const last = at + request.count - 1;
+  return rules.flatMap((rule) => {
+    const { range } = rule;
+    const [first, end] = byRows
+      ? [range.startRow, range.endRow]
+      : [range.startColumn, range.endColumn];
+    let span: readonly [number, number];
+    if (request.kind === 'insertDimension') {
+      span =
+        first >= at
+          ? [first + request.count, end + request.count]
+          : [first, end >= at ? end + request.count : end];
+    } else if (end < at) {
+      span = [first, end];
+    } else if (first > last) {
+      span = [first - request.count, end - request.count];
+    } else {
+      const kept = Math.max(0, at - first) + Math.max(0, end - last);
+      if (kept === 0) return [];
+      const from = Math.min(first, at);
+      span = [from, from + kept - 1];
+    }
+    const [a, b] = span;
+    return [
+      {
+        ...rule,
+        range: byRows
+          ? { ...range, startRow: a, endRow: b }
+          : { ...range, startColumn: a, endColumn: b },
+      },
+    ];
+  });
+}
+
+/**
+ * Как Google (D-26): лёгкое чтение — первые `maxRows` строк листа и размер сетки в
+ * `gridRows`; без `maxRows` — лист целиком. Раньше фейк отдавал лист целиком при любом
+ * диапазоне, и потолок чтения в 500 строк не видел ни один тест (урок L23).
+ */
+export function readAsGoogle(
+  data: SpreadsheetSnapshot,
+  options: ReadOptions = {},
+): SpreadsheetSnapshot {
+  const { sheet, maxRows } = options;
+  if (sheet === undefined || maxRows === undefined) return data;
+  return {
+    ...data,
+    rowLimit: maxRows,
+    sheets: data.sheets.map((s) =>
+      s.title === sheet
+        ? { ...s, rows: s.rows.slice(0, maxRows), gridRows: s.gridRows ?? s.rows.length }
+        : s,
+    ),
+  };
+}
+
+/**
+ * Окно строк, как отдаёт Google: подряд с `fromRow`, без хвоста пустых строк. Пустая — та, чьих
+ * ячеек Google не отдаёт: без значения, формулы, вида и заметки. Оформленную пустую строку он
+ * отдаёт (Q31, Q38), а фейк резал хвост по одним значениям — и прятал от окна `values` то, что ядро
+ * обязано было показать по `withFormat` (урок L23).
+ */
+export function windowAsGoogle(
+  data: SpreadsheetSnapshot,
+  sheet: string,
+  fromRow: number,
+  count: number,
+): RowWindow {
+  const found = data.sheets.find((s) => s.title === sheet);
+  const rows = (found?.rows ?? []).slice(fromRow - 1, fromRow - 1 + count);
+  const bare = (cell: Cell): boolean =>
+    (cell.value === null || cell.value === '') &&
+    cell.formula === undefined &&
+    cell.format === undefined &&
+    cell.note === undefined;
+  let last = rows.length;
+  while (last > 0 && (rows[last - 1] ?? []).every(bare)) last -= 1;
+  return { rows: rows.slice(0, last), gridRows: found?.gridRows ?? found?.rows.length ?? 0 };
 }
 
 export class FakeSheetsClient implements SheetsClient {
   readonly writes: RecordedWrite[] = [];
   readonly appends: RecordedWrite[] = [];
   readonly formatWrites: SheetRequest[] = [];
+  /** Сколько ячеек ушло каждым запросом batchUpdateValues (Q10: строка — одним запросом). */
+  readonly batches: number[] = [];
   private data: SpreadsheetSnapshot;
 
   constructor(data: SpreadsheetSnapshot = snapshot()) {
     this.data = data;
   }
 
-  async getSpreadsheet(): Promise<SpreadsheetSnapshot> {
-    return this.data;
+  async getSpreadsheet(_id?: string, options?: ReadOptions): Promise<SpreadsheetSnapshot> {
+    return readAsGoogle(this.data, options);
   }
 
-  async sheetTitles(): Promise<readonly string[]> {
-    return this.data.sheets.map((sheet) => sheet.title);
+  async readRows(_id: string, sheet: string, fromRow: number, count: number): Promise<RowWindow> {
+    return windowAsGoogle(this.data, sheet, fromRow, count);
+  }
+
+  async sheetTitles(): Promise<readonly SheetTitle[]> {
+    return this.data.sheets.map(({ title, sheetId }) => ({ title, sheetId }));
+  }
+
+  async batchUpdateValues(
+    id: string,
+    cells: readonly { readonly range: string; readonly value: CellValue }[],
+  ): Promise<void> {
+    // Один запрос — одна запись в журнале запросов; ячейки — как прежде, по одной.
+    this.batches.push(cells.length);
+    for (const cell of cells) await this.updateValues(id, cell.range, [[cell.value]]);
   }
 
   async updateValues(
@@ -417,45 +621,84 @@ export class FakeSheetsClient implements SheetsClient {
  * идемпотентности: без применения второй upsert «не находит изменений» по ошибке.
  */
 export class MutableSheetsClient implements SheetsClient {
+  /** Что и куда ушло через values-API — с режимом ввода: содержимое нового листа уходит `raw`. */
+  readonly writes: RecordedWrite[] = [];
   private data: SpreadsheetSnapshot;
 
   constructor(data: SpreadsheetSnapshot = snapshot()) {
     this.data = data;
   }
 
-  async getSpreadsheet(): Promise<SpreadsheetSnapshot> {
-    return this.data;
+  async getSpreadsheet(_id?: string, options?: ReadOptions): Promise<SpreadsheetSnapshot> {
+    return readAsGoogle(this.data, options);
   }
 
-  async sheetTitles(): Promise<readonly string[]> {
-    return this.data.sheets.map((sheet) => sheet.title);
+  async readRows(_id: string, sheet: string, fromRow: number, count: number): Promise<RowWindow> {
+    return windowAsGoogle(this.data, sheet, fromRow, count);
+  }
+
+  async sheetTitles(): Promise<readonly SheetTitle[]> {
+    return this.data.sheets.map(({ title, sheetId }) => ({ title, sheetId }));
+  }
+
+  async batchUpdateValues(
+    id: string,
+    cells: readonly { readonly range: string; readonly value: CellValue }[],
+  ): Promise<void> {
+    for (const cell of cells) await this.updateValues(id, cell.range, [[cell.value]]);
   }
 
   async updateValues(
-    _id: string,
+    id: string,
     range: string,
     values: readonly (readonly CellValue[])[],
+    input: 'user' | 'raw' = 'user',
   ): Promise<void> {
-    const parsed = /^(.+)!([A-Z]+)(\d+)$/.exec(range);
+    this.writes.push({ range, values, id, input });
+    // Имя листа — как в A1-нотации Google: голое или в кавычках, апостроф внутри удвоен
+    // (`'Новый лист'!A1`). Матрица ложится целиком с левого верхнего угла, как у values.update:
+    // фейк брал одну ячейку и голое имя, и шапка со строками нового листа пропадали бы молча.
+    const parsed = /^(?:'((?:[^']|'')+)'|(.+))!([A-Z]+)(\d+)$/.exec(range);
     if (parsed === null) throw new Error(`фикстура не умеет диапазон ${range}`);
-    const [, sheetTitle, letter, rowText] = parsed;
+    const [, quoted, bare, letter, rowText] = parsed;
+    const sheetTitle = quoted === undefined ? (bare ?? '') : quoted.replaceAll("''", "'");
+    // Листа нет — Google отвечает 400 «Unable to parse range», а не пишет в никуда.
+    if (!this.data.sheets.some((sheet) => sheet.title === sheetTitle)) {
+      throw new Error(`Unable to parse range: ${range}`);
+    }
+    const columnIndex =
+      [...(letter ?? '')].reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
+    const rowIndex = Number(rowText) - 1;
+    values.forEach((cells, dr) => {
+      cells.forEach((value, dc) =>
+        this.writeCell(sheetTitle, rowIndex + dr, columnIndex + dc, value),
+      );
+    });
+  }
+
+  private writeCell(
+    sheetTitle: string,
+    rowIndex: number,
+    columnIndex: number,
+    incoming: CellValue,
+  ): void {
     // Семантика Google values.update, а не «как удобно тесту»: `null` ПРОПУСКАЕТ ячейку
     // (ничего не меняет), пустая строка ОЧИЩАЕТ (читается потом как пусто). Фейк писал
     // null как очистку — и все оракулы отката были зелёными, пока живой откат сортировки
     // смешивал две строки (LR-2, живой прогон 2026-09-06). Шов один — фейк обязан ему.
-    const incoming = values[0]?.[0] ?? null;
     if (incoming === null) return;
     const written: Cell = { value: incoming === '' ? null : incoming };
-    const columnIndex =
-      [...(letter ?? '')].reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
-    const rowIndex = Number(rowText) - 1;
     const next = this.data.sheets.map((sheet) => {
       if (sheet.title !== sheetTitle) return sheet;
       const rows = sheet.rows.map((r) => [...r]);
       while (rows.length <= rowIndex) rows.push([]);
       const row = rows[rowIndex] as Cell[];
       while (row.length <= columnIndex) row.push({ value: null });
-      row[columnIndex] = written;
+      // Значение — не вид: Google пишет значение и оставляет оформление ячейки как было. Фейк
+      // заменял ячейку целиком, и вид, скопированный в дописанную строку до значений (Q14),
+      // пропадал бы на первой же записи значения.
+      const format = row[columnIndex]?.format;
+      row[columnIndex] = format === undefined ? written : { ...written, format };
       return { ...sheet, rows };
     });
     this.data = { ...this.data, sheets: next };

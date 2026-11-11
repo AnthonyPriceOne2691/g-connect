@@ -4,23 +4,50 @@
  * (решение от 2026-09-01 в decisions.md).
  */
 
+import type { UntrustedData } from '../policy.js';
+
 export type CellValue = string | number | boolean | null;
 
 /**
- * Вид ячейки — только то, что требует паритет с горячими клавишами (§6.1–6.2): Ctrl+B,
- * Ctrl+I, Ctrl+U, Ctrl+Shift+E/L/R и цвет фона.
+ * Вид ячейки — паритет с горячими клавишами (§6.1–6.2): Ctrl+B, Ctrl+I, Ctrl+U,
+ * Ctrl+Shift+E/L/R и цвет фона; с D-26 (Q11, Q12) — гарнитура, кегль и формат числа: без них
+ * дописанные строки «Реестра инфраструктуры» нельзя было ни увидеть, ни выровнять.
  *
  * Поля опциональны и означают «задано явно». Ячейка может ВЫГЛЯДЕТЬ жирной из-за темы или
  * условного форматирования, и тогда здесь будет пусто: ядро судит и откатывает только
  * явный формат ячейки, и это названо в спеке непокрытостью, а не спрятано.
+ *
+ * `null` у гарнитуры, кегля, формата числа, фона и цвета текста — «сбросить к виду листа по
+ * умолчанию». Так откат возвращает ячейку, где поле не было задано: нейтрального значения, как
+ * `bold: false`, у них нет — шрифт листа по умолчанию у каждой книги свой, а белый фон — не «без
+ * заливки» (Q16). Снаружи (`gc_apply`) `null` не принимается: это слово отката, а не правки; фон,
+ * цвет текста и формат числа (Q41) снимаются словом `"none"`, и граница переводит его в `null`.
  */
 export interface CellFormat {
   readonly bold?: boolean;
   readonly italic?: boolean;
   readonly underline?: boolean;
   readonly align?: 'left' | 'center' | 'right';
-  /** Цвет фона как его вводит человек: `#RRGGBB`. */
-  readonly background?: string;
+  /** Цвет фона как его вводит человек: `#RRGGBB`; `null` — без заливки, вид листа (Q16). */
+  readonly background?: string | null;
+  /** Цвет текста `#RRGGBB` (Q18); `null` — цвет текста листа. */
+  readonly textColor?: string | null;
+  /** Гарнитура, как её называет Google: `Carlito`, `Arial`. */
+  readonly fontFamily?: string | null;
+  /** Кегль в пунктах. */
+  readonly fontSize?: number | null;
+  /** Формат числа или даты: тип Google и шаблон — `DATE` и `dd.mm.yyyy`; `null` — формат листа. */
+  readonly numberFormat?: NumberFormat | null;
+}
+
+/** Типы формата числа Google (`NumberFormat.type`), без `NUMBER_FORMAT_TYPE_UNSPECIFIED`. */
+export type NumberFormatType =
+  'TEXT' | 'NUMBER' | 'PERCENT' | 'CURRENCY' | 'DATE' | 'TIME' | 'DATE_TIME' | 'SCIENTIFIC';
+
+export interface NumberFormat {
+  readonly type: NumberFormatType;
+  /** Шаблон Google: `dd.mm.yyyy`, `#,##0.00`. Без шаблона Google берёт вид типа по локали. */
+  readonly pattern?: string;
 }
 
 export interface Cell {
@@ -29,6 +56,17 @@ export interface Cell {
   readonly formula?: string;
   /** Явно заданный вид; отсутствует, когда ничего не задано. */
   readonly format?: CellFormat;
+  /**
+   * Заметка ячейки (Q23) — непустая строка, как её отдал Google; без заметки поля нет. Пишет её
+   * кто угодно, кто правит таблицу, поэтому наружу она уходит данными (`content.is-data`).
+   */
+  readonly note?: string;
+}
+
+/** Заметка с адресом ячейки — для карты: «A1» и текст (Q24). */
+export interface CellNote {
+  readonly cell: string;
+  readonly note: string;
 }
 
 export interface GridRange {
@@ -82,6 +120,8 @@ export interface SheetSnapshot {
   readonly protectedRanges?: readonly GridRange[];
   /** Объединённые ячейки: на них разбор таблицы спотыкается, поэтому о них говорят. */
   readonly merges?: readonly GridRange[];
+  /** Строк в сетке листа (`gridProperties.rowCount`) — верхняя граница, а не число данных. */
+  readonly gridRows?: number;
 }
 
 export interface SpreadsheetSnapshot {
@@ -94,8 +134,18 @@ export interface SpreadsheetSnapshot {
    * читается как «других листов нет» — и на нём же стояла проверка занятого имени листа.
    */
   readonly partial?: boolean;
+  /**
+   * Читались только первые `rowLimit` строк листа (лёгкая карта, D-26). Лист, на котором
+   * столько строк и набралось, может продолжаться — карта обязана сказать это вслух.
+   */
+  readonly rowLimit?: number;
   readonly title: string;
   readonly revisionId?: string;
+  /**
+   * Локаль книги, как её отдаёт Google (`ru_RU`, `en_US`). Нужна колонке без своих дат: первая
+   * дата в неё пишется видом дат листа, а если их нет — видом локали (Q15), а не ISO.
+   */
+  readonly locale?: string;
   readonly sheets: readonly SheetSnapshot[];
 }
 
@@ -108,7 +158,10 @@ export interface ColumnProfile {
   /** 0-based индекс внутри строки. */
   readonly index: number;
   readonly type: ColumnType;
-  /** Как в колонке записаны даты — чтобы писать в том же виде, а не в своём. */
+  /**
+   * Как в колонке записаны даты — чтобы писать в том же виде, а не в своём. У колонки без
+   * своих дат (пустой) — вид дат листа, а без них — вид локали книги (Q15); `null` — вида нет.
+   */
   readonly dateFormat: 'iso' | 'dotted' | null;
   /** Допустимые значения: из dataValidation таблицы либо выведенные по факту. */
   readonly enumValues: readonly string[] | null;
@@ -126,6 +179,28 @@ export interface ColumnProfile {
    */
   readonly headerFormat?: CellFormat;
   readonly format?: CellFormat;
+  /**
+   * Заметка ячейки шапки (Q24) — часто правило заполнения: «Оценка в часах, если в днях —
+   * умножай на 8». Данными с источником, а не голым текстом: заметку пишет кто угодно.
+   */
+  readonly headerNote?: UntrustedData<string>;
+}
+
+/**
+ * Колонка без подписи в шапке, но со значениями в строках данных (D-26, Q30). В `columns` её нет, а
+ * значения видны: «Лист5» прятал так три подпункта в C9–C11. Запись и условие строк берут её только
+ * точным ключом `key` (Q40).
+ */
+export interface UnlabeledColumn {
+  readonly letter: string;
+  /** 0-based индекс внутри строки. */
+  readonly index: number;
+  /** Ключ её ячеек в строках `gc_read mode=values`: `(C)`; занят подписью — `((C))`. */
+  readonly key: string;
+  /** Непустых ячеек в строках данных. */
+  readonly filled: number;
+  /** Строки листа с ними — от первой до последней: «9–11», одна — «9». */
+  readonly rows: string;
 }
 
 export interface SheetMap {
@@ -139,11 +214,18 @@ export interface SheetMap {
   /** Как выбрана строка заголовков — показывается человеку (§9.3). */
   readonly headerRowReason: string;
   readonly headerRowConfident: boolean;
+  /** От A1 до последней строки и колонки со значением или формулой: оформление — не данные (Q31). */
   readonly usedRange: string;
   readonly dataRowCount: number;
   readonly columns: readonly ColumnProfile[];
   readonly sampleRows: readonly Readonly<Record<string, CellValue>>[];
   readonly otherSheets: readonly { readonly title: string; readonly rowCount: number }[];
+  /** Строк в сетке листа — верхняя граница; карта строится по первым строкам (D-26). */
+  readonly sheetRows?: number;
+  /** Заметки строк над шапкой с адресами (Q24), данными; заметок нет — поля нет. */
+  readonly notesAboveHeader?: UntrustedData<readonly CellNote[]>;
+  /** Колонки без подписи со значениями (Q30); таких нет — поля нет (Q32). */
+  readonly unlabeled?: readonly UnlabeledColumn[];
   /** Предупреждения: объединённые ячейки, вторая таблица на листе и т.п. */
   readonly warnings: readonly string[];
 }
@@ -154,7 +236,7 @@ export interface SheetMap {
  */
 export interface SheetData {
   readonly map: SheetMap;
-  /** Все строки данных, ключ — имя колонки. */
+  /** Все строки данных, ключ — имя колонки, у колонки без подписи — её ключ `(C)` (Q40). */
   readonly rows: readonly Readonly<Record<string, CellValue>>[];
   /**
    * Явный вид тех же ячеек, ключ — имя колонки. Отдельным полем, а не внутри `rows`:
@@ -164,13 +246,35 @@ export interface SheetData {
   readonly formats: readonly Readonly<Record<string, CellFormat>>[];
   /** Вид ячеек строки заголовков — для «сделай шапку жирной». */
   readonly headerFormats: Readonly<Record<string, CellFormat>>;
+  /**
+   * Те же строки ячейками по индексу колонки листа — с колонками без подписи и разрывом шапки
+   * (Q33, Q34). `rows` и `formats` знают только колонки карты, а строку Google удаляет и
+   * сортирует целиком: снимок по ним терял C3 «а) доступы» и писал значения D в C.
+   */
+  readonly cells: readonly (readonly Cell[])[];
+  /**
+   * Колонки без подписи со значениями — профилем записи (Q40): имя — ключ `(C)` карты, и под ним же
+   * их ячейки в `rows` и `formats`. Пишутся и ищутся только этим ключом; в карту не уходят.
+   */
+  readonly unlabeled: readonly ColumnProfile[];
 }
 
 export interface ReadOptions {
   /** Читать только этот лист — иначе тянется всё, а это дорого на живых таблицах. */
   readonly sheet?: string;
-  /** Верхняя граница строк: ответ помечается усечённым, а не молча обрезается (§9.5). */
+  /**
+   * Только первые `maxRows` строк — для лёгкой карты (D-26). Без него названный лист читается
+   * ЦЕЛИКОМ: запись, превью, предусловие и откат считаются по всему листу, а частичное
+   * чтение надо попросить явно. Снимок такого чтения несёт `rowLimit`.
+   */
   readonly maxRows?: number;
+}
+
+/** Окно строк листа для `gc_read mode=values` (D-26): строки — подряд, начиная с `fromRow`. */
+export interface RowWindow {
+  readonly rows: readonly (readonly Cell[])[];
+  /** Строк в сетке листа — по нему судится, есть ли строки дальше окна. */
+  readonly gridRows: number;
 }
 
 /**
@@ -246,8 +350,13 @@ export interface DomainRange {
   readonly columnCount: number;
 }
 
-/** Что переносить при вставке: всё, только значения или только вид (§6.2, Ctrl+Shift+V). */
-export type PasteKind = 'all' | 'values' | 'format';
+/**
+ * Что переносить при вставке: всё, только значения, только вид (§6.2, Ctrl+Shift+V) или только
+ * проверку данных — выпадающий список (D-26, Q43). Вид без списка: `PASTE_FORMAT` проверку данных
+ * не переносит («Paste the format only, excluding data validation», документация Google,
+ * 2026-10-21), и новая строка отчёта приезжала со статусом без списка.
+ */
+export type PasteKind = 'all' | 'values' | 'format' | 'validation';
 
 export interface CopyPasteRequest {
   readonly kind: 'copyPaste';
@@ -292,7 +401,8 @@ export interface MoveDimensionRequest {
 /**
  * Сортировка диапазона по одной колонке. Диапазон всегда начинается с колонки A: в
  * документации не сказано, относительно чего считается `dimensionIndex` у `sortSpecs` —
- * листа или диапазона, — а при начале от A оба чтения совпадают.
+ * листа или диапазона, — а при начале от A оба чтения совпадают. Кончается — последней колонкой
+ * строк данных (Q33): Google двигает только ячейки диапазона, остальные остаются на месте.
  */
 export interface SortRangeRequest {
   readonly kind: 'sortRange';
@@ -323,21 +433,39 @@ export type SheetRequest =
   | MoveDimensionRequest
   | SortRangeRequest;
 
+/** Лист книги по метаданным: имя и `sheetId` — тот же номер, что `gid` в ссылке на вкладку. */
+export interface SheetTitle {
+  readonly title: string;
+  readonly sheetId: number;
+}
+
 export interface SheetsClient {
   getSpreadsheet(id: string, options?: ReadOptions): Promise<SpreadsheetSnapshot>;
+  /** Строки листа с `fromRow` (номер строки листа), не больше `count` — окно чтения. */
+  readRows(id: string, sheet: string, fromRow: number, count: number): Promise<RowWindow>;
   /**
-   * Только имена листов книги — без сетки.
+   * Только листы книги — имя и `sheetId`, без сетки.
    *
    * Отдельным методом, потому что проверка занятого имени листа не имеет права опираться
    * на карту: карта строится из усечённого снимка, и её `otherSheets` пуст даже когда
    * листов семь (живой прогон 2026-09-04). А полное чтение книги ради имён стоило бы
-   * десятков тысяч ячеек.
+   * десятков тысяч ячеек. Тем же вызовом лист выбирается по `gid` ссылки (Q27) — до сетки.
    */
-  sheetTitles(id: string): Promise<readonly string[]>;
+  sheetTitles(id: string): Promise<readonly SheetTitle[]>;
   /**
    * Запись значений в A1-диапазон. `input: 'user'` (по умолчанию) — как ввёл бы человек:
    * «2025-06-01» станет датой; `'raw'` — текстом, как есть (D-23, таблица со шапкой).
    */
+  /**
+   * Несколько ячеек — одним запросом (D-26, Q10): запрос либо записан целиком, либо нет, и
+   * повтор после 429 повторяет его весь, а не дописывает хвост. `input` — как у `updateValues`:
+   * подписи шапки (`setHeader`) уходят текстом, `'raw'`.
+   */
+  batchUpdateValues(
+    id: string,
+    cells: readonly { readonly range: string; readonly value: CellValue }[],
+    input?: 'user' | 'raw',
+  ): Promise<void>;
   updateValues(
     id: string,
     range: string,

@@ -8,6 +8,7 @@
 
 import { z } from 'zod';
 
+import { orJsonText } from '../core/op-fields.js';
 import {
   OPERATION_NAMES,
   parseOperation,
@@ -15,7 +16,8 @@ import {
   type Operation,
   type OperationName,
 } from '../core/ops.js';
-import { targetArg } from './target-arg.js';
+import { rowSpanSchema } from '../core/sheets/row-selection.js';
+import { sheetArg, targetArg } from './target-arg.js';
 
 /**
  * Поля операций над документом (уровень 3).
@@ -61,24 +63,32 @@ const docFields = {
   namedStyle: setParagraphStyleOp.shape.namedStyle
     .optional()
     .describe('setParagraphStyle: вид абзаца — обычный текст или заголовок'),
-  // Два смысла у одного имени, как у `columns`: число строк новой таблицы документа и
-  // строки новой таблицы Sheets (D-23). Только число — и строки отклонялись бы транспортом.
-  rows: z
-    .union([
+  // Три смысла у одного имени, как у `columns`: число строк новой таблицы документа, строки
+  // новой таблицы Sheets (D-23) и номера строк правки вида и записи значений (Q13, Q39). Без
+  // любой из форм транспорт отклонял бы её до ядра. Строка JSON разбирается тем же `orJsonText`,
+  // что в ядре (Q19): клиент со старой схемой шлёт форму строкой, а в `tools/list` строки нет —
+  // модель видит три формы.
+  rows: orJsonText(
+    z.union([
       z.number().int().positive(),
       z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))),
-    ])
+      rowSpanSchema,
+    ]),
+  )
     .optional()
     .describe(
-      'insertTable: число строк (1–50); createSheet: строки новой таблицы — массивы значений ' +
-        'в порядке колонок шапки',
+      'insertTable: число строк (1–50); createSheet и addSheet: строки новой таблицы или листа — ' +
+        'массивы значений в порядке колонок шапки; с columns — под шапкой, без них — с A1 вниз; ' +
+        'formatCells: {from, to} — номера строк листа включительно, ' +
+        'внутри строк данных (пачка под конверт); setCells: те же номера вместо where — так ' +
+        'пишется пустая вставленная строка без уникального условия',
     ),
   asText: z
     .boolean()
     .optional()
     .describe(
-      'createSheet: значения шапки и строк текстом (RAW), по умолчанию да — дата остаётся ' +
-        'строкой; false — как набрал бы человек',
+      'createSheet и addSheet: значения шапки и строк текстом (RAW), по умолчанию да — дата ' +
+        'остаётся строкой; false — как набрал бы человек',
     ),
   table: z
     .number()
@@ -143,7 +153,7 @@ export const applyInput = {
   /** Превью файлом: широкую таблицу в терминале не читают (§13.3, ступень 0). */
   report: z.boolean().default(false).describe('Дополнительно записать превью HTML-файлом'),
   target: targetArg,
-  sheet: z.string().min(1).optional(),
+  sheet: sheetArg,
   headerRow: z.number().int().positive().optional(),
   key: z.record(z.string(), z.unknown()).optional().describe('upsertRow: ключ строки'),
   where: z
@@ -152,9 +162,9 @@ export const applyInput = {
     .describe(
       'Таблица: условие отбора строк для setCells, formatCells, findReplace, insertRows, ' +
         'deleteRows и moveRows — ключ строки или значение любой колонки; пустое условие у ' +
-        'удаления и перемещения отклоняется. Документ: селектор абзаца, ровно один ключ из ' +
-        'paragraphIndex (№ из mode=map), textStartsWith, textContains, firstParagraph, ' +
-        'lastParagraph',
+        'formatCells, удаления и перемещения отклоняется. Документ: селектор абзаца, ровно ' +
+        'один ключ из paragraphIndex (№ из mode=map), textStartsWith, textContains, ' +
+        'firstParagraph, lastParagraph',
     ),
   values: z
     .record(z.string(), z.unknown())
@@ -166,19 +176,64 @@ export const applyInput = {
     .union([z.array(z.string().min(1)), z.number().int().positive()])
     .optional()
     .describe(
-      'formatCells/findReplace: имена колонок, чей вид или текст правим; insertTable: ' +
-        'число колонок новой таблицы (1–10); createSheet: шапка новой таблицы',
+      'formatCells/findReplace: имена колонок, чей вид или текст правим (formatCells с likeRow ' +
+        'без них — все колонки); insertTable: число колонок новой таблицы (1–10); createSheet и ' +
+        'addSheet: шапка новой таблицы или листа — строка 1; setHeader: подписи пустых ячеек строки ' +
+        'шапки по порядку от startColumn',
     ),
   format: z
     .record(z.string(), z.unknown())
     .optional()
     .describe(
-      'formatCells: bold, italic, underline, align (left|center|right), background #RRGGBB',
+      'formatCells: bold, italic, underline, align (left|center|right), background #RRGGBB ' +
+        'или "none" (без заливки), textColor #RRGGBB или "none" (цвет листа), ' +
+        'fontFamily (Carlito), fontSize (целое 6–96), numberFormat {type, pattern} — ' +
+        'например {type: DATE, pattern: dd.mm.yyyy} — или "none" (формат листа, «автоматический»)',
+    ),
+  likeRow: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      'formatCells: вид как у строки N вместо format — у каждой колонки вид её ячейки в строке ' +
+        'данных N; поле, которого у образца нет, сбрасывается к виду листа. Рамки, перенос, ' +
+        'вертикальное выравнивание и условное форматирование не копируются. insertRows: ' +
+        'вставленные строки — с видом и проверкой данных (выпадающими списками) строки N, номер — ' +
+        'как в чтении до вставки',
     ),
   includeHeader: z
     .boolean()
     .optional()
-    .describe('formatCells: заодно поправить ячейку заголовка этих колонок'),
+    .describe(
+      'formatCells: заодно поправить ячейку заголовка этих колонок — вместе со строками ' +
+        'данных; только шапку — headerOnly: true',
+    ),
+  allRows: z
+    .boolean()
+    .optional()
+    .describe(
+      'formatCells: все строки данных листа — от строки после шапки до последней строки с ' +
+        'данными; строки выбирает ровно одно из where, allRows, rows, headerOnly. Конверт ' +
+        'судит ячейки плана (до строк × колонок): длинный лист — пачками rows',
+    ),
+  headerOnly: z
+    .boolean()
+    .optional()
+    .describe(
+      'formatCells: только строка шапки — ячейки заголовков названных колонок, без строк ' +
+        'данных (фон или шрифт шапки). Строка над шапкой, например название таблицы, не ' +
+        'адресуется',
+    ),
+  startColumn: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'setHeader: буква колонки первой подписи (по умолчанию A). Подписи — в columns, по порядку ' +
+        'слева направо, только в ПУСТЫЕ ячейки строки шапки: так подписывается шапка пустого листа ' +
+        'и колонка без подписи; занятая ячейка или повтор имени — отказ, ничего не записано',
+    ),
   find: z
     .string()
     .min(1)
@@ -209,8 +264,26 @@ export const applyInput = {
     .string()
     .min(1)
     .optional()
-    .describe('createSheet/createDoc/createFolder: имя создаваемого файла или папки'),
-  title: z.string().min(1).optional().describe('addSheet/renameSheet/duplicateSheet: имя листа'),
+    .describe(
+      'createSheet/createDoc/createFolder: имя создаваемого файла или папки; uploadFile: имя на ' +
+        'Диске (по умолчанию — имя локального файла) — одноимённый файл папки получит свежую версию',
+    ),
+  localPath: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'uploadFile: локальный файл — абсолютный путь или от каталога проекта сессии; только внутри ' +
+        'проекта, без скрытых путей и секретов',
+    ),
+  title: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'addSheet/renameSheet/duplicateSheet: имя листа; addSheet сразу со шапкой и строками — ' +
+        'columns и rows',
+    ),
   toColumn: z
     .string()
     .min(1)
@@ -228,10 +301,15 @@ export const applyInput = {
       'Колонка по ИМЕНИ. Её едят insertColumns, deleteColumns, sortRange, copyRange, ' +
         'cutRange и autoFill',
     ),
+  // Два смысла у одного имени, как у `rows`: строка замены текста и флаг замены файла (Q46).
   replace: z
-    .string()
+    .union([z.string(), z.boolean()])
     .optional()
-    .describe('findReplace, replaceText, replaceAllText: на что заменить'),
+    .describe(
+      'findReplace, replaceText, replaceAllText: на что заменить (строка); uploadFile: true — ' +
+        'target это сам файл, его содержимое заменяется новой ревизией (ID и ссылка те же); файл ' +
+        'другого имени — разрушающая замена, подтверждается фразой «заменяю файл <имя>»',
+    ),
   matchCase: z.boolean().optional().describe('findReplace: учитывать регистр'),
   matchEntireCell: z.boolean().optional().describe('findReplace: совпадение по всей ячейке'),
   searchByRegex: z

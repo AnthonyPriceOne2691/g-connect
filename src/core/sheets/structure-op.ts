@@ -17,6 +17,14 @@ import type { RangeSnapshot, SnapshotCell } from '../journal.js';
 import { contextOf, finishWrite } from './commit.js';
 import { rowsUnderCondition } from './rows.js';
 import {
+  assertContent,
+  contentDigest,
+  contentNotes,
+  fillAddedSheet,
+  filledCells,
+  type SheetContent,
+} from './sheet-content.js';
+import {
   anchorText,
   assertAnchorRow,
   assertColumnStill,
@@ -25,7 +33,9 @@ import {
   columnAnchored,
   assertSnapshotBudget,
   columnSnapshot,
+  likeRowPastes,
   rowChanges,
+  rowWidth,
   snapshotOf,
   subjectOf,
   prepared,
@@ -52,7 +62,7 @@ export async function insertRows(
   data: SheetData,
   where: RowValues,
   count: number,
-  options: RowOptions = {},
+  options: RowOptions & { readonly likeRow?: number } = {},
 ): Promise<ApplyOutcome> {
   const map = data.map;
   assertCount(count);
@@ -72,10 +82,25 @@ export async function insertRows(
     count,
     anchor: `строка, где ${anchorText(where)}`,
   };
-  return finishWrite(client, contextOf(map), [], prepared(), options, 'insertRows', {
+  // Вид и список строки-образца (Q43) — тем же batchUpdate, что вставка: строка без них не остаётся.
+  const { likeRow } = options;
+  const pastes = likeRow === undefined ? [] : likeRowPastes(data, at, count, likeRow);
+  const notes =
+    likeRow === undefined
+      ? []
+      : [
+          `оформление и проверка данных ${count === 1 ? `строки ${at}` : `строк ${at}–${at + count - 1}`}` +
+            ` — как у строки ${likeRow}`,
+        ];
+  const plan = prepared(notes, selected.assumptions);
+  return finishWrite(client, contextOf(map), [], plan, options, 'insertRows', {
     structural,
     cells: count * Math.max(1, map.columns.length),
-    apply: (c) => insertDimension(c, map, 'rows', at, count),
+    apply: (c) =>
+      c.batchUpdate(map.spreadsheetId, [
+        { kind: 'insertDimension', sheetId: map.sheetId, dimension: 'rows', at, count },
+        ...pastes,
+      ]),
     precondition: (c) => assertAnchorRow(c, map, where, options, anchorRow),
   });
 }
@@ -108,20 +133,33 @@ export async function insertColumns(
   });
 }
 
-/** Новый лист (§6.2, `Ctrl+N` внутри книги). Имя в книге уникально — это и проверяем. */
+/**
+ * Новый лист (§6.2, `Ctrl+N` внутри книги). Имя в книге уникально — это и проверяем. Со шапкой и
+ * строками — как новая таблица (D-23): шапка в строке 1, без шапки — строки с A1; число непустых
+ * ячеек уходит в журнал (`count`) — по нему откат узнаёт, что лист после нас не правили.
+ */
 export async function addSheet(
   client: SheetsClient,
   data: SheetData,
   title: string,
-  options: RowOptions = {},
+  options: RowOptions & { readonly content?: SheetContent | undefined } = {},
 ): Promise<ApplyOutcome> {
   const map = data.map;
   assertTitle(title);
+  const cells = assertContent(options.content, 'лист');
+  const content = cells > 0 ? options.content : undefined;
   await assertTitleUnused(client, map, title);
-  const structural: StructuralPlan = { kind: 'addSheet', sheet: title, title };
-  return finishWrite(client, contextOf(map), [], prepared(), options, 'addSheet', {
+  const filled =
+    content === undefined ? {} : { content: contentDigest(content), count: filledCells(content) };
+  const structural: StructuralPlan = { kind: 'addSheet', sheet: title, title, ...filled };
+  const notes = content === undefined ? [] : contentNotes(content);
+  return finishWrite(client, contextOf(map), [], prepared(notes), options, 'addSheet', {
     structural,
-    apply: (c) => c.batchUpdate(map.spreadsheetId, [{ kind: 'addSheet', title }]),
+    cells,
+    apply: async (c) => {
+      await c.batchUpdate(map.spreadsheetId, [{ kind: 'addSheet', title }]);
+      if (content !== undefined) await fillAddedSheet(c, map.spreadsheetId, title, content);
+    },
     precondition: (c) => assertTitleFree(c, map, title),
   });
 }
@@ -211,7 +249,7 @@ async function assertTitleUnused(
   map: SheetMap,
   title: string,
 ): Promise<void> {
-  const titles = await client.sheetTitles(map.spreadsheetId);
+  const titles = (await client.sheetTitles(map.spreadsheetId)).map((s) => s.title);
   if (!titles.includes(title)) return;
   const free = `${title} 2`;
   throw gcError('bad_request', {
@@ -263,7 +301,8 @@ export async function deleteRows(
   const count = rows.length;
   const subject = subjectOf(where);
   const changes = rowChanges(data, rows);
-  assertSnapshotBudget(changes.length);
+  // Бюджет судит снимок, а он — по всей ширине строки (Q34), не по колонкам карты из плана.
+  assertSnapshotBudget(count * rowWidth(data));
   const structural: StructuralPlan = {
     kind: 'deleteRows',
     sheet: map.sheet,
@@ -273,7 +312,8 @@ export async function deleteRows(
     confirmPhrase: `удаляю ${count === 1 ? 'строку' : `строки (${count})`} ${subject}`,
     confirmToken: subject,
   };
-  return finishWrite(client, contextOf(map), changes, prepared(), options, 'deleteRows', {
+  const plan = prepared([], selected.assumptions);
+  return finishWrite(client, contextOf(map), changes, plan, options, 'deleteRows', {
     structural,
     snapshots: [snapshotOf(map, data, rows)],
     apply: (c) => deleteDimension(c, map, 'rows', at, count),

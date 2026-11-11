@@ -6,6 +6,7 @@
  * потребителя. Общий тип уходит вниз, а не разворачивает слой импортом обратно (§2.3).
  */
 
+import type { DriveClient } from './google/drive.js';
 import type { JournalSink } from './journal.js';
 import type { CellFormat } from './sheets/types.js';
 
@@ -42,6 +43,11 @@ export interface UndoOptions {
    * Колбэком, потому что ядро отката не должно знать про клиента Drive.
    */
   readonly trash?: (fileId: string) => Promise<void>;
+  /**
+   * Drive для отката загрузки (Q45–Q48): сведения о файле, корзина и возврат прежней ревизии.
+   * Лениво, как `trash`: откату таблицы клиент Drive не нужен, а ядро не знает, откуда он берётся.
+   */
+  readonly drive?: () => Promise<Pick<DriveClient, 'fileInfo' | 'trash' | 'restoreRevision'>>;
   /**
    * Проект вызывающей сессии (D-23): откат видит только записи этого проекта, запись
    * чужого по id — отказ `undo.own-project`. Нет поля — вызов из терминала, видно всё.

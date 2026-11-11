@@ -10,7 +10,13 @@
 
 import type { sheets_v4 } from 'googleapis';
 
-import type { DomainRange, FormatRequest, PasteKind, SheetRequest } from '../sheets/types.js';
+import type {
+  CellFormat,
+  DomainRange,
+  FormatRequest,
+  PasteKind,
+  SheetRequest,
+} from '../sheets/types.js';
 
 /**
  * Доменный запрос → запрос библиотеки. Единственное место такого перевода (§2, гейт
@@ -137,6 +143,7 @@ const PASTE_TYPES: Record<PasteKind, string> = {
   all: 'PASTE_NORMAL',
   values: 'PASTE_VALUES',
   format: 'PASTE_FORMAT',
+  validation: 'PASTE_DATA_VALIDATION',
 };
 
 /** Доменный прямоугольник → `GridRange`: 1-based строка и полуинтервал Google. */
@@ -168,17 +175,49 @@ function toDimensionRange(request: {
   };
 }
 
-/** Доменная правка вида → запрос библиотеки. */
+/**
+ * Поле вида → пути в маске Google. Таблицей, как `MAPPERS`: это соответствие, а не логика, и
+ * пропущенное поле TypeScript не пустит — без пути в маске правка ушла бы в никуда.
+ *
+ * У фона и цвета текста путей ДВА (Q16, Q18): Google хранит цвет в устаревшем поле
+ * (`backgroundColor`, `foregroundColor`) и в стиле (`…ColorStyle`), и стиль, если задан, главнее —
+ * документация Sheets API, `CellFormat` и `TextFormat`. Маска с одним устаревшим полем не
+ * перекрыла бы заливку, поставленную шаблоном через стиль, а сброс её не снял бы.
+ */
+const FORMAT_MASKS: Readonly<Record<keyof CellFormat, readonly string[]>> = {
+  bold: ['userEnteredFormat.textFormat.bold'],
+  italic: ['userEnteredFormat.textFormat.italic'],
+  underline: ['userEnteredFormat.textFormat.underline'],
+  fontFamily: ['userEnteredFormat.textFormat.fontFamily'],
+  fontSize: ['userEnteredFormat.textFormat.fontSize'],
+  textColor: [
+    'userEnteredFormat.textFormat.foregroundColor',
+    'userEnteredFormat.textFormat.foregroundColorStyle',
+  ],
+  align: ['userEnteredFormat.horizontalAlignment'],
+  background: ['userEnteredFormat.backgroundColor', 'userEnteredFormat.backgroundColorStyle'],
+  numberFormat: ['userEnteredFormat.numberFormat'],
+};
+
+/**
+ * Поля `textFormat` — у Google они вложены, у домена лежат рядом с остальными. Цвета текста здесь
+ * нет: он уходит парой полей (`foreground`), а не одним.
+ */
+const TEXT_KEYS = ['bold', 'italic', 'underline', 'fontFamily', 'fontSize'] as const;
+
+/**
+ * Доменная правка вида → запрос библиотеки.
+ *
+ * Маска — из ЗАДАННЫХ полей, и `null` (сброс, слово отката, D-26) в ней тоже есть, а в теле
+ * его нет: поле в маске без значения Google сбрасывает к виду листа. Иначе откат шрифта, которого
+ * до правки не было, нечем было бы записать — нейтрального шрифта, как `bold: false`, нет. Сброс
+ * фона и цвета текста (`"none"`, Q16, Q18) — оба их пути в маске и ни одного поля в теле.
+ */
 function toRepeatCell(request: FormatRequest): sheets_v4.Schema$Request {
   const { format } = request;
-  const textFields = (['bold', 'italic', 'underline'] as const).filter(
+  const keys = (Object.keys(FORMAT_MASKS) as (keyof CellFormat)[]).filter(
     (key) => format[key] !== undefined,
   );
-  const fields = [
-    ...textFields.map((key) => `userEnteredFormat.textFormat.${key}`),
-    ...(format.align === undefined ? [] : ['userEnteredFormat.horizontalAlignment']),
-    ...(format.background === undefined ? [] : ['userEnteredFormat.backgroundColor']),
-  ];
   return {
     repeatCell: {
       range: {
@@ -188,25 +227,48 @@ function toRepeatCell(request: FormatRequest): sheets_v4.Schema$Request {
         startColumnIndex: request.column,
         endColumnIndex: request.column + 1,
       },
-      cell: {
-        userEnteredFormat: {
-          ...(textFields.length === 0
-            ? {}
-            : {
-                textFormat: Object.fromEntries(textFields.map((key) => [key, format[key]])),
-              }),
-          ...(format.align === undefined
-            ? {}
-            : { horizontalAlignment: format.align.toUpperCase() }),
-          ...(format.background === undefined
-            ? {}
-            : { backgroundColor: fromHex(format.background) }),
-        },
-      },
-      fields: fields.join(','),
+      cell: { userEnteredFormat: toUserEnteredFormat(format) },
+      fields: keys.flatMap((key) => FORMAT_MASKS[key]).join(','),
     },
   };
 }
+
+/** Тело правки вида: только поля со значением — `undefined` и `null` в тело не идут. */
+function toUserEnteredFormat(format: CellFormat): sheets_v4.Schema$CellFormat {
+  const textFormat = {
+    ...Object.fromEntries(
+      TEXT_KEYS.flatMap((key) => {
+        const value = format[key];
+        return value === undefined || value === null ? [] : [[key, value] as const];
+      }),
+    ),
+    ...foreground(format.textColor),
+  };
+  const { numberFormat } = format;
+  return {
+    ...(Object.keys(textFormat).length === 0 ? {} : { textFormat }),
+    ...(format.align === undefined ? {} : { horizontalAlignment: format.align.toUpperCase() }),
+    ...background(format.background),
+    ...(numberFormat === undefined || numberFormat === null
+      ? {}
+      : { numberFormat: { ...numberFormat } }),
+  };
+}
+
+/**
+ * Цвет — в ОБА поля Google, устаревшее и стиль `rgbColor` (Q16, Q18, см. `FORMAT_MASKS`): стиль
+ * главнее, а устаревшее рядом — чтобы и его читатель не видел прежний цвет. Сброс `null` в тело
+ * не идёт: он живёт в маске.
+ */
+const background = (hex: string | null | undefined): sheets_v4.Schema$CellFormat =>
+  typeof hex === 'string'
+    ? { backgroundColor: fromHex(hex), backgroundColorStyle: { rgbColor: fromHex(hex) } }
+    : {};
+
+const foreground = (hex: string | null | undefined): sheets_v4.Schema$TextFormat =>
+  typeof hex === 'string'
+    ? { foregroundColor: fromHex(hex), foregroundColorStyle: { rgbColor: fromHex(hex) } }
+    : {};
 
 /** `#ff8000` → доли, как их ждёт Google. Обратная сторона `toHex`. */
 function fromHex(hex: string): sheets_v4.Schema$Color {

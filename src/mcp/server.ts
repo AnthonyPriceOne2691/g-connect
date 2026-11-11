@@ -37,6 +37,7 @@ import { loadRegistry } from '../core/targets.js';
 import { findAgeTools } from '../core/token/age.js';
 import { profileSealer, profileUnsealer } from '../core/token/sealing.js';
 import { tokenForClients, tokenVault } from '../core/token/vault.js';
+import { vetLocalFile } from '../core/upload/local-file.js';
 import { unknownToolResult } from './boundary.js';
 import {
   TOOLS,
@@ -106,7 +107,7 @@ function deps(call?: CallContext): ToolDeps {
     google: VAULT,
     sheets: async () => new GoogleSheetsClient({ accessToken: await token(), onRetry }),
     docs: async () => new GoogleDocsClient({ accessToken: await token(), onRetry }),
-    drive: async () => new GoogleDriveClient(await token(), onRetry),
+    drive: async () => new GoogleDriveClient({ accessToken: await token(), onRetry }),
     registry: () => loadRegistry(ACCOUNT),
     journal: fileJournal,
     journalSource: fileJournalSource,
@@ -115,6 +116,7 @@ function deps(call?: CallContext): ToolDeps {
       const snapshot = await client.getSpreadsheet(targetId);
       return snapshot.revisionId ?? null;
     },
+    vetLocalFile,
   };
 }
 
@@ -130,12 +132,15 @@ const POLICY = {
 /**
  * Инструмент в `tools/list` — та же функция SDK и те же параметры, что у `McpServer`:
  * модель видит прежнюю схему. Это сверяет тест-двойник (`tests/mcp-protocol.test.ts`).
+ *
+ * Объект — строгий: zod 4 в схеме входа пишет `additionalProperties: false` только строгому
+ * объекту, а незнакомое поле граница отклоняет (`boundary.ts`) — схема говорит это, как при zod 3.
  */
 const listing = (definition: ToolDefinition): Tool => ({
   name: definition.name,
   title: definition.title,
   description: definition.description,
-  inputSchema: toJsonSchemaCompat(z.object(definition.input), {
+  inputSchema: toJsonSchemaCompat(z.strictObject(definition.input), {
     strictUnions: true,
     pipeStrategy: 'input',
   }) as Tool['inputSchema'],

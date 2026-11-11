@@ -11,13 +11,16 @@ import { gcError } from '../errors.js';
 import type { RangeSnapshot, SnapshotCell } from '../journal.js';
 import { denyByRule, limitOf } from '../policy.js';
 import { needsClarification, resolveColumn } from '../resolver.js';
+import { dataWidth, unlabeledCells } from './bounds.js';
 import type { Prepared } from './commit.js';
+import { sampleBounds } from './format-source.js';
 import { columnQuestion, clarify, rowsUnderCondition } from './rows.js';
 import { buildSheetData } from './map.js';
 import {
   columnLetter,
   type CellValue,
   type ColumnProfile,
+  type CopyPasteRequest,
   type SheetData,
   type SheetMap,
   type SheetsClient,
@@ -80,43 +83,84 @@ export function assertSnapshotBudget(cells: number, options: { estimate?: boolea
   );
 }
 
-/** Ячейки удаляемых строк в план: человек должен видеть, ЧТО именно исчезнет. */
+/**
+ * Ячейки удаляемых строк в план: человек должен видеть, ЧТО именно исчезнет. Строка уходит целиком
+ * (Q34), и план называет и колонки без подписи (Q37) — ключом `(C)`, как в `values` и `unlabeled`,
+ * по месту в строке: раньше он перечислял одни подписи и молчал о «а) доступы» в C3. Пустые ячейки
+ * без подписи в план не идут: подписанная колонка есть у каждой строки, пустая без подписи — шум.
+ */
 export function rowChanges(data: SheetData, rows: readonly number[]): PlannedChange[] {
   const map = data.map;
-  const out: PlannedChange[] = [];
-  for (const rowNumber of rows) {
+  return rows.flatMap((rowNumber) => {
     const index = rowNumber - map.headerRow - 1;
     const values = data.rows[index] ?? {};
-    for (const column of map.columns) {
-      out.push({
-        kind: 'set',
-        a1: `${map.sheet}!${column.letter}${rowNumber}`,
-        column: column.name,
-        before: values[column.name] ?? null,
-        after: null,
-      });
-    }
-  }
-  return out;
+    const unlabeled = unlabeledCells(map.unlabeled, data.cells[index] ?? []);
+    const cells = [
+      ...map.columns.map((column) => ({ column, key: column.name, before: values[column.name] })),
+      ...unlabeled.map(({ column, value }) => ({ column, key: column.key, before: value })),
+    ].sort((left, right) => left.column.index - right.column.index);
+    return cells.map(({ column, key, before }): PlannedChange => ({
+      kind: 'set',
+      a1: `${map.sheet}!${column.letter}${rowNumber}`,
+      column: key,
+      before: before ?? null,
+      after: null,
+    }));
+  });
 }
 
-/** Снимок удаляемых строк: значения И вид, иначе откат вернёт неоформленную строку. */
+/**
+ * Вставленные строки «как строка N» (D-26, Q43): вид и проверка данных строки-образца — двумя
+ * `copyPaste` следом за вставкой, тем же `batchUpdate`. Новые дни отчёта приезжали со статусом без
+ * выпадающего списка: Google наследует вид соседней строки, а у строки дня списка нет. Образец — строка
+ * данных, номер — как в чтении до вставки: ниже места вставки он сдвигается на `count`. Ширина — вся
+ * строка данных (`rowWidth`), от A. Откат — прежний: удаление вставленных строк уносит и вид, и список.
+ */
+export function likeRowPastes(
+  data: SheetData,
+  at: number,
+  count: number,
+  likeRow: number,
+): CopyPasteRequest[] {
+  sampleBounds(data, likeRow);
+  const source = likeRow >= at ? likeRow + count : likeRow;
+  const columnCount = rowWidth(data);
+  const line = (row: number, rowCount: number) => ({ row, column: 0, rowCount, columnCount });
+  return (['format', 'validation'] as const).map((paste) => ({
+    kind: 'copyPaste',
+    sheetId: data.map.sheetId,
+    source: line(source, 1),
+    destination: line(at, count),
+    paste,
+  }));
+}
+
+/**
+ * Ширина строки данных (Q33, Q34): от A до последней колонки — подписанной или со значением в
+ * строках данных. Не число колонок карты: при шапке A, B, —, D их три, и сортировка брала A–C, а
+ * колонка без подписи правее последней подписи не попадала ни в сортировку, ни в снимок.
+ */
+export function rowWidth(data: SheetData): number {
+  const labeled = data.map.columns.map((column) => column.index + 1);
+  return Math.max(1, dataWidth(data.cells), ...labeled);
+}
+
+/**
+ * Снимок строк: значения И вид, иначе откат вернёт неоформленную строку. По всей ширине строки
+ * и по индексу колонки листа (Q33, Q34): строка уходит целиком, и снимок по колонкам карты терял
+ * колонки без подписи, а при разрыве шапки откат писал значения D в C.
+ */
 export function snapshotOf(map: SheetMap, data: SheetData, rows: readonly number[]): RangeSnapshot {
-  const last = columnLetter(map.columns.length - 1);
+  const width = rowWidth(data);
   const cells = rows.map((rowNumber) => {
-    const index = rowNumber - map.headerRow - 1;
-    const values = data.rows[index] ?? {};
-    const formats = data.formats[index] ?? {};
-    return map.columns.map((column): SnapshotCell => {
-      const format = formats[column.name];
-      return {
-        value: values[column.name] ?? null,
-        ...(format === undefined ? {} : { format }),
-      };
+    const row = data.cells[rowNumber - map.headerRow - 1] ?? [];
+    return Array.from({ length: width }, (_unused, index): SnapshotCell => {
+      const format = row[index]?.format;
+      return { value: row[index]?.value ?? null, ...(format === undefined ? {} : { format }) };
     });
   });
   return {
-    a1Range: `${map.sheet}!A${rows[0] ?? 1}:${last}${rows[rows.length - 1] ?? 1}`,
+    a1Range: `${map.sheet}!A${rows[0] ?? 1}:${columnLetter(width - 1)}${rows[rows.length - 1] ?? 1}`,
     rows: cells,
   };
 }
@@ -229,11 +273,14 @@ export async function freshData(client: SheetsClient, map: SheetMap): Promise<Sh
  * Заготовка плана: пустая или с оговорками. `notes` уезжают человеку в ответ, а не в
  * комментарий кода — поэтому заготовка одна на все структурные операции: гейт копипаста
  * отклонил вторую копию, и он прав, иначе половина операций молчала бы там, где другая
- * половина предупреждает.
+ * половина предупреждает. `assumptions` — как понято условие строк-якоря (Q40).
  */
-export const prepared = (notes: readonly string[] = []): Prepared => ({
+export const prepared = (
+  notes: readonly string[] = [],
+  assumptions: readonly string[] = [],
+): Prepared => ({
   resolved: [],
-  assumptions: [],
+  assumptions: [...assumptions],
   notes: [...notes],
   questions: [],
   touches: [],

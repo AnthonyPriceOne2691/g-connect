@@ -49,6 +49,8 @@ describe('K10 — что вообще нельзя положить в конв�
       'appendRow',
       'upsertRow',
       'setCells',
+      // Подпись пустых ячеек шапки: занятую не перезаписывает, откат возвращает пустоту.
+      'setHeader',
       'formatCells',
       'findReplace',
       'insertRows',

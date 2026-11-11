@@ -16,13 +16,16 @@ import { gcError, isGcError } from '../core/errors.js';
 import type { SearchQuery } from '../core/google/drive.js';
 import { runOperation } from './run-operation.js';
 import { runCreate } from './run-create.js';
+import { runUpload } from './run-upload.js';
 import { assertTargetKind, isDocOperation, runDocApply, runDocUndo } from './run-doc-operation.js';
-import { asData, limitOf, policyText, policyRules } from '../core/policy.js';
+import { limitOf, policyText, policyRules } from '../core/policy.js';
 import { DEFAULT_ACCOUNT } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
+import { chooseSheet, type SheetAsk } from '../core/sheets/sheet-choice.js';
 import { readDoc } from './read-doc.js';
+import { readValues } from './read-values.js';
 import type { ApplyOutcome } from '../core/sheets/rows.js';
-import { resolveTarget, type RegistryEntry } from '../core/targets.js';
+import { resolveTarget, type ResolvedTarget } from '../core/targets.js';
 import { undoLast } from '../core/undo.js';
 
 export type { ToolDeps, ToolDefinition, ToolResult } from './deps.js';
@@ -40,7 +43,7 @@ import { parseToolInput } from './boundary.js';
 import { gcGrant } from './grant-tool.js';
 import { gcTargets, profileIntro } from './targets-tool.js';
 import { gcUnlock } from './unlock-tool.js';
-import { targetArg } from './target-arg.js';
+import { sheetArg, targetArg } from './target-arg.js';
 
 // `gc_targets` живёт в своём модуле (D-25); прежний адрес импорта — здесь.
 export { gcTargets };
@@ -51,40 +54,29 @@ async function resolve(deps: ToolDeps, target: string) {
 }
 
 /**
- * Лист и строка шапки по умолчанию — из реестра, если вызов их не задал. Без этого
- * `gc_targets` обещал агенту «лист по умолчанию: Проекты», а операция уходила на ПЕРВЫЙ
- * лист книги (у владельца это «Инструкция»): нашла живая проба через протокол 2026-09-02.
- * Порядок старшинства: явный аргумент вызова → реестр → эвристика ядра.
+ * Лист — по старшинству `chooseSheet` (Q27): явный `sheet` → gid ссылки → реестр → первый лист.
+ * Выбор идёт до чтения сетки: расхождение `sheet` с вкладкой ссылки не стоит чтения листа.
  */
-const sheetDefaults = (
-  entry: RegistryEntry | null,
-  sheet: string | undefined,
-  headerRow: number | undefined,
-): { sheet?: string; headerRow?: number } => {
-  const wantedSheet = sheet ?? entry?.sheet;
-  const wantedHeaderRow = headerRow ?? entry?.headerRow;
-  return {
-    ...(wantedSheet === undefined ? {} : { sheet: wantedSheet }),
-    ...(wantedHeaderRow === undefined ? {} : { headerRow: wantedHeaderRow }),
-  };
-};
-
-const readSheet = async (deps: ToolDeps, target: string, sheet?: string, headerRow?: number) => {
-  const resolved = await resolve(deps, target);
-  const wanted = sheetDefaults(resolved.entry, sheet, headerRow);
+const readSheet = async (deps: ToolDeps, resolved: ResolvedTarget, ask: SheetAsk) => {
   const client = await deps.sheets();
+  const wanted = await chooseSheet(client, resolved, ask);
+  // Карта — лёгкая: первые MAP_ROWS строк листа, и карта сама говорит, что лист может
+  // продолжаться (D-26). Строки целиком читает окно `values`, запись — весь лист.
   const snapshot = await client.getSpreadsheet(
     resolved.id,
-    wanted.sheet === undefined ? {} : { sheet: wanted.sheet },
+    wanted.sheet === undefined ? {} : { sheet: wanted.sheet, maxRows: MAP_ROWS },
   );
   const data = buildSheetData(snapshot, wanted);
-  return { resolved, client, data };
+  return { client, data };
 };
+
+/** Сколько строк читает карта листа: ей нужны шапка, типы колонок и образцы, не весь лист. */
+const MAP_ROWS = 500;
 
 const readInput = {
   target: targetArg,
   mode: z.enum(['map', 'values', 'text']).default('map'),
-  sheet: z.string().min(1).optional().describe('Таблица: имя листа; без него берётся первый'),
+  sheet: sheetArg,
   headerRow: z
     .number()
     .int()
@@ -97,7 +89,23 @@ const readInput = {
     .positive()
     .max(5000)
     .optional()
-    .describe('Сколько строк или абзацев вернуть'),
+    .describe(
+      'Сколько строк или абзацев вернуть; строк таблицы — до 5000, по умолчанию все до предела',
+    ),
+  fromRow: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Таблица, mode=values: с какой строки листа читать (номер строки, как в Google)'),
+  withFormat: z
+    .boolean()
+    .default(false)
+    .describe('Таблица, mode=values: вид ячеек по строкам (formats), чтобы найти отличающиеся'),
+  withNotes: z
+    .boolean()
+    .default(false)
+    .describe('Таблица, mode=values: заметки ячеек по строкам (notes) — пояснения и правила'),
   tab: z.string().min(1).optional().describe('Документ: таб по заголовку; без него — единственный'),
   fromParagraph: z
     .number()
@@ -112,9 +120,12 @@ export const gcRead: ToolDefinition = {
   title: 'Прочитать документ или таблицу',
   description:
     'Начинай отсюда. mode=map даёт дешёвую карту и ПРЕДУПРЕЖДЕНИЯ: у таблицы — листы, ' +
-    'границы данных, имена колонок с типами и допустимыми значениями; у документа — табы, ' +
-    'оглавление с № абзацев и таблицы. mode=values читает строки таблицы, mode=text — ' +
-    'абзацы документа.',
+    'границы данных, имена колонок с типами и допустимыми значениями, заметки шапки (часто ' +
+    'это правила заполнения — прочти до записи); у документа — табы, оглавление с № абзацев и ' +
+    'таблицы. mode=values читает строки таблицы окном: до 5000 за вызов, fromRow — с какой ' +
+    'строки, toRow — по какую строку листа отдан ответ; truncated: true — строки дальше есть, ' +
+    'продолжай с nextFromRow; withFormat: true — вид ячеек по строкам, чтобы найти ' +
+    'отличающиеся; withNotes: true — заметки ячеек по строкам. mode=text — абзацы документа.',
   input: readInput,
   async handle(args, deps) {
     // Обработчик разбирает вход САМ: схема транспорта не единственная граница —
@@ -127,25 +138,9 @@ export const gcRead: ToolDefinition = {
         detail: 'mode=text читает абзацы документа. У таблицы строки читает mode=values.',
       });
     }
-    const { data } = await readSheet(deps, input.target, input.sheet, input.headerRow);
+    const { client, data } = await readSheet(deps, resolved, input);
 
-    if (input.mode === 'values') {
-      const limit = Math.min(input.limit ?? 100, limitOf('read.max-rows', 500));
-      // Границу данных знает карта, и с 2026-09-03 `data.rows` уже без пустого хвоста:
-      // резать по `dataRowCount` здесь было бы той же ловушкой, что в карте — счётчик
-      // считает непустые строки где угодно, и таблица «блок, пропуск, блок» потеряла бы
-      // хвостовой блок. Ограничиваем только лимитом.
-      const withData = data.rows;
-      return {
-        sheet: data.map.sheet,
-        headerRow: data.map.headerRow,
-        columns: data.map.columns.map((c) => c.name),
-        // Содержимое — ДАННЫЕ с пометкой источника (правило content.is-data).
-        rows: asData(`таблица ${resolved.id}, лист «${data.map.sheet}»`, withData.slice(0, limit)),
-        truncated: withData.length > limit,
-        warnings: data.map.warnings,
-      };
-    }
+    if (input.mode === 'values') return readValues(client, resolved.id, data, input);
     return data.map;
   },
 };
@@ -250,36 +245,43 @@ export const gcScan: ToolDefinition = {
 
 export const gcApply: ToolDefinition = {
   name: 'gc_apply',
-  title: 'Записать в таблицу (по умолчанию — превью)',
+  title: 'Записать: таблица, документ, файл на Диске (по умолчанию — превью)',
   description:
     'Адресация по именам колонок и ключу строки, а не по A1. По умолчанию возвращает ПЛАН ' +
-    '(status=preview) и ничего не пишет — покажи план человеку. Запись только с ' +
-    'dryRun=false. Неизвестная колонка или значение вне списка допустимых дают ' +
-    'status=needs_clarification с вариантами: спроси, не угадывай.',
+    '(status=preview) и ничего не пишет — покажи план человеку. Запись только с dryRun=false. ' +
+    'Неизвестная колонка или значение вне списка допустимых дают status=needs_clarification с ' +
+    'вариантами: спроси, не угадывай. Шапки нет или она не дописана — op=setHeader: колонки, ' +
+    'которые назвал человек, только в пустые ячейки строки шапки; новый лист сразу со шапкой ' +
+    'и строками — op=addSheet с columns и rows. Файл с компьютера — op=uploadFile: target — ' +
+    'папка Диска, localPath — путь от каталога проекта; одноимённый файл папки получает ' +
+    'свежую версию с той же ссылкой.',
   input: applyInput,
   // Вход судит ядро (`operationOf`): неизвестная операция, поля НАЗВАННОЙ операции, типы.
   // Общая схема `applyInput` — для `tools/list`, чтобы модель видела поля, а не для суда.
   parseInput: (args) => args,
   async handle(args, deps) {
     const operation = operationOf(args);
-
-    // Право проверяется ДО любого обращения к Google. Порядок не косметика: при
-    // обратном порядке запрос на запись в чужой файл сначала лез в сеть, и человек
-    // получал «файл не найден» вместо «нет права записи» — нашла живая проба через
-    // протокол, юнит-тесты вызывали обработчик и этого не видели.
     const resolved = await resolve(deps, operation.target);
-    const right = operation.dryRun === false ? await writeRight(deps, resolved) : undefined;
 
     // Создание файла идёт до всякого чтения таблицы: у него нет ни листа, ни карты, а
     // цель — папка. Ветка ранняя намеренно — иначе `getSpreadsheet` на папке отказал бы
-    // «файл не найден» вместо понятного ответа.
+    // «файл не найден» вместо понятного ответа. Право она спрашивает сама, после вида цели
+    // по реестру и ссылке: отказ «не папка» не должен стоить касания (D-26, Q21).
     if (
       operation.op === 'createSheet' ||
       operation.op === 'createDoc' ||
       operation.op === 'createFolder'
     ) {
-      return runCreate(operation, resolved, deps, right);
+      return runCreate(operation, resolved, deps);
     }
+    // Загрузка файла — так же рано и по той же причине: цель — папка или сам файл (Q45–Q48).
+    if (operation.op === 'uploadFile') return runUpload(operation, resolved, deps);
+
+    // Право проверяется ДО любого обращения к Google. Порядок не косметика: при
+    // обратном порядке запрос на запись в чужой файл сначала лез в сеть, и человек
+    // получал «файл не найден» вместо «нет права записи» — нашла живая проба через
+    // протокол, юнит-тесты вызывали обработчик и этого не видели.
+    const right = operation.dryRun === false ? await writeRight(deps, resolved) : undefined;
 
     // Вид цели решает путь ДО чтения (P22): doc-операции идут в Docs API, и табличная
     // операция по документу отклоняется здесь, а не «файл не найден» из чужого API.
@@ -289,7 +291,9 @@ export const gcApply: ToolDefinition = {
     }
 
     const client = await deps.sheets();
-    const wanted = sheetDefaults(resolved.entry, operation.sheet, operation.headerRow);
+    // Лист — до чтения сетки и до записи (Q27, Q28): правка по ссылке на вкладку идёт в неё, а
+    // расхождение с `sheet` или чужой gid отказывают, не прочитав лист и ничего не записав.
+    const wanted = await chooseSheet(client, resolved, operation);
     const snapshot = await client.getSpreadsheet(
       resolved.id,
       wanted.sheet === undefined ? {} : { sheet: wanted.sheet },
@@ -391,6 +395,7 @@ export const gcUndo: ToolDefinition = {
         const drive = await deps.drive();
         await drive.trash(fileId);
       },
+      drive: () => deps.drive(),
       ...(deps.project === undefined ? {} : { project: deps.project }),
       journal: journalOf(deps),
     });
