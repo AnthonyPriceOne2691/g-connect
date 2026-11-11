@@ -77,8 +77,9 @@ const docFields = {
   )
     .optional()
     .describe(
-      'insertTable: число строк (1–50); createSheet: строки новой таблицы — массивы значений ' +
-        'в порядке колонок шапки; formatCells: {from, to} — номера строк листа включительно, ' +
+      'insertTable: число строк (1–50); createSheet и addSheet: строки новой таблицы или листа — ' +
+        'массивы значений в порядке колонок шапки; с columns — под шапкой, без них — с A1 вниз; ' +
+        'formatCells: {from, to} — номера строк листа включительно, ' +
         'внутри строк данных (пачка под конверт); setCells: те же номера вместо where — так ' +
         'пишется пустая вставленная строка без уникального условия',
     ),
@@ -86,8 +87,8 @@ const docFields = {
     .boolean()
     .optional()
     .describe(
-      'createSheet: значения шапки и строк текстом (RAW), по умолчанию да — дата остаётся ' +
-        'строкой; false — как набрал бы человек',
+      'createSheet и addSheet: значения шапки и строк текстом (RAW), по умолчанию да — дата ' +
+        'остаётся строкой; false — как набрал бы человек',
     ),
   table: z
     .number()
@@ -176,8 +177,9 @@ export const applyInput = {
     .optional()
     .describe(
       'formatCells/findReplace: имена колонок, чей вид или текст правим (formatCells с likeRow ' +
-        'без них — все колонки); insertTable: число колонок новой таблицы (1–10); createSheet: ' +
-        'шапка новой таблицы',
+        'без них — все колонки); insertTable: число колонок новой таблицы (1–10); createSheet и ' +
+        'addSheet: шапка новой таблицы или листа — строка 1; setHeader: подписи пустых ячеек строки ' +
+        'шапки по порядку от startColumn',
     ),
   format: z
     .record(z.string(), z.unknown())
@@ -223,6 +225,15 @@ export const applyInput = {
         'данных (фон или шрифт шапки). Строка над шапкой, например название таблицы, не ' +
         'адресуется',
     ),
+  startColumn: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'setHeader: буква колонки первой подписи (по умолчанию A). Подписи — в columns, по порядку ' +
+        'слева направо, только в ПУСТЫЕ ячейки строки шапки: так подписывается шапка пустого листа ' +
+        'и колонка без подписи; занятая ячейка или повтор имени — отказ, ничего не записано',
+    ),
   find: z
     .string()
     .min(1)
@@ -265,7 +276,14 @@ export const applyInput = {
       'uploadFile: локальный файл — абсолютный путь или от каталога проекта сессии; только внутри ' +
         'проекта, без скрытых путей и секретов',
     ),
-  title: z.string().min(1).optional().describe('addSheet/renameSheet/duplicateSheet: имя листа'),
+  title: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'addSheet/renameSheet/duplicateSheet: имя листа; addSheet сразу со шапкой и строками — ' +
+        'columns и rows',
+    ),
   toColumn: z
     .string()
     .min(1)

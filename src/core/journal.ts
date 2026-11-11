@@ -180,6 +180,7 @@ export interface WriteRecord {
     | 'appendRow'
     | 'upsertRow'
     | 'setCells'
+    | 'setHeader'
     | 'formatCells'
     | 'findReplace'
     | StructuralKind

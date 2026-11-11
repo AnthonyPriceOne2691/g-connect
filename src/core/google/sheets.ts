@@ -355,13 +355,15 @@ export class GoogleSheetsClient implements SheetsClient {
   async batchUpdateValues(
     id: string,
     cells: readonly { readonly range: string; readonly value: CellValue }[],
+    input?: 'user' | 'raw',
   ): Promise<void> {
     try {
       await this.retry(() =>
         this.sheets.spreadsheets.values.batchUpdate({
           spreadsheetId: id,
           requestBody: {
-            valueInputOption: 'USER_ENTERED',
+            // Как у `updateValues`: RAW — текстом, для подписей шапки (setHeader).
+            valueInputOption: input === 'raw' ? 'RAW' : 'USER_ENTERED',
             data: cells.map((cell) => ({ range: cell.range, values: [[cell.value]] })),
           },
         }),

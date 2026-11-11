@@ -18,6 +18,7 @@ export type OperationKind =
   | 'appendRow'
   | 'upsertRow'
   | 'setCells'
+  | 'setHeader'
   | 'formatCells'
   | 'findReplace'
   | StructuralKind

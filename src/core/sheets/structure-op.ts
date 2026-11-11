@@ -17,6 +17,14 @@ import type { RangeSnapshot, SnapshotCell } from '../journal.js';
 import { contextOf, finishWrite } from './commit.js';
 import { rowsUnderCondition } from './rows.js';
 import {
+  assertContent,
+  contentDigest,
+  contentNotes,
+  fillAddedSheet,
+  filledCells,
+  type SheetContent,
+} from './sheet-content.js';
+import {
   anchorText,
   assertAnchorRow,
   assertColumnStill,
@@ -125,20 +133,33 @@ export async function insertColumns(
   });
 }
 
-/** Новый лист (§6.2, `Ctrl+N` внутри книги). Имя в книге уникально — это и проверяем. */
+/**
+ * Новый лист (§6.2, `Ctrl+N` внутри книги). Имя в книге уникально — это и проверяем. Со шапкой и
+ * строками — как новая таблица (D-23): шапка в строке 1, без шапки — строки с A1; число непустых
+ * ячеек уходит в журнал (`count`) — по нему откат узнаёт, что лист после нас не правили.
+ */
 export async function addSheet(
   client: SheetsClient,
   data: SheetData,
   title: string,
-  options: RowOptions = {},
+  options: RowOptions & { readonly content?: SheetContent | undefined } = {},
 ): Promise<ApplyOutcome> {
   const map = data.map;
   assertTitle(title);
+  const cells = assertContent(options.content, 'лист');
+  const content = cells > 0 ? options.content : undefined;
   await assertTitleUnused(client, map, title);
-  const structural: StructuralPlan = { kind: 'addSheet', sheet: title, title };
-  return finishWrite(client, contextOf(map), [], prepared(), options, 'addSheet', {
+  const filled =
+    content === undefined ? {} : { content: contentDigest(content), count: filledCells(content) };
+  const structural: StructuralPlan = { kind: 'addSheet', sheet: title, title, ...filled };
+  const notes = content === undefined ? [] : contentNotes(content);
+  return finishWrite(client, contextOf(map), [], prepared(notes), options, 'addSheet', {
     structural,
-    apply: (c) => c.batchUpdate(map.spreadsheetId, [{ kind: 'addSheet', title }]),
+    cells,
+    apply: async (c) => {
+      await c.batchUpdate(map.spreadsheetId, [{ kind: 'addSheet', title }]);
+      if (content !== undefined) await fillAddedSheet(c, map.spreadsheetId, title, content);
+    },
     precondition: (c) => assertTitleFree(c, map, title),
   });
 }

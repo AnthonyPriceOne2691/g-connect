@@ -29,6 +29,9 @@ export const ENVELOPE_OPS: readonly OperationKind[] = [
   'appendRow',
   'upsertRow',
   'setCells',
+  // Подпись ПУСТЫХ ячеек шапки (хотфикс 2026-11-11): занятую не перезаписывает — отказ, а откат
+  // возвращает пустоту по снимку «до», как у setCells.
+  'setHeader',
   'formatCells',
   'findReplace',
   // Позиционные структурные (2.5b): добавляют место, ничего не уничтожая, и их откат —

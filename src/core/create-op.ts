@@ -17,14 +17,21 @@
  * Куда создавать, решает `create-parent.ts` (D-26): папка названа всегда, корень — только явно.
  */
 
-import { createHash } from 'node:crypto';
-
 import type { CreateKind, DriveClient } from './google/drive.js';
 import { gcError } from './errors.js';
-import { limitOf } from './policy.js';
 import { finishWrite, type Prepared, type WriteContext } from './sheets/commit.js';
-import type { CellValue, SheetsClient } from './sheets/types.js';
+// Шапка и строки — общим модулем с новым листом (`addSheet`): проверка, сверка и превью одни.
+import {
+  assertContent,
+  contentDigest,
+  contentNotes,
+  writeSheetContent,
+  type SheetContent,
+} from './sheets/sheet-content.js';
+import type { SheetsClient } from './sheets/types.js';
 import type { ApplyOutcome, RowOptions, StructuralPlan } from './sheets/write-types.js';
+
+export type { SheetContent };
 
 const empty = (): Prepared => ({
   resolved: [],
@@ -56,64 +63,6 @@ export interface CreateInput {
   readonly content?: SheetContent;
   /** Созданный файл пишется сразу — разрешение проекта открывает свои файлы до срока. */
   readonly writable?: boolean;
-}
-
-export interface SheetContent {
-  readonly columns?: readonly string[];
-  readonly rows?: readonly (readonly CellValue[])[];
-  /** Текстом (RAW) — по умолчанию; `false` — как набрал бы человек: даты распознаются. */
-  readonly asText: boolean;
-}
-
-/** Строки содержимого в одну матрицу: шапка первой строкой. Пусто — содержимого нет. */
-function contentMatrix(content: SheetContent | undefined): readonly (readonly CellValue[])[] {
-  if (content === undefined) return [];
-  return [...(content.columns === undefined ? [] : [content.columns]), ...(content.rows ?? [])];
-}
-
-/**
- * Содержимое проверяется ДО создания файла: строка длиннее шапки — вопрос, а не догадка,
- * куда легли лишние значения; больше бюджета изменений — отказ с советом дописать после.
- */
-function assertContent(content: SheetContent | undefined): number {
-  const width = content?.columns?.length;
-  const rows = content?.rows ?? [];
-  const tooWide = width === undefined ? -1 : rows.findIndex((row) => row.length > width);
-  if (tooWide >= 0) {
-    throw gcError('bad_request', {
-      detail: `Строка ${tooWide + 1} длиннее шапки (${width} колонок): куда лягут лишние значения — решает человек.`,
-      cause: 'row_wider_than_header',
-    });
-  }
-  const cells = contentMatrix(content).reduce((sum, row) => sum + row.length, 0);
-  const budget = limitOf('write.max-changes', 200);
-  if (cells > budget) {
-    throw gcError('bad_request', {
-      detail: `Содержимое — ${cells} ячеек при бюджете ${budget} на одну правку: создай таблицу с шапкой и допиши строки после (appendRow).`,
-      cause: 'change_budget',
-    });
-  }
-  return cells;
-}
-
-/** Сверка содержимого для кода плана: человек подтверждает именно эти строки. */
-const contentDigest = (content: SheetContent): string =>
-  createHash('sha256')
-    .update(JSON.stringify([contentMatrix(content), content.asText]))
-    .digest('hex')
-    .slice(0, 12);
-
-/** Что запишется — человеку в превью: шапка и первые строки, без «и т. д.» молчком. */
-function contentNotes(content: SheetContent): string[] {
-  const rows = content.rows ?? [];
-  const shown = rows.slice(0, 10).map((row) => `  ${row.map((v) => String(v ?? '')).join(' | ')}`);
-  return [
-    ...(content.columns === undefined ? [] : [`Шапка: ${content.columns.join(' | ')}`]),
-    ...(rows.length === 0
-      ? []
-      : [`Строк: ${rows.length}${content.asText ? ', текстом (RAW)' : ''}:`, ...shown]),
-    ...(rows.length > shown.length ? [`  …и ещё ${rows.length - shown.length}`] : []),
-  ];
 }
 
 /**
@@ -169,7 +118,7 @@ function createPlan(
   input: CreateInput,
   name: string,
 ): { structural: StructuralPlan; content: SheetContent | undefined; cells: number } {
-  const cells = assertContent(input.content);
+  const cells = assertContent(input.content, 'таблицу');
   const content = cells > 0 ? input.content : undefined;
   return {
     structural: {
@@ -214,24 +163,11 @@ async function writeContent(
   file: { readonly id: string; readonly url: string },
   content: SheetContent,
 ): Promise<void> {
-  try {
-    await sheets.updateValues(
-      file.id,
-      'A1',
-      contentMatrix(content),
-      content.asText ? 'raw' : 'user',
-    );
-  } catch (error) {
-    const trashed = await drive.trash(file.id).then(
-      () => true,
-      () => false,
-    );
-    if (trashed) throw error;
-    throw gcError('write_outcome_unknown', {
-      detail:
-        `Таблица создана, а шапка и строки не записались, и в корзину она не ушла: ${file.url}. ` +
-        'Удали её руками или допиши содержимое.',
-      cause: 'create_content_failed',
-    });
-  }
+  await writeSheetContent(sheets, { id: file.id, range: 'A1' }, content, {
+    discard: () => drive.trash(file.id),
+    orphan:
+      `Таблица создана, а шапка и строки не записались, и в корзину она не ушла: ${file.url}. ` +
+      'Удали её руками или допиши содержимое.',
+    cause: 'create_content_failed',
+  });
 }

@@ -456,6 +456,20 @@
       "kind": "invariant",
       "enforced_in": "src/core/upload/upload-checks.ts (checkedUpload, verdictOf)",
       "probe": "файл дописан между проверкой и загрузкой → stale_value upload_checksum_mismatch, в папке файла нет"
+    },
+    {
+      "id": "write.header-empty-cells-only",
+      "title": "Шапку подписывает только явная операция и только в пустые ячейки строки шапки: занятая ячейка и повтор подписи — отказ без записи; неизвестное имя в записи строк — по-прежнему вопрос (D-26, хотфикс PR #23)",
+      "kind": "deny",
+      "enforced_in": "src/core/sheets/set-header-op.ts (setHeader, assertEmpty, assertNewLabels, checkedLabels)",
+      "probe": "setHeader «№», «Статус» с A на листе с A1 «Имя» → bad_request header_cell_occupied, записей нет; «Статус», «статус» и «имя» — header_label_duplicate; «Статус» с B → план Лист!B1"
+    },
+    {
+      "id": "write.add-sheet-content-undo",
+      "title": "Откат листа, созданного addSheet со шапкой или строками, удаляет его, только пока непустых ячеек на нём столько, сколько записали мы; иначе — revision_conflict, лист на месте (D-19, D-26)",
+      "kind": "invariant",
+      "enforced_in": "src/core/undo-structure.ts (assertSheetAsCreated) + src/core/sheets/structure-op.ts (addSheet)",
+      "probe": "запись addSheet «Вопросы» с count 3: на листе 3 непустые ячейки → deleteSheet; дописали четвёртую → revision_conflict sheet_changed, запросов нет"
     }
   ]
 }

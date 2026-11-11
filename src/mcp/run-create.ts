@@ -9,6 +9,7 @@
 import { createFile, type CreateInput, type SheetContent } from '../core/create-op.js';
 import { assertCreateTarget, createParentOf, type CreateParent } from '../core/create-parent.js';
 import type { parseOperation } from '../core/ops.js';
+import { sheetContentOf } from '../core/sheets/sheet-content.js';
 import type { ResolvedTarget } from '../core/targets.js';
 import type { WriteRight } from '../core/write-right.js';
 import { applyHint, applyOptions, writeRight } from './apply-support.js';
@@ -70,13 +71,7 @@ function createInputOf(
   };
 }
 
-/** Шапка и строки — только у таблицы и только если названы (D-23, X7). */
+/** Шапка и строки — только у таблицы; не названы — содержимое пустое, и его нет (D-23, X7). */
 function contentOf(operation: CreateOperation): SheetContent | undefined {
-  if (operation.op !== 'createSheet') return undefined;
-  if (operation.columns === undefined && operation.rows === undefined) return undefined;
-  return {
-    ...(operation.columns === undefined ? {} : { columns: operation.columns }),
-    ...(operation.rows === undefined ? {} : { rows: operation.rows }),
-    asText: operation.asText,
-  };
+  return operation.op === 'createSheet' ? sheetContentOf(operation) : undefined;
 }

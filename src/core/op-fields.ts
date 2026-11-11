@@ -6,6 +6,9 @@
 
 import { z } from 'zod';
 
+/** Значение ячейки, как его может прислать клиент. */
+export const cellValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+
 export const commonFields = {
   /** alias реестра, ссылка или ID. */
   target: z.string().min(1),
@@ -52,3 +55,16 @@ export function orJsonText<T extends z.ZodType>(schema: T) {
     }
   }, schema);
 }
+
+/**
+ * Шапка и строки нового листа или новой таблицы (D-23): запрос «создай таблицу с шапкой и строкой»
+ * ядро раньше выполнить не могло — в пустой лист шапку не вписать. Поля одни у `createSheet` и
+ * `addSheet` («создай лист, сделай там шапку, занеси данные», 2026-11-11). Значения по умолчанию —
+ * текстом (RAW): дата, которую продиктовал человек, остаётся строкой, а не догадкой. Строки —
+ * массивом или той же формой строкой JSON (Q19): так их шлёт клиент со старой схемой.
+ */
+export const contentFields = {
+  columns: z.array(z.string().min(1)).min(1).optional(),
+  rows: orJsonText(z.array(z.array(cellValue))).optional(),
+  asText: z.boolean().default(true),
+};

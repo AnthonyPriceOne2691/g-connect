@@ -458,11 +458,13 @@ export interface SheetsClient {
    */
   /**
    * Несколько ячеек — одним запросом (D-26, Q10): запрос либо записан целиком, либо нет, и
-   * повтор после 429 повторяет его весь, а не дописывает хвост.
+   * повтор после 429 повторяет его весь, а не дописывает хвост. `input` — как у `updateValues`:
+   * подписи шапки (`setHeader`) уходят текстом, `'raw'`.
    */
   batchUpdateValues(
     id: string,
     cells: readonly { readonly range: string; readonly value: CellValue }[],
+    input?: 'user' | 'raw',
   ): Promise<void>;
   updateValues(
     id: string,

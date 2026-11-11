@@ -621,6 +621,8 @@ export class FakeSheetsClient implements SheetsClient {
  * идемпотентности: без применения второй upsert «не находит изменений» по ошибке.
  */
 export class MutableSheetsClient implements SheetsClient {
+  /** Что и куда ушло через values-API — с режимом ввода: содержимое нового листа уходит `raw`. */
+  readonly writes: RecordedWrite[] = [];
   private data: SpreadsheetSnapshot;
 
   constructor(data: SpreadsheetSnapshot = snapshot()) {
@@ -647,23 +649,45 @@ export class MutableSheetsClient implements SheetsClient {
   }
 
   async updateValues(
-    _id: string,
+    id: string,
     range: string,
     values: readonly (readonly CellValue[])[],
+    input: 'user' | 'raw' = 'user',
   ): Promise<void> {
-    const parsed = /^(.+)!([A-Z]+)(\d+)$/.exec(range);
+    this.writes.push({ range, values, id, input });
+    // Имя листа — как в A1-нотации Google: голое или в кавычках, апостроф внутри удвоен
+    // (`'Новый лист'!A1`). Матрица ложится целиком с левого верхнего угла, как у values.update:
+    // фейк брал одну ячейку и голое имя, и шапка со строками нового листа пропадали бы молча.
+    const parsed = /^(?:'((?:[^']|'')+)'|(.+))!([A-Z]+)(\d+)$/.exec(range);
     if (parsed === null) throw new Error(`фикстура не умеет диапазон ${range}`);
-    const [, sheetTitle, letter, rowText] = parsed;
+    const [, quoted, bare, letter, rowText] = parsed;
+    const sheetTitle = quoted === undefined ? (bare ?? '') : quoted.replaceAll("''", "'");
+    // Листа нет — Google отвечает 400 «Unable to parse range», а не пишет в никуда.
+    if (!this.data.sheets.some((sheet) => sheet.title === sheetTitle)) {
+      throw new Error(`Unable to parse range: ${range}`);
+    }
+    const columnIndex =
+      [...(letter ?? '')].reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
+    const rowIndex = Number(rowText) - 1;
+    values.forEach((cells, dr) => {
+      cells.forEach((value, dc) =>
+        this.writeCell(sheetTitle, rowIndex + dr, columnIndex + dc, value),
+      );
+    });
+  }
+
+  private writeCell(
+    sheetTitle: string,
+    rowIndex: number,
+    columnIndex: number,
+    incoming: CellValue,
+  ): void {
     // Семантика Google values.update, а не «как удобно тесту»: `null` ПРОПУСКАЕТ ячейку
     // (ничего не меняет), пустая строка ОЧИЩАЕТ (читается потом как пусто). Фейк писал
     // null как очистку — и все оракулы отката были зелёными, пока живой откат сортировки
     // смешивал две строки (LR-2, живой прогон 2026-09-06). Шов один — фейк обязан ему.
-    const incoming = values[0]?.[0] ?? null;
     if (incoming === null) return;
     const written: Cell = { value: incoming === '' ? null : incoming };
-    const columnIndex =
-      [...(letter ?? '')].reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
-    const rowIndex = Number(rowText) - 1;
     const next = this.data.sheets.map((sheet) => {
       if (sheet.title !== sheetTitle) return sheet;
       const rows = sheet.rows.map((r) => [...r]);

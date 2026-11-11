@@ -82,11 +82,13 @@ const SAMPLE: Record<string, unknown> = {
   startIndex: 5,
   endIndex: 9,
   localPath: 'video/sales.mp4',
+  startColumn: 'C',
 };
 
 /** `rows` по операции; у остальных — число строк новой таблицы документа. */
 const ROWS_SAMPLE: Partial<Record<OperationName, unknown>> = {
   createSheet: [['x.com', '2025-06-01']],
+  addSheet: [['x.com', '2025-06-01']],
   formatCells: { from: 3, to: 4 },
   setCells: { from: 3, to: 4 },
 };
@@ -105,7 +107,7 @@ function sampleFor(op: OperationName): Record<string, unknown> {
   const special: Record<string, unknown> = {
     where: isDoc ? { textStartsWith: 'Составы' } : { Проект: 'G connect' },
     columns: op === 'insertTable' ? 3 : ['Статус'],
-    // У createSheet `rows` — строки новой таблицы, у insertTable — их число (D-23), у
+    // У createSheet и addSheet `rows` — строки новой таблицы и листа, у insertTable — их число, у
     // formatCells и setCells — номера строк листа (Q13, Q39).
     rows: ROWS_SAMPLE[op] ?? 2,
     // У uploadFile `replace` — флаг замены файла (Q46), у замен текста — строка замены.

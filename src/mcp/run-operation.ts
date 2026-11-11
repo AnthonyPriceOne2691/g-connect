@@ -13,6 +13,8 @@ import { formatRows } from '../core/sheets/format-op.js';
 import { formatSourceOf } from '../core/sheets/format-source.js';
 import { rowSelectionOf } from '../core/sheets/row-selection.js';
 import { setRows } from '../core/sheets/set-cells-op.js';
+import { setHeader } from '../core/sheets/set-header-op.js';
+import { sheetContentOf } from '../core/sheets/sheet-content.js';
 import { autoFill, copyRange, cutRange, duplicateSheet } from '../core/sheets/range-op.js';
 import {
   addSheet,
@@ -83,6 +85,7 @@ const HANDLERS: {
   // строки (Q42): неверный выбор отказан ещё разбором ядра, здесь поля только сужаются до типа.
   setCells: (client, data, operation, options) =>
     setRows(client, data, rowSelectionOf(operation, 'setCells'), operation.values, options),
+  setHeader: (client, data, operation, options) => setHeader(client, data, operation, options),
   formatCells: (client, data, operation, options) =>
     formatRows(
       client,
@@ -122,7 +125,9 @@ const HANDLERS: {
   deleteColumns: (client, data, operation, options) =>
     deleteColumns(client, data, operation.column, options),
   deleteSheet: (client, data, _operation, options) => deleteSheet(client, data, options),
-  addSheet: (client, data, operation, options) => addSheet(client, data, operation.title, options),
+  // Шапка и строки нового листа — тем же разбором, что у новой таблицы (D-23).
+  addSheet: (client, data, operation, options) =>
+    addSheet(client, data, operation.title, { ...options, content: sheetContentOf(operation) }),
   renameSheet: (client, data, operation, options) =>
     renameSheet(client, data, operation.title, options),
   copyRange: (client, data, operation, options) =>

@@ -11,7 +11,7 @@ import { z } from 'zod';
 
 import { gcError } from './errors.js';
 import { enumRefusal, issuesDetail, unknownFields, unknownFieldsDetail } from './field-check.js';
-import { commonFields, orJsonText } from './op-fields.js';
+import { cellValue, commonFields, contentFields, orJsonText } from './op-fields.js';
 import {
   appendTextOp,
   createParagraphBulletsOp,
@@ -42,9 +42,8 @@ import { rowSelectionOf, rowSpanSchema } from './sheets/row-selection.js';
 import type { CellFormat } from './sheets/types.js';
 // Загрузка файла с компьютера — своим модулем по гейту длины (D-27, Q45–Q48).
 import { uploadFileOp } from './upload/upload-schema.js';
-
-/** Значение ячейки, как его может прислать клиент. */
-const cellValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+// Подпись пустых ячеек шапки — своим модулем по той же причине (хотфикс 2026-11-11).
+import { setHeaderOp } from './sheets/set-header-op.js';
 
 /** Имена колонок — ключи; значения примитивны. Объект в ячейку не пишется (§8.3). */
 const rowValues = z.record(z.string().min(1), cellValue);
@@ -184,10 +183,12 @@ export const deleteSheetOp = z.object({
   ...commonFields,
 });
 
+/** Новый лист; со шапкой (`columns`) — она в строке 1, строки под ней; только `rows` — с A1. */
 export const addSheetOp = z.object({
   op: z.literal('addSheet'),
   title: z.string().min(1),
   ...commonFields,
+  ...contentFields,
 });
 
 export const renameSheetOp = z.object({
@@ -250,18 +251,11 @@ const createFields = {
   ...commonFields,
 };
 
-/**
- * Таблица со шапкой и строками (D-23): запрос «создай таблицу с шапкой и строкой» ядро
- * раньше выполнить не могло — в пустой лист шапку не вписать. Значения по умолчанию —
- * текстом (RAW): дата, которую продиктовал человек, остаётся строкой, а не догадкой. Строки —
- * массивом или той же формой строкой JSON (Q19): так их шлёт клиент со старой схемой.
- */
+/** Таблица — сразу со шапкой и строками (D-23): поля содержимого те же, что у нового листа. */
 export const createSheetOp = z.object({
   op: z.literal('createSheet'),
   ...createFields,
-  columns: z.array(z.string().min(1)).min(1).optional(),
-  rows: orJsonText(z.array(z.array(cellValue))).optional(),
-  asText: z.boolean().default(true),
+  ...contentFields,
 });
 export const createDocOp = z.object({ op: z.literal('createDoc'), ...createFields });
 export const createFolderOp = z.object({ op: z.literal('createFolder'), ...createFields });
@@ -270,6 +264,7 @@ export const operationSchema = z.discriminatedUnion('op', [
   appendRowOp,
   upsertRowOp,
   setCellsOp,
+  setHeaderOp,
   formatCellsOp,
   findReplaceOp,
   insertRowsOp,
@@ -316,6 +311,7 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'appendRow',
   'upsertRow',
   'setCells',
+  'setHeader',
   'formatCells',
   'findReplace',
   'insertRows',
@@ -441,10 +437,12 @@ function assertKnownFields(input: unknown, op: OperationName): void {
 function shapeHint(op: OperationName, issues: readonly z.core.$ZodIssue[]): string {
   const about = (field: string): boolean => issues.some((issue) => issue.path[0] === field);
   const span = '{from, to}: номера строк листа включительно; объектом';
+  const matrix = 'массив строк, каждая — массив значений в порядке колонок шапки; массивом';
   const rowsForms: Partial<Record<OperationName, string>> = {
     formatCells: span,
     setCells: span,
-    createSheet: 'массив строк, каждая — массив значений в порядке колонок шапки; массивом',
+    createSheet: matrix,
+    addSheet: matrix,
   };
   const rowsForm = about('rows') ? rowsForms[op] : undefined;
   return (

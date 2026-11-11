@@ -156,9 +156,10 @@ const INVERSE: Partial<Record<NonNullable<WriteRecord['structure']>['kind'], Inv
       ...(structure.properties === undefined ? {} : { properties: structure.properties }),
     };
   },
+  // У нового листа `sheet` и есть его имя.
   addSheet: (book, structure, options) => {
-    const sheet = sheetByTitle(book, structure.title ?? structure.sheet);
-    if (options.force !== true) assertSheetEmpty(sheet);
+    const sheet = sheetByTitle(book, structure.sheet);
+    if (options.force !== true) assertSheetAsCreated(sheet, structure.count);
     return { kind: 'deleteSheet', sheetId: sheet.sheetId };
   },
   // Копия листа удаляется, если её не тронули: непустых ячеек столько же, сколько было
@@ -321,15 +322,29 @@ function assertInsertedEmpty(
   });
 }
 
-/** Лист, созданный нами, всё ещё пуст? Удалять заполненный людьми лист откат не вправе. */
-function assertSheetEmpty(sheet: SheetSnapshot): void {
-  const filled = sheet.rows.flat().filter((cell) => cell !== undefined && !isBlank(cell));
-  if (filled.length === 0) return;
+/**
+ * Лист, созданный нами, всё ещё такой, каким мы его создали? Удалять лист с работой человека откат
+ * не вправе. Пустой — пуст; со шапкой и строками — непустых ячеек столько же, сколько мы записали
+ * (`written`, как у копии листа). Названная непокрытость та же, что у копии: правку, не изменившую
+ * ЧИСЛО ячеек, охранник не заметит.
+ */
+function assertSheetAsCreated(sheet: SheetSnapshot, written: number | undefined): void {
+  const filled = sheet.rows.flat().filter((cell) => !isBlank(cell)).length;
+  if (filled === (written ?? 0)) return;
+  if (written === undefined) {
+    throw gcError('revision_conflict', {
+      detail:
+        `На листе «${sheet.title}» после создания появились данные (${filled} ` +
+        'непустых ячеек). Откат удалил бы лист вместе с ними, поэтому не выполнен.',
+      cause: 'sheet_not_empty',
+    });
+  }
   throw gcError('revision_conflict', {
     detail:
-      `На листе «${sheet.title}» после создания появились данные (${filled.length} ` +
-      'непустых ячеек). Откат удалил бы лист вместе с ними, поэтому не выполнен.',
-    cause: 'sheet_not_empty',
+      `На лист «${sheet.title}» мы записали ${written} непустых ячеек, сейчас их ${filled}: лист ` +
+      'правили после создания. Откат удалил бы его вместе с этой работой, поэтому не выполнен: ' +
+      'перечитай и реши, что вернуть. Если удалить всё равно — откат с force.',
+    cause: 'sheet_changed',
   });
 }
 
@@ -348,7 +363,10 @@ function undoneText(structure: NonNullable<WriteRecord['structure']>): string {
   const texts: Partial<Record<NonNullable<WriteRecord['structure']>['kind'], string>> = {
     insertRows: `Вставленные строки удалены: ${count} шт. начиная с ${at}-й.`,
     insertColumns: `Вставленные колонки удалены: ${count} шт. начиная с ${at}-й.`,
-    addSheet: `Лист «${title}» удалён — он был пуст.`,
+    addSheet:
+      structure.count === undefined
+        ? `Лист «${title}» удалён — он был пуст.`
+        : `Лист «${title}» удалён вместе с содержимым, записанным при создании (${structure.count} непустых ячеек).`,
     deleteRows: `Удалённые строки возвращены на место: ${count} шт. с ${at}-й, со значениями и видом.`,
     deleteColumns: `Удалённая колонка возвращена на место (${at}-я), со значениями и видом.`,
     renameSheet: `Лист переименован обратно: «${title}» → «${structure.previousTitle ?? ''}».`,
