@@ -28,7 +28,7 @@
   <!-- агенту уйдут: fromRow, truncated с sheetRows и nextFromRow, предупреждение карты о части листа, отказ write.full-sheet; withFormat и formats, поля вида fontFamily/fontSize/numberFormat, allRows и rows у formatCells, заметки о виде дат и оформлении дописанной строки; uploadFile (localPath, name, replace), ответ file со ссылкой, отказы загрузки, storage_full, заголовок и описание gc_apply -->
 - **rule_enforcers:** src/policy/rules.json
 - **canon_drift_waiver:** no
-- **baseline_growth_waiver:** no
+- **baseline_growth_waiver:** reason=ответ «Поднять снимок до 19» на вопрос с вариантами — deps_audit_baseline.txt js_total 4 → 38 (19 moderate: гейт считает их дважды); после zod 4 high нет, исправления в наших диапазонах нет — 6 в рабочей сборке (googleapis → gaxios → rimraf → glob → minimatch, путь не вызывается), 13 в инструментах разработки by=human:anton at=2026-11-09
 - **observability:** 1
 - **observe_signal:** запись на листах длиннее 500 строк попадает после последней строки и в строку ключа; gc_read отдаёт лист целиком или честно говорит, с какой строки продолжить; строки, дописанные в «Реестр инфраструктуры», — шрифтом соседних, первые даты в пустых колонках — видом листа; гайды и ролики сессии parsing-and-outri-4a ложатся на общий диск свежей версией с той же ссылкой, без копий
 - **observe_until:** 2026-12-01
