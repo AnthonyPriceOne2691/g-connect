@@ -847,8 +847,9 @@ describe('правила как механизм (D-12)', () => {
     // 51–52 — write.full-sheet, write.max-sheet-rows (D-26, длинные листы); 58–62 —
     // upload.max-bytes, upload.project-files-only, upload.same-name-new-version,
     // upload.replace-other-name-named, upload.verified-by-checksum (D-27, файл с компьютера на Диск); 63–64 —
-    // write.header-empty-cells-only, write.add-sheet-content-undo (хотфикс PR #23, шапка).
-    expect(policyRules()).toHaveLength(64);
+    // write.header-empty-cells-only, write.add-sheet-content-undo (хотфикс PR #23, шапка); 65–66 —
+    // map.block-bound, write.append-keeps-block-gap (лист из нескольких таблиц, 16.11).
+    expect(policyRules()).toHaveLength(66);
   });
 
   it('rules.md называет ровно списки ядра: конверт и подтверждение названием', () => {

@@ -42,6 +42,7 @@ export { NO_CHANGE_NOTE } from './write-types.js';
 import { contextOf, finishWrite, writeCells, type Prepared } from './commit.js';
 import { withNoteHints } from './notes.js';
 import { assertBeforeValues } from './write-guards.js';
+import { assertBlockGap, guardColumn, type WriteRows } from './write-guard-cells.js';
 
 export type { Prepared } from './commit.js';
 export { formatRequest, finishWrite } from './commit.js';
@@ -101,62 +102,6 @@ export function columnQuestion(
     available: names(map),
   };
 }
-
-/** Где пишет правка: номера строк листа; `match` — поиск строк по условию, записи нет. */
-export type WriteRows = readonly number[] | 'match';
-
-/**
- * Формульная и защищённая колонка: отметить в плане и не пустить без `force`.
- *
- * Отметка уезжает в код плана (D-16) — подтверждая код, человек подтверждает и то, что
- * правка лезет в такую колонку. Раньше `force` был решением одной модели.
- *
- * Формулы судятся у ячеек записи (`local`), а не по колонке целиком (хотфикс 16.11, весть сессии
- * профиля work): на листе из нескольких таблиц формулы блока итогов ниже запрещали пустые ячейки
- * ввода над ним. Без `local` — колонка целиком, как раньше (вид ячеек).
- */
-export function guardColumn(
-  column: ColumnProfile,
-  out: Prepared,
-  options: RowOptions,
-  local?: { readonly data: SheetData; readonly rows: readonly number[] },
-): void {
-  const formula =
-    column.hasFormula && (local === undefined || formulaAtOrAbove(column, local.data, local.rows));
-  if (column.hasFormula && !formula) out.notes.push(otherFormulasNote(column));
-  if (formula && !out.touches.includes('formula')) out.touches.push('formula');
-  if (column.protected && !out.touches.includes('protected')) out.touches.push('protected');
-  if (!formula && !column.protected) return;
-  if (options.force === true) return;
-  throw gcError('write_blocked', {
-    detail: formula
-      ? `Колонка «${column.name}» содержит формулы — запись значения их затрёт.`
-      : `Колонка «${column.name}» в защищённом диапазоне.`,
-    cause: formula ? 'formula_column' : 'protected_range',
-  });
-}
-
-/**
- * Формула там, куда пишем: в самой ячейке или прямо над ней в той же колонке — так выглядит
- * формульная колонка у ячейки записи. Строку ниже не смотрим: под ячейками ввода обычно стоит
- * «Итого» с формулой, и колонку ввода она формульной не делает. Шапка — не строка данных.
- */
-function formulaAtOrAbove(
-  column: ColumnProfile,
-  data: SheetData,
-  rows: readonly number[],
-): boolean {
-  const first = data.map.headerRow + 1;
-  return rows.some((row) =>
-    [row, row - 1].some(
-      (at) => at >= first && data.cells[at - first]?.[column.index]?.formula !== undefined,
-    ),
-  );
-}
-
-const otherFormulasNote = (column: ColumnProfile): string =>
-  `В колонке «${column.name}» формулы есть в других строках — у ячеек записи и строк над ними ` +
-  'формул нет, запись их не затрагивает';
 
 /**
  * Колонка правки по имени — одна дорога для значений, условий строк и колонок вида (Q40). Точный
@@ -374,6 +319,7 @@ export async function appendRow(
   // пропуске в середине листа счётчик целился внутрь данных. `data.rows` — строки без
   // пустого хвоста, и лист прочитан целиком (D-26), а не первые 500 строк.
   const rowNumber = map.headerRow + data.rows.length + 1;
+  assertBlockGap(map, rowNumber);
   const prepared = prepare(data, values, options, [rowNumber]);
   if (prepared.questions.length > 0) return clarify(prepared.questions, map);
   const changes: PlannedChange[] = prepared.resolved.map(({ column, value }) => ({

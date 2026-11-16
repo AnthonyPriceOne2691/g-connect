@@ -56,7 +56,7 @@
       "id": "write.formula-column",
       "title": "Запись в ячейку с формулой или под формулой той же колонки (колонка формульная у ячейки записи) блокируется без явного подтверждения; формулы в других строках колонки — другой блок листа — заметка в превью, а не отказ (хотфикс 16.11)",
       "kind": "deny",
-      "enforced_in": "src/core/sheets/rows.ts (guardColumn, formulaAtOrAbove)",
+      "enforced_in": "src/core/sheets/write-guard-cells.ts (guardColumn, formulaAtOrAbove)",
       "probe": "setCells в ячейку с формулой → write_blocked, cause=formula_column"
     },
     {
@@ -195,7 +195,7 @@
       "id": "write.force-needs-plan",
       "title": "force принимается только вместе с кодом плана — и под конвертом: правку, которая задевает формулу или защищённый диапазон, конверт не пропускает (хотфикс 16.11)",
       "kind": "deny",
-      "enforced_in": "src/core/sheets/write-guards.ts (confirmationOutcome) + src/core/sheets/rows.ts (guardColumn) + src/core/sheets/commit.ts (riskNeedsCode)",
+      "enforced_in": "src/core/sheets/write-guards.ts (confirmationOutcome) + src/core/sheets/write-guard-cells.ts (guardColumn) + src/core/sheets/commit.ts (riskNeedsCode)",
       "probe": "force:true без confirm не проходит — ни без конверта, ни под ним: модель не подтверждает сама за человека"
     },
     {
@@ -470,6 +470,20 @@
       "kind": "invariant",
       "enforced_in": "src/core/undo-structure.ts (assertSheetAsCreated) + src/core/sheets/structure-op.ts (addSheet)",
       "probe": "запись addSheet «Вопросы» с count 3: на листе 3 непустые ячейки → deleteSheet; дописали четвёртую → revision_conflict sheet_changed, запросов нет"
+    },
+    {
+      "id": "map.block-bound",
+      "title": "Данные шапки кончаются на следующей таблице листа, когда она подтверждена: после пустой строки (и, может быть, заголовка из одной ячейки) — строка-шапка с данными под ней, оформленная как текущая шапка или стоящая подписью над числами или датами блока (без заголовка — оба признака); карта её называет, окно values кончается на блоке (DESIGN §9.3, 16.11)",
+      "kind": "invariant",
+      "enforced_in": "src/core/sheets/block-bound.ts (blockBound, newTableAt) + src/core/sheets/map.ts (buildSheetData) + src/mcp/read-values.ts (readValues)",
+      "probe": "лист из двух таблиц: шапка 1 — данные строки 2–4, nextTable {row 6, headerRow 7}; таблица с пропуском и текстом после него — nextTable нет, данные до конца листа"
+    },
+    {
+      "id": "write.append-keeps-block-gap",
+      "title": "Дозапись не занимает единственную пустую строку перед следующей таблицей листа — отказ block_gap с подсказкой вставить строку (16.11)",
+      "kind": "deny",
+      "enforced_in": "src/core/sheets/write-guard-cells.ts (assertBlockGap) + src/core/sheets/rows.ts (appendRow)",
+      "probe": "appendRow в блок с одной пустой строкой до следующей таблицы → bad_request block_gap, записей нет"
     }
   ]
 }

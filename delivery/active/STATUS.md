@@ -23,8 +23,8 @@
 - **new_dependency:** none
 - **runtime_paths:** none reason=шов Google не тронут: правка — проверки записи в ядре (rows.ts, values.ts, commit.ts)
 - **irreversible_surfaces:** none reason=запись по-прежнему через превью, предусловие и журнал с откатом; хотфикс снимает ложные отказы и закрывает запись поверх формулы под конвертом
-- **model_surface:** src/policy/rules.md,src/policy/rules.json
-  <!-- агенту уйдут: заметки превью «формулы есть в других строках…» и «нет в списке, выведенном по уже записанному…»; отказ write_blocked теперь только у ячейки с формулой или под ней; confirm_required у force под конвертом; правила write.formula-column, values.enum-ask, write.force-needs-plan; раздел о листе из нескольких таблиц -->
+- **model_surface:** src/policy/rules.md,src/policy/rules.json,src/core/sheets/types.ts,src/mcp/read-values.ts
+  <!-- агенту уйдут: заметки превью «формулы есть в других строках…» и «нет в списке, выведенном по уже записанному…»; отказ write_blocked теперь только у ячейки с формулой или под ней; confirm_required у force под конвертом; правила write.formula-column, values.enum-ask, write.force-needs-plan; раздел о листе из нескольких таблиц; карта — поле nextTable и предупреждение «ниже ещё одна таблица — шапка в строке N»; окно values кончается на блоке; отказ appendRow block_gap; правила map.block-bound, write.append-keeps-block-gap -->
 - **rule_enforcers:** src/policy/rules.json
 - **canon_drift_waiver:** no
 - **observability:** 1
