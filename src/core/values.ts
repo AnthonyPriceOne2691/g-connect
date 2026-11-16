@@ -141,15 +141,14 @@ export function normalizeValue(
         note: hit === asText ? null : `«${asText}» приведено к «${hit}»`,
       };
     }
+    if (column.enumSource !== 'validation') return offInferredList(raw, asText, column, options);
     return {
       status: 'clarify',
       reason: 'not_in_enum',
       candidates: column.enumValues,
       detail:
-        `«${asText}» нет среди допустимых значений колонки «${column.name}»` +
-        (column.enumSource === 'validation'
-          ? ' (список задан проверкой данных в таблице).'
-          : ' (список выведен по тому, что уже записано).'),
+        `«${asText}» нет среди допустимых значений колонки «${column.name}» ` +
+        '(список задан проверкой данных в таблице).',
     };
   }
 
@@ -209,6 +208,26 @@ export function normalizeValue(
       note: null,
     }
   );
+}
+
+/**
+ * Выведенный список — подсказка, а не забор (хотфикс 16.11, слово владельца «должно все срабатывать
+ * автоматически»): значение вне него пишется по типу колонки, а превью называет список. На листе из
+ * нескольких таблиц список выводился из чужого блока («Вариант, A, B, C, D» над часами), и `not_in_enum`
+ * был тупиком: ни плана, ни кода. Вопрос остаётся у списка из проверки данных таблицы.
+ */
+function offInferredList(
+  raw: unknown,
+  asText: string,
+  column: ColumnProfile,
+  options: NormalizeOptions,
+): ValueOutcome {
+  const typed = normalizeValue(raw, { ...column, enumValues: null, enumSource: null }, options);
+  if (typed.status !== 'ok') return typed;
+  const listNote =
+    `«${asText}» нет в списке, выведенном по уже записанному в колонке «${column.name}» ` +
+    `(${(column.enumValues ?? []).join(', ')}) — это подсказка, записано как прислано`;
+  return { ...typed, note: typed.note === null ? listNote : `${typed.note}; ${listNote}` };
 }
 
 /**

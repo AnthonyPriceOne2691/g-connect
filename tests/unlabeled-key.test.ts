@@ -436,14 +436,21 @@ describe('Q40 — значение в колонку без подписи — �
     rows: [row(null, 'Метка', 'Задача'), ...values.map((v, i) => row(v, v, `задача ${i}`))],
   });
 
-  it.each([
-    ['числа — тип «число»', Array.from({ length: 12 }, (_, i) => i + 1), 'not_a_number'],
-    [
-      'три метки по четыре раза — список',
-      ['план', 'факт', 'итог'].flatMap((v) => [v, v, v, v]),
-      'not_in_enum',
-    ],
-  ])(
+  // Выведенный список — подсказка, а не вопрос (хотфикс 16.11): у B «почти готово» пишется с заметкой.
+  it('Q40: три метки по четыре раза — у B запись с заметкой о выведенном списке, в (A) — как есть', async () => {
+    const { deps } = harness(twin(['план', 'факт', 'итог'].flatMap((v) => [v, v, v, v])));
+    const labeled = await apply(deps, { op: 'appendRow', values: { Метка: 'почти готово' } });
+    expect(labeled.status).toBe('preview');
+    expect(labeled.changes).toMatchObject([{ a1: 'Отчёт!B14', after: 'почти готово' }]);
+    expect(labeled.notes).toContain(
+      '«почти готово» нет в списке, выведенном по уже записанному в колонке «Метка» (план, факт, ' +
+        'итог) — это подсказка, записано как прислано',
+    );
+    const unlabeled = await apply(deps, { op: 'appendRow', values: { '(A)': 'почти готово' } });
+    expect(unlabeled.changes).toMatchObject([{ a1: 'Отчёт!A14', after: 'почти готово' }]);
+  });
+
+  it.each([['числа — тип «число»', Array.from({ length: 12 }, (_, i) => i + 1), 'not_a_number']])(
     'Q40: %s — у B вопрос, в (A) пишется «почти готово» как есть',
     async (_name, values, reason) => {
       const { deps } = harness(twin(values));

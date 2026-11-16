@@ -54,10 +54,10 @@
     },
     {
       "id": "write.formula-column",
-      "title": "Запись в формульную колонку блокируется без явного подтверждения",
+      "title": "Запись в ячейку с формулой или под формулой той же колонки (колонка формульная у ячейки записи) блокируется без явного подтверждения; формулы в других строках колонки — другой блок листа — заметка в превью, а не отказ (хотфикс 16.11)",
       "kind": "deny",
-      "enforced_in": "src/core/sheets/rows.ts (prepare)",
-      "probe": "setCells в колонку с формулой → write_blocked, cause=formula_column"
+      "enforced_in": "src/core/sheets/rows.ts (guardColumn, formulaAtOrAbove)",
+      "probe": "setCells в ячейку с формулой → write_blocked, cause=formula_column"
     },
     {
       "id": "write.protected-range",
@@ -90,10 +90,10 @@
     },
     {
       "id": "values.enum-ask",
-      "title": "Значение вне списка допустимых спрашивается, а не дописывается",
+      "title": "Значение вне списка из проверки данных таблицы спрашивается, а не дописывается; список, выведенный по уже записанному, — подсказка: значение пишется, превью называет список (хотфикс 16.11)",
       "kind": "ask",
-      "enforced_in": "src/core/values.ts (normalizeValue)",
-      "probe": "значение вне enum → needs_clarification со списком допустимых"
+      "enforced_in": "src/core/values.ts (normalizeValue, offInferredList)",
+      "probe": "значение вне списка из проверки данных → needs_clarification со списком допустимых"
     },
     {
       "id": "values.no-objects",
@@ -193,10 +193,10 @@
     },
     {
       "id": "write.force-needs-plan",
-      "title": "force принимается только вместе с кодом плана",
+      "title": "force принимается только вместе с кодом плана — и под конвертом: правку, которая задевает формулу или защищённый диапазон, конверт не пропускает (хотфикс 16.11)",
       "kind": "deny",
-      "enforced_in": "src/core/sheets/write-guards.ts (confirmationOutcome) + src/core/sheets/rows.ts (guardColumn)",
-      "probe": "force:true без confirm не проходит: модель не подтверждает сама за человека"
+      "enforced_in": "src/core/sheets/write-guards.ts (confirmationOutcome) + src/core/sheets/rows.ts (guardColumn) + src/core/sheets/commit.ts (riskNeedsCode)",
+      "probe": "force:true без confirm не проходит — ни без конверта, ни под ним: модель не подтверждает сама за человека"
     },
     {
       "id": "write.value-precondition",

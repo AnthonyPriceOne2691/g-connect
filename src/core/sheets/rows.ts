@@ -102,24 +102,61 @@ export function columnQuestion(
   };
 }
 
+/** Где пишет правка: номера строк листа; `match` — поиск строк по условию, записи нет. */
+export type WriteRows = readonly number[] | 'match';
+
 /**
  * Формульная и защищённая колонка: отметить в плане и не пустить без `force`.
  *
  * Отметка уезжает в код плана (D-16) — подтверждая код, человек подтверждает и то, что
  * правка лезет в такую колонку. Раньше `force` был решением одной модели.
+ *
+ * Формулы судятся у ячеек записи (`local`), а не по колонке целиком (хотфикс 16.11, весть сессии
+ * профиля work): на листе из нескольких таблиц формулы блока «Итоги» в строках 90–98 запрещали
+ * пустые ячейки ввода в строках 37–41. Без `local` — колонка целиком, как раньше (вид ячеек).
  */
-export function guardColumn(column: ColumnProfile, out: Prepared, options: RowOptions): void {
-  if (column.hasFormula && !out.touches.includes('formula')) out.touches.push('formula');
+export function guardColumn(
+  column: ColumnProfile,
+  out: Prepared,
+  options: RowOptions,
+  local?: { readonly data: SheetData; readonly rows: readonly number[] },
+): void {
+  const formula =
+    column.hasFormula && (local === undefined || formulaAtOrAbove(column, local.data, local.rows));
+  if (column.hasFormula && !formula) out.notes.push(otherFormulasNote(column));
+  if (formula && !out.touches.includes('formula')) out.touches.push('formula');
   if (column.protected && !out.touches.includes('protected')) out.touches.push('protected');
-  if (!column.hasFormula && !column.protected) return;
+  if (!formula && !column.protected) return;
   if (options.force === true) return;
   throw gcError('write_blocked', {
-    detail: column.hasFormula
+    detail: formula
       ? `Колонка «${column.name}» содержит формулы — запись значения их затрёт.`
       : `Колонка «${column.name}» в защищённом диапазоне.`,
-    cause: column.hasFormula ? 'formula_column' : 'protected_range',
+    cause: formula ? 'formula_column' : 'protected_range',
   });
 }
+
+/**
+ * Формула там, куда пишем: в самой ячейке или прямо над ней в той же колонке — так выглядит
+ * формульная колонка у ячейки записи. Строку ниже не смотрим: под ячейками ввода обычно стоит
+ * «Итого» с формулой, и колонку ввода она формульной не делает. Шапка — не строка данных.
+ */
+function formulaAtOrAbove(
+  column: ColumnProfile,
+  data: SheetData,
+  rows: readonly number[],
+): boolean {
+  const first = data.map.headerRow + 1;
+  return rows.some((row) =>
+    [row, row - 1].some(
+      (at) => at >= first && data.cells[at - first]?.[column.index]?.formula !== undefined,
+    ),
+  );
+}
+
+const otherFormulasNote = (column: ColumnProfile): string =>
+  `В колонке «${column.name}» формулы есть в других строках — у ячеек записи и строк над ними ` +
+  'формул нет, запись их не затрагивает';
 
 /**
  * Колонка правки по имени — одна дорога для значений, условий строк и колонок вида (Q40). Точный
@@ -154,6 +191,7 @@ function prepareOne(
   data: SheetData,
   out: Prepared,
   options: RowOptions,
+  rows: WriteRows | undefined,
 ): void {
   const found = writeColumn(requested, data, options);
   if ('question' in found) {
@@ -163,7 +201,8 @@ function prepareOne(
   if (found.assumption !== null) out.assumptions.push(found.assumption);
 
   const column = found.column;
-  guardColumn(column, out, options);
+  // Поиск по условию не пишет — формулы и защита колонки условия ему не помеха.
+  if (rows !== 'match') guardColumn(column, out, options, rows && { data, rows });
 
   const normalized = normalizeValue(
     raw,
@@ -184,7 +223,12 @@ function prepareOne(
   out.resolved.push({ column, value: normalized.value });
 }
 
-export function prepare(data: SheetData, values: RowValues, options: RowOptions): Prepared {
+export function prepare(
+  data: SheetData,
+  values: RowValues,
+  options: RowOptions,
+  rows?: WriteRows,
+): Prepared {
   const out: Prepared = {
     resolved: [],
     assumptions: [],
@@ -193,7 +237,7 @@ export function prepare(data: SheetData, values: RowValues, options: RowOptions)
     touches: [],
   };
   for (const [requested, raw] of Object.entries(values)) {
-    prepareOne(requested, raw, data, out, options);
+    prepareOne(requested, raw, data, out, options, rows);
   }
   return out;
 }
@@ -250,7 +294,7 @@ export function findRows(
   options: RowOptions,
 ): { rows: number[]; questions: Question[]; assumptions: readonly string[] } {
   const map = data.map;
-  const { questions, assumptions, resolved } = prepare(data, key, options);
+  const { questions, assumptions, resolved } = prepare(data, key, options, 'match');
   if (questions.length > 0) return { rows: [], questions, assumptions };
 
   const rows: number[] = [];
@@ -268,7 +312,7 @@ export function findRows(
 
 /** Похожие значения ключа — для вопроса «создать новую или ты имел в виду вот эти?» (A11). */
 function similarKeyValues(data: SheetData, key: RowValues, options: RowOptions): string[] {
-  const prepared = prepare(data, key, options);
+  const prepared = prepare(data, key, options, 'match');
   const first = prepared.resolved[0];
   if (first === undefined) return [];
   const target = String(first.value ?? '').toLowerCase();
@@ -326,13 +370,12 @@ export async function appendRow(
 ): Promise<ApplyOutcome> {
   const map = data.map;
   assertRevision(map, options);
-  const prepared = prepare(data, values, options);
-  if (prepared.questions.length > 0) return clarify(prepared.questions, map);
-
   // После ПОСЛЕДНЕЙ строки с данными, а не после числа непустых строк (урок L16): при
   // пропуске в середине листа счётчик целился внутрь данных. `data.rows` — строки без
   // пустого хвоста, и лист прочитан целиком (D-26), а не первые 500 строк.
   const rowNumber = map.headerRow + data.rows.length + 1;
+  const prepared = prepare(data, values, options, [rowNumber]);
+  if (prepared.questions.length > 0) return clarify(prepared.questions, map);
   const changes: PlannedChange[] = prepared.resolved.map(({ column, value }) => ({
     kind: 'addRow' as const,
     a1: `${map.sheet}!${column.letter}${rowNumber}`,
@@ -438,7 +481,7 @@ export async function upsertRow(
   const rowNumber = found.rows[0]!;
   const rowIndex = rowNumber - map.headerRow - 1;
   const current = data.rows[rowIndex] ?? {};
-  const prepared = withAssumptions(prepare(data, values, options), found);
+  const prepared = withAssumptions(prepare(data, values, options, [rowNumber]), found);
   if (prepared.questions.length > 0) return clarify(prepared.questions, map);
 
   const changes: PlannedChange[] = prepared.resolved

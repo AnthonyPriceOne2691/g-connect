@@ -622,6 +622,20 @@ const probes: Record<string, () => Promise<void>> = {
     // подтверждает человек, а не модель (D-16 остаётся в силе для этого пути).
     expect(outcome.status).toBe('confirm_required');
     expect(c.writes).toHaveLength(0);
+    // И под конвертом (хотфикс 16.11): конверт пропускал `force` в формулу без кода плана.
+    const enveloped = await upsertRow(
+      c,
+      formulaData,
+      { Проект: 'G connect' },
+      { Итого: 1 },
+      {
+        dryRun: false,
+        force: true,
+        authorize: () => ({ authorized: true }),
+      },
+    );
+    expect(enveloped.status).toBe('confirm_required');
+    expect(c.writes).toHaveLength(0);
   },
 
   'write.value-precondition': async () => {
