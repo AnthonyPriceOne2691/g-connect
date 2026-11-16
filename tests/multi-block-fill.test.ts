@@ -2,10 +2,10 @@
  * Лист из нескольких таблиц одна под другой — хотфикс 16.11 (весть сессии профиля work, слово
  * владельца «должно все срабатывать автоматически»).
  *
- * Случай сессии: смета, где под шапкой блока работ стоят пустые ячейки ввода часов, ниже — блок
- * сервисов с буквами вариантов и блок «Итоги» с формулами в той же колонке B. Шапка работ «владеет»
+ * Случай сессии: лист оценки, где под шапкой блока работ стоят пустые ячейки ввода часов, ниже — блок
+ * сервисов с буквами пакетов и блок сводки с формулами в той же колонке B. Шапка работ «владеет»
  * строками до конца листа, и запись трёх чисел в пустые ячейки отказывала дважды: колонку B держали
- * формулы «Итогов» (`write_blocked` без кода), колонку C — список «Вариант, A, B, C, D», выведенный
+ * формулы сводки (`write_blocked` без кода), колонку C — список букв пакетов, выведенный
  * из блока сервисов (`not_in_enum`: ни плана, ни кода, и `force` не помогал).
  *
  * Теперь формулы судятся у ячеек записи (в ней или строкой выше), выведенный список — подсказка в
@@ -37,25 +37,25 @@ import {
 } from './fixtures/sheet.js';
 
 const ID = '1MULTIblockAAAAAAAAAAAAAAAAAAAAAAAAA';
-const SHEET = 'Смета';
+const SHEET = 'Оценка';
 const formula = (text: string, value: CellValue = null): Cell => ({ value, formula: text });
 
-/** Смета: параметры, работы (шапка в строке 6), сервисы с буквами вариантов, итоги с формулами в B. */
+/** Оценка: параметры, работы (шапка в строке 6), сервисы с буквами пакетов, сводка с формулами в B. */
 function estimate(): SheetSnapshot {
   const letters = ['A', 'B', 'C', 'D'];
   return {
     title: SHEET,
     sheetId: 5,
     rows: [
-      row('Смета проекта'),
+      row('Оценка проекта'),
       row('Параметр', 'Значение', 'Единица'),
       row('Срок расчёта', 12, 'мес'),
       row(),
       row('Оценка работ'),
-      row('Этап', 'Оптимистично, ч', 'Реалистично, ч', 'Пессимистично, ч', 'Оценка PERT, ч'),
+      row('Этап', 'Мин, ч', 'Обычно, ч', 'Макс, ч', 'Взвешенно, ч'),
       ...[7, 8, 9].map((n) =>
         row(
-          ['Уточнение вводных и ТЗ', 'Сборка прототипа', 'Тесты'][n - 7]!,
+          ['Сбор требований', 'Сборка прототипа', 'Тесты'][n - 7]!,
           null,
           null,
           null,
@@ -65,10 +65,10 @@ function estimate(): SheetSnapshot {
       row('Итого, ч', null, null, null, formula('=SUM(E7:E9)', 0)),
       row(),
       row('Сервисы'),
-      row('Сервис', 'Тариф', 'Вариант'),
+      row('Сервис', 'Тариф', 'Пакет'),
       ...Array.from({ length: 20 }, (_, i) => row(`сервис ${i + 1}`, 'месяц', letters[i % 4]!)),
       row(),
-      row('Итоги'),
+      row('Сводка'),
       ...[36, 37, 38].map((n) => row(`итог ${n}`, formula(`=SUM(B$7:B$9)*${n}`, 0))),
     ],
   };
@@ -88,7 +88,7 @@ function harness(sheet: SheetSnapshot = estimate()) {
   const registry = {
     targets: [
       {
-        alias: 'смета',
+        alias: 'оценка',
         id: ID,
         type: 'sheet',
         allow: 'write',
@@ -114,23 +114,23 @@ function harness(sheet: SheetSnapshot = estimate()) {
 }
 
 const call = (deps: ToolDeps, op: Record<string, unknown>) =>
-  callMcp(gcApply, { target: 'смета', ...op }, deps);
+  callMcp(gcApply, { target: 'оценка', ...op }, deps);
 
 const hours = {
   op: 'setCells',
   headerRow: 6,
-  where: { Этап: 'Уточнение вводных и ТЗ' },
-  values: { 'Оптимистично, ч': 16, 'Реалистично, ч': 24, 'Пессимистично, ч': 32 },
+  where: { Этап: 'Сбор требований' },
+  values: { 'Мин, ч': 16, 'Обычно, ч': 24, 'Макс, ч': 32 },
 };
 
 describe('лист из нескольких таблиц: числа в пустые ячейки блока — сами, в конверте', () => {
-  it('Y1: карта видит то же, что видела сессия: формулы «Итогов» в B и выведенный список в C', async () => {
+  it('Y1: карта видит то же, что видела сессия: формулы сводки в B и выведенный список в C', async () => {
     const { deps } = harness();
-    const read = await callMcp(gcRead, { target: 'смета', mode: 'map', headerRow: 6 }, deps);
+    const read = await callMcp(gcRead, { target: 'оценка', mode: 'map', headerRow: 6 }, deps);
     const map = read.data as { columns: Record<string, unknown>[] };
     const byName = new Map(map.columns.map((c) => [c['name'], c]));
-    expect(byName.get('Оптимистично, ч')).toMatchObject({ hasFormula: true });
-    expect(byName.get('Реалистично, ч')).toMatchObject({
+    expect(byName.get('Мин, ч')).toMatchObject({ hasFormula: true });
+    expect(byName.get('Обычно, ч')).toMatchObject({
       enumSource: 'inferred',
       enumValues: expect.arrayContaining(['A', 'B', 'C', 'D']) as unknown,
     });
@@ -143,12 +143,12 @@ describe('лист из нескольких таблиц: числа в пус�
     const plan = preview.data as ApplyOutcome;
     expect(plan.status).toBe('preview');
     expect(plan.changes.map((c) => [c.a1, c.after])).toEqual([
-      ['Смета!B7', 16],
-      ['Смета!C7', 24],
-      ['Смета!D7', 32],
+      ['Оценка!B7', 16],
+      ['Оценка!C7', 24],
+      ['Оценка!D7', 32],
     ]);
     expect(plan.notes).toContain(
-      'В колонке «Оптимистично, ч» формулы есть в других строках — у ячеек записи и строк над ними ' +
+      'В колонке «Мин, ч» формулы есть в других строках — у ячеек записи и строк над ними ' +
         'формул нет, запись их не затрагивает',
     );
     expect(plan.notes.join('\n')).toMatch(/«24» нет в списке, выведенном по уже записанному/);
@@ -158,7 +158,7 @@ describe('лист из нескольких таблиц: числа в пус�
     expect((written.data as ApplyOutcome).status).toBe('ok');
     const after = (await client.getSpreadsheet(ID)).sheets[0]!.rows;
     expect(after[6]!.slice(1, 4).map((c) => c?.value)).toEqual([16, 24, 32]);
-    // Формулы «Итогов» в B36:B38 на месте.
+    // Формулы сводки в B36:B38 на месте.
     expect(after.slice(35, 38).map((r) => r[1]?.formula)).toEqual([
       '=SUM(B$7:B$9)*36',
       '=SUM(B$7:B$9)*37',
@@ -170,10 +170,10 @@ describe('лист из нескольких таблиц: числа в пус�
 describe('настоящие защиты — как раньше', () => {
   it('Y2: ячейка с формулой (E7) — write_blocked; с force — только кодом плана', async () => {
     const { deps } = harness();
-    const pert = { ...hours, values: { 'Оценка PERT, ч': 5 } };
-    const blocked = await call(deps, pert);
+    const weighted = { ...hours, values: { 'Взвешенно, ч': 5 } };
+    const blocked = await call(deps, weighted);
     expect(blocked.error).toMatchObject({ code: 'write_blocked', cause: 'formula_column' });
-    const forced = await call(deps, { ...pert, force: true, dryRun: false });
+    const forced = await call(deps, { ...weighted, force: true, dryRun: false });
     // `force` снимает отказ, но не конверт: формулу затирает только код плана человека.
     const outcome = forced.data as ApplyOutcome;
     expect(outcome.status).toBe('confirm_required');

@@ -292,7 +292,7 @@ export async function finishWrite(
 /**
  * Формула или защищённый диапазон в плане — решение человека кодом плана, а не конверта
  * (`write.force-needs-plan`): `force` снимает отказ, но записать без кода не даёт. До хотфикса
- * 16.11 конверт пропускал такую запись с первой фразы — нашёл тест сметы.
+ * 16.11 конверт пропускал такую запись с первой фразы — нашёл тест листа из нескольких таблиц.
  */
 function riskNeedsCode(options: RowOptions, touches: readonly PlanTouch[]): RowOptions {
   if (touches.length === 0 || options.authorize === undefined) return options;

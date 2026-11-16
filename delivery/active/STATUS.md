@@ -4,7 +4,7 @@
 - **stack:** delivery@2.06, cqg@2.69, okf@absent
 - **class:** M
 - **kind:** hotfix
-- **repro_test:** tests/multi-block-fill.test.ts reason=Y1/Y2 на листе-смете из нескольких таблиц — красный на ядре main (6b380ee): запись трёх чисел в пустые ячейки блока — write_blocked (формулы «Итогов» в той же колонке ниже) и not_in_enum (список из чужого блока); force под конвертом писал в формулу без кода плана
+- **repro_test:** tests/multi-block-fill.test.ts reason=Y1/Y2 на листе из нескольких таблиц — красный на ядре main (6b380ee): запись трёх чисел в пустые ячейки блока — write_blocked (формулы итогов в той же колонке ниже) и not_in_enum (список из чужого блока); force под конвертом писал в формулу без кода плана
 - **diagnosis:** delivery/active/diagnosis.md
 - **phase:** implement
 - **builder:** agent:claude-opus-5-5
@@ -28,6 +28,6 @@
 - **rule_enforcers:** src/policy/rules.json
 - **canon_drift_waiver:** no
 - **observability:** 1
-- **observe_signal:** сессии профиля work пишут числа в пустые ячейки блоков сметы сами, в конверте; write_blocked приходит только на ячейку с формулой или под ней
+- **observe_signal:** сессии профиля work пишут числа в пустые ячейки блоков листа из нескольких таблиц сами, в конверте; write_blocked приходит только на ячейку с формулой или под ней
 - **observe_until:** 2026-12-16
 - **circuit_breakers:** defaults from AGENT_DELIVERY_HARNESS.md §3.4
