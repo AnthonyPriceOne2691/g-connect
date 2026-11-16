@@ -51,12 +51,17 @@ export interface ResolvedTarget {
   readonly gid?: number;
 }
 
+// `u/N/` — номер аккаунта в браузере с несколькими входами (`drive/u/2/folders/…`): ссылку,
+// скопированную оттуда, разбор не узнавал (весть сессии профиля work 2026-11-16).
 const URL_PATTERNS: readonly { readonly re: RegExp; readonly type: TargetType }[] = [
-  { re: /docs\.google\.com\/document\/d\/([A-Za-z0-9_-]+)/, type: 'doc' },
-  { re: /docs\.google\.com\/spreadsheets\/d\/([A-Za-z0-9_-]+)/, type: 'sheet' },
-  { re: /docs\.google\.com\/forms\/d\/([A-Za-z0-9_-]+)/, type: 'form' },
-  { re: /drive\.google\.com\/drive\/folders\/([A-Za-z0-9_-]+)/, type: 'folder' },
-  { re: /drive\.google\.com\/(?:file\/d\/|open\?id=)([A-Za-z0-9_-]+)/, type: 'unknown' },
+  { re: /docs\.google\.com\/document\/(?:u\/\d+\/)?d\/([A-Za-z0-9_-]+)/, type: 'doc' },
+  { re: /docs\.google\.com\/spreadsheets\/(?:u\/\d+\/)?d\/([A-Za-z0-9_-]+)/, type: 'sheet' },
+  { re: /docs\.google\.com\/forms\/(?:u\/\d+\/)?d\/([A-Za-z0-9_-]+)/, type: 'form' },
+  { re: /drive\.google\.com\/drive\/(?:u\/\d+\/)?folders\/([A-Za-z0-9_-]+)/, type: 'folder' },
+  {
+    re: /drive\.google\.com\/(?:u\/\d+\/)?(?:file\/d\/|open\?id=)([A-Za-z0-9_-]+)/,
+    type: 'unknown',
+  },
 ];
 
 /** ID файла Google: 20+ символов из безопасного алфавита, без пробелов и точек. */

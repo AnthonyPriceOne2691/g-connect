@@ -8,6 +8,7 @@ import { expect } from 'vitest';
 
 import type { WriteRecord } from '../../src/core/journal.js';
 import { buildSheetData } from '../../src/core/sheets/map.js';
+import { appendRow } from '../../src/core/sheets/rows.js';
 import { setHeader } from '../../src/core/sheets/set-header-op.js';
 import type { Cell, SpreadsheetSnapshot } from '../../src/core/sheets/types.js';
 import { undoStructure } from '../../src/core/undo-structure.js';
@@ -79,4 +80,67 @@ export const headerProbes: Record<string, () => Promise<void>> = {
     });
     expect(edited.formatWrites).toHaveLength(0);
   },
+
+  // Две таблицы одна под другой: данные первой шапки кончаются на второй, и карта её называет;
+  // таблица с пропуском и текстом после него границы не получает (§9.3, 16.11).
+  'map.block-bound': async () => {
+    const two = stacked();
+    const data = buildSheetData(two, { headerRow: 1 });
+    expect(data.map.nextTable).toEqual({ row: 6, headerRow: 7, blankRows: 1 });
+    expect(data.rows).toHaveLength(3);
+    const gapped = {
+      ...two,
+      sheets: [
+        {
+          title: 'Т',
+          sheetId: 1,
+          rows: [
+            [cell('Имя'), cell('Город')],
+            [cell('Анна'), cell('Пермь')],
+            [],
+            [cell('Вера'), cell('Омск')],
+          ],
+        },
+      ],
+    };
+    const whole = buildSheetData(gapped, { headerRow: 1 });
+    expect(whole.map.nextTable).toBeUndefined();
+    expect(whole.rows).toHaveLength(3);
+    await Promise.resolve();
+  },
+
+  // Единственная пустая строка перед следующей таблицей — разделитель: дозапись его не занимает.
+  'write.append-keeps-block-gap': async () => {
+    const two = stacked();
+    const client = new FakeSheetsClient(two);
+    await expect(
+      appendRow(client, buildSheetData(two, { headerRow: 1 }), { Дата: '05.10.2026', Сумма: 4 }),
+    ).rejects.toMatchObject({ payload: { code: 'bad_request', cause: 'block_gap' } });
+    expect(client.writes).toHaveLength(0);
+  },
 };
+
+/** Даты и суммы (строки 2–4), пустая строка 5, заголовок «Склад» и шапка «Товар | Цена» в строке 7. */
+function stacked(): SpreadsheetSnapshot {
+  const day = (d: number, sum: number): Cell[] => [cell(`0${d}.10.2026`), { value: sum }];
+  return {
+    id: 'SHEET',
+    title: 'Т',
+    sheets: [
+      {
+        title: 'Лист',
+        sheetId: 1,
+        rows: [
+          [cell('Дата'), cell('Сумма')],
+          day(1, 1),
+          day(2, 2),
+          day(3, 3),
+          [],
+          [cell('Склад')],
+          [cell('Товар'), cell('Цена')],
+          [cell('стол'), { value: 10 }],
+        ],
+      },
+    ],
+  };
+}

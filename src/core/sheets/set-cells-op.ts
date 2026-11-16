@@ -47,7 +47,7 @@ export async function setRows(
   );
   if ('refusal' in selected) return selected.refusal;
 
-  const prepared = withAssumptions(prepare(data, values, options), selected);
+  const prepared = withAssumptions(prepare(data, values, options, selected.rows), selected);
   if (prepared.questions.length > 0) return clarify(prepared.questions, map);
 
   const changes = plannedCells(data, selected.rows, prepared);

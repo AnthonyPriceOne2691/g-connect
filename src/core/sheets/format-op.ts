@@ -7,7 +7,8 @@
  * второй путь записи разъехался бы с первым первой же правкой.
  */
 
-import { clarify, finish, guardColumn, writeColumn, type Prepared } from './rows.js';
+import { clarify, finish, writeColumn, type Prepared } from './rows.js';
+import { guardColumn } from './write-guard-cells.js';
 import { sameFormat } from './a1.js';
 import {
   formatSourceOf,

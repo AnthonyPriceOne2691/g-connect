@@ -286,7 +286,24 @@ export async function finishWrite(
     };
   }
   if (options.dryRun !== false) return { status: 'preview', ...base, revisionAfter: null };
-  return commit(client, map, changes, base, options, op, shape);
+  return commit(client, map, changes, base, riskNeedsCode(options, prepared.touches), op, shape);
+}
+
+/**
+ * Формула или защищённый диапазон в плане — решение человека кодом плана, а не конверта
+ * (`write.force-needs-plan`): `force` снимает отказ, но записать без кода не даёт. До хотфикса
+ * 16.11 конверт пропускал такую запись с первой фразы — нашёл тест листа из нескольких таблиц.
+ */
+function riskNeedsCode(options: RowOptions, touches: readonly PlanTouch[]): RowOptions {
+  if (touches.length === 0 || options.authorize === undefined) return options;
+  const what = touches.includes('formula') ? 'формулу' : 'защищённый диапазон';
+  return {
+    ...options,
+    authorize: () => ({
+      authorized: false,
+      reason: `Правка задевает ${what} — это решает человек кодом плана, конверт её не пропускает.`,
+    }),
+  };
 }
 /** План геометрии → запись журнала: поля те же, но у записи нет якоря и списка потерь. */
 function toStructuralChange(plan: StructuralPlan, facts: StructuralFacts): StructuralChange {

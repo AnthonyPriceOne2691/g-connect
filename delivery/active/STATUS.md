@@ -1,0 +1,33 @@
+# Active delivery status
+
+- **slug:** multi-block-fill
+- **stack:** delivery@2.06, cqg@2.69, okf@absent
+- **class:** M
+- **kind:** hotfix
+- **repro_test:** tests/multi-block-fill.test.ts reason=Y1/Y2 на листе из нескольких таблиц — красный на ядре main (6b380ee): запись трёх чисел в пустые ячейки блока — write_blocked (формулы итогов в той же колонке ниже) и not_in_enum (список из чужого блока); force под конвертом писал в формулу без кода плана
+- **diagnosis:** delivery/active/diagnosis.md
+- **phase:** implement
+- **builder:** agent:claude-opus-5-5
+- **verifier:** human:anton
+- **human_ok_spec:** yes (by=human:anton, at=2026-11-16) reason=слово владельца в сессии: «нужно ходфиксом быстро реализовать, почему G Connect отказывается заполнять таблички. Это мое слово, поэтому да, делай» и «Нужно hotfixом максимально быстро»; через сессию профиля work — «Должно все срабатывать автоматически»; примеры Y1–Y2 — «Проверка после правки» из вести сессии
+- **human_ok_plan:** yes (by=human:anton, at=2026-11-16) reason=те же слова «да, делай… максимально быстро» — хотфикс без отдельного показа плана; план в plan.md, человеку — в отчёте
+- **shape-oracles:** cqg-deployed
+- **behavior-oracles:** tests-present (1301 тест; инструменты — через настоящий протокол)
+- **artifact_oracle:** scripts/probe_mcp.mjs reason=судит СОБРАННЫЙ сервер по протоколу — в CI на каждом PR и перед переключением стабильной сборки
+- **ci-oracles:** tooling
+- **worktree:** ветка fix/fill-multi-block reason=хотфикс в основном клоне: правка в четырёх файлах ядра, агентов нет; мерж только через merge_guard.sh, за ним contour_doctor
+- **parallel_sessions:** merge-guard
+- **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
+- **blockers:** none
+- **waivers:** max_loc_diff=1000 max_files_touched=25 reason=ответ «Одним PR #24: 1000/25» на вопрос с вариантами — PR #24 (хотфикс табличек, ссылки u/N/ и граница блока): 822 строки чистого прироста (продукт 367, тесты 455), 20 файлов в счёте предела относительно main by=human:anton at=2026-11-16
+- **new_dependency:** none
+- **runtime_paths:** none reason=шов Google не тронут: правка — проверки записи в ядре (rows.ts, values.ts, commit.ts)
+- **irreversible_surfaces:** none reason=запись по-прежнему через превью, предусловие и журнал с откатом; хотфикс снимает ложные отказы и закрывает запись поверх формулы под конвертом
+- **model_surface:** src/policy/rules.md,src/policy/rules.json,src/core/sheets/types.ts,src/mcp/read-values.ts
+  <!-- агенту уйдут: заметки превью «формулы есть в других строках…» и «нет в списке, выведенном по уже записанному…»; отказ write_blocked теперь только у ячейки с формулой или под ней; confirm_required у force под конвертом; правила write.formula-column, values.enum-ask, write.force-needs-plan; раздел о листе из нескольких таблиц; карта — поле nextTable и предупреждение «ниже ещё одна таблица — шапка в строке N»; окно values кончается на блоке; отказ appendRow block_gap; правила map.block-bound, write.append-keeps-block-gap -->
+- **rule_enforcers:** src/policy/rules.json
+- **canon_drift_waiver:** no
+- **observability:** 1
+- **observe_signal:** сессии профиля work пишут числа в пустые ячейки блоков листа из нескольких таблиц сами, в конверте; write_blocked приходит только на ячейку с формулой или под ней
+- **observe_until:** 2026-12-16
+- **circuit_breakers:** defaults from AGENT_DELIVERY_HARNESS.md §3.4

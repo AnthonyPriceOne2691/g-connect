@@ -18,7 +18,7 @@
 import { asData, limitOf, type UntrustedData } from '../core/policy.js';
 import { UNLABELED_WARNING, unlabeledIn, type KeyedColumn } from '../core/sheets/bounds.js';
 import { PARTIAL_READ_WARNING, windowRecords } from '../core/sheets/map.js';
-import type { Cell, CellFormat, SheetData, SheetsClient } from '../core/sheets/types.js';
+import type { Cell, CellFormat, SheetData, SheetMap, SheetsClient } from '../core/sheets/types.js';
 
 export interface ValuesRequest {
   readonly limit?: number | undefined;
@@ -77,12 +77,7 @@ export async function readValues(
   const { map } = data;
   const first = map.headerRow + 1;
   const fromRow = Math.max(request.fromRow ?? first, first);
-  const window = await client.readRows(id, map.sheet, fromRow, limit);
-  const last = fromRow + limit - 1;
-  // Строки дальше окна есть, пока окно не дошло до конца сетки. Пустые строки сетки за
-  // данными тоже «дальше» — следующий вызов вернёт ноль строк и `truncated: false`: лишний
-  // вызов дешевле молча потерянной строки.
-  const truncated = last < window.gridRows;
+  const { window, last, truncated } = await blockWindow(client, id, map, fromRow, limit);
   // Колонки без подписи — по самому окну, а не по карте (Q30): карта видит первые 500 строк, а
   // окно бывает и дальше. Их предупреждение карты заменяет своё: здесь значения уже в строках.
   const unlabeled = unlabeledIn(window.rows, fromRow, map.columns, 'values');
@@ -155,4 +150,28 @@ function windowEnd(
     fields: count === 0 ? {} : { toRow: cut - 1 },
     warnings: truncated && cut <= last ? [`${what} — продолжай с nextFromRow`] : [],
   };
+}
+
+/**
+ * Окно строк `values`. Ниже блока — другая таблица (§9.3): окно кончается на последней строке
+ * блока, а её строки под чужими именами колонок не отдаются; где она и как прочесть —
+ * предупреждение карты. Строки дальше окна есть, пока окно не дошло до конца сетки (или блока).
+ * Пустые строки сетки за данными тоже «дальше» — следующий вызов вернёт ноль строк и
+ * `truncated: false`: лишний вызов дешевле молча потерянной строки.
+ */
+async function blockWindow(
+  client: SheetsClient,
+  id: string,
+  map: SheetMap,
+  fromRow: number,
+  limit: number,
+) {
+  const next = map.nextTable;
+  const blockLast = next === undefined ? undefined : next.row - next.blankRows - 1;
+  const span =
+    blockLast === undefined ? limit : Math.max(1, Math.min(limit, blockLast - fromRow + 1));
+  const read = await client.readRows(id, map.sheet, fromRow, span);
+  const rows = blockLast !== undefined && fromRow > blockLast ? [] : read.rows;
+  const last = fromRow + span - 1;
+  return { window: { ...read, rows }, last, truncated: last < (blockLast ?? read.gridRows) };
 }

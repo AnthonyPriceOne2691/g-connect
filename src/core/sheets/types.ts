@@ -222,6 +222,15 @@ export interface SheetMap {
   readonly otherSheets: readonly { readonly title: string; readonly rowCount: number }[];
   /** Строк в сетке листа — верхняя граница; карта строится по первым строкам (D-26). */
   readonly sheetRows?: number;
+  /**
+   * Ниже данных шапки — другая таблица листа (§9.3): `row` — её первая строка (заголовок или шапка),
+   * `headerRow` — её шапка, `blankRows` — пустых строк между блоками. Нет — данные до конца листа.
+   */
+  readonly nextTable?: {
+    readonly row: number;
+    readonly headerRow: number;
+    readonly blankRows: number;
+  };
   /** Заметки строк над шапкой с адресами (Q24), данными; заметок нет — поля нет. */
   readonly notesAboveHeader?: UntrustedData<readonly CellNote[]>;
   /** Колонки без подписи со значениями (Q30); таких нет — поля нет (Q32). */
