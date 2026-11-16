@@ -12,14 +12,14 @@
 - **human_ok_spec:** yes (by=human:anton, at=2026-11-16) reason=слово владельца в сессии: «нужно ходфиксом быстро реализовать, почему G Connect отказывается заполнять таблички. Это мое слово, поэтому да, делай» и «Нужно hotfixом максимально быстро»; через сессию профиля work — «Должно все срабатывать автоматически»; примеры Y1–Y2 — «Проверка после правки» из вести сессии
 - **human_ok_plan:** yes (by=human:anton, at=2026-11-16) reason=те же слова «да, делай… максимально быстро» — хотфикс без отдельного показа плана; план в plan.md, человеку — в отчёте
 - **shape-oracles:** cqg-deployed
-- **behavior-oracles:** tests-present (1286 тестов; инструменты — через настоящий протокол)
+- **behavior-oracles:** tests-present (1301 тест; инструменты — через настоящий протокол)
 - **artifact_oracle:** scripts/probe_mcp.mjs reason=судит СОБРАННЫЙ сервер по протоколу — в CI на каждом PR и перед переключением стабильной сборки
 - **ci-oracles:** tooling
 - **worktree:** ветка fix/fill-multi-block reason=хотфикс в основном клоне: правка в четырёх файлах ядра, агентов нет; мерж только через merge_guard.sh, за ним contour_doctor
 - **parallel_sessions:** merge-guard
 - **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
 - **blockers:** none
-- **waivers:** none reason=хотфикс в пределах умолчаний
+- **waivers:** max_loc_diff=1000 max_files_touched=25 reason=ответ «Одним PR #24: 1000/25» на вопрос с вариантами — PR #24 (хотфикс табличек, ссылки u/N/ и граница блока): 822 строки чистого прироста (продукт 367, тесты 455), 20 файлов в счёте предела относительно main by=human:anton at=2026-11-16
 - **new_dependency:** none
 - **runtime_paths:** none reason=шов Google не тронут: правка — проверки записи в ядре (rows.ts, values.ts, commit.ts)
 - **irreversible_surfaces:** none reason=запись по-прежнему через превью, предусловие и журнал с откатом; хотфикс снимает ложные отказы и закрывает запись поверх формулы под конвертом
