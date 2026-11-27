@@ -32,7 +32,6 @@ import {
   fingerFileName,
   fingerWindow,
   prepareFinger,
-  shimText,
   type FingerWindow,
 } from '../src/core/token/finger-window.js';
 import { profileUnsealer } from '../src/core/token/sealing.js';
@@ -124,7 +123,13 @@ describe('подпись окна: копия плагина под именем
     for (const path of [window.dir, copy, shim]) {
       expect((await stat(path)).mode & 0o777).toBe(0o700);
     }
-    expect(await readFile(shim, 'utf8')).toBe(shimText(copy, tools.plugin));
+    // Текст прокладки — буквально: пути вписаны в кавычках, копия — только для identity-v1.
+    expect(await readFile(shim, 'utf8')).toBe(
+      '#!/bin/sh\n' +
+        '# G connect: окно Touch ID при расшифровке называется по профилю (D-24, finger-window.ts).\n' +
+        `if [ "$1" = --age-plugin=identity-v1 ] && [ -x '${copy}' ]; then exec '${copy}' "$@"; fi\n` +
+        `exec '${tools.plugin}' "$@"\n`,
+    );
     expect(await readFile(copy, 'utf8')).toBe(pluginScript('v1'));
   });
 

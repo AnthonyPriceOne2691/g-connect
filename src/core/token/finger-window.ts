@@ -56,7 +56,7 @@ export function fingerFileName(label: string): string {
 const quoted = (text: string): string => `'${text.replaceAll("'", "'\\''")}'`;
 
 /** Прокладка: копия — только при расшифровке (`identity-v1`) и только если она на месте. */
-export function shimText(copy: string, plugin: string): string {
+function shimText(copy: string, plugin: string): string {
   const own = quoted(copy);
   return [
     '#!/bin/sh',
