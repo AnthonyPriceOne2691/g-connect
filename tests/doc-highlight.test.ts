@@ -240,14 +240,21 @@ describe('шов Google: фон в живой форме ответа', () => {
       endIndex: startIndex + content.length,
       textRun: { content, textStyle },
     });
+    // Остальные поля вида — тем же разбором: откат точным видом верен, только если читаются все;
+    // `null` у Google — «поля нет».
+    const rest = { bold: true, italic: false, underline: null, link: { url: 'https://x.test/a' } };
     const elements = [
       run(1, 'Счёт ', {}),
       run(6, '2:1', {
         backgroundColor: { color: { rgbColor: { red: 1, green: 0.9490196, blue: 0.8 } } },
       }),
-      run(9, ' и', { backgroundColor: {} }),
-      run(11, ' ещё', { backgroundColor: { color: { rgbColor: {} } } }),
-      run(15, ' хвост\n', { bold: true }),
+      run(9, ' и', { backgroundColor: {}, foregroundColor: { color: { rgbColor: null } } }),
+      run(11, ' ещё', {
+        underline: true,
+        foregroundColor: { color: { rgbColor: { red: 1 } } },
+        backgroundColor: { color: { rgbColor: {} } },
+      }),
+      run(15, ' хвост\n', { ...rest, strikethrough: true, fontSize: { magnitude: 14 } }),
     ];
     const body = { content: [{ startIndex: 1, endIndex: 22, paragraph: { elements } }] };
     const tabs = [{ tabProperties: { tabId: 't.0', title: 'Таб' }, documentTab: { body } }];
@@ -256,8 +263,8 @@ describe('шов Google: фон в живой форме ответа', () => {
       null,
       { background: '#fff2cc' },
       { background: 'none' },
-      { background: '#000000' },
-      { bold: true },
+      { underline: true, color: '#ff0000', background: '#000000' },
+      { bold: true, italic: false, strikethrough: true, link: 'https://x.test/a', fontSize: 14 },
     ]);
   });
 });
