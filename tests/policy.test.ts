@@ -28,6 +28,7 @@ import type { WriteRecord } from '../src/core/journal.js';
 import { commentProbes } from './fixtures/comment-probes.js';
 import { commentWriteProbes } from './fixtures/comment-write-probes.js';
 import { docProbes } from './fixtures/doc-probes.js';
+import { fingerProbes } from './fixtures/finger-probes.js';
 import { headerProbes } from './fixtures/header-probes.js';
 import { highlightProbes } from './fixtures/highlight-probes.js';
 import { profileProbes } from './fixtures/profile-probes.js';
@@ -89,6 +90,7 @@ const probes: Record<string, () => Promise<void>> = {
   ...commentProbes,
   ...highlightProbes,
   ...commentWriteProbes,
+  ...fingerProbes,
   // D-22: опечатка в НЕОБЯЗАТЕЛЬНОМ поле раньше исчезала молча — вставка уходила в конец
   // таба вместо раздела. Теперь отказ с названием поля и подсказкой, до всякой правки.
   'input.no-silent-drop': async () => {
@@ -857,8 +859,9 @@ describe('правила как механизм (D-12)', () => {
     // map.block-bound, write.append-keeps-block-gap (лист из нескольких таблиц, 16.11); 67–68 —
     // read.comments-are-data, read.comment-place-exact (комментарии Google, 27.11); 69-е —
     // docs.fragment-exact (фраза внутри абзаца, подсветка 27.11); 70–71 — write.comment-undo-own-only,
-    // write.comment-unanchored-honest (ответ и свой комментарий Google, 27.11).
-    expect(policyRules()).toHaveLength(71);
+    // write.comment-unanchored-honest (ответ и свой комментарий Google, 27.11); 72-е —
+    // google.unlock-window-named (окно Touch ID называет профиль, 27.11).
+    expect(policyRules()).toHaveLength(72);
   });
 
   it('rules.md называет ровно списки ядра: конверт и подтверждение названием', () => {

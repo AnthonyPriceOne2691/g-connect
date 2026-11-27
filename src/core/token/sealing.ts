@@ -11,8 +11,9 @@ import { readFile } from 'node:fs/promises';
 import { gcError } from '../errors.js';
 import { DEFAULT_ACCOUNT, identityPath, type TokenMeta, type TokenSealer } from '../profiles.js';
 import { recipientInIdentity, sealFor, unsealWith, type AgeTools } from './age.js';
+import { fingerWindow } from './finger-window.js';
 
-/** Расшифровать — окно Touch ID. Только этот путь открывает refresh-токен. */
+/** Расшифровать — окно Touch ID с именем профиля. Только этот путь открывает refresh-токен. */
 export interface TokenUnsealer {
   unseal(sealed: string, meta: TokenMeta): Promise<string>;
 }
@@ -37,6 +38,9 @@ export async function profileSealer(
 
 export function profileUnsealer(tools: AgeTools, account: string = DEFAULT_ACCOUNT): TokenUnsealer {
   return {
-    unseal: (sealed, meta) => unsealWith(tools, identityPath(account), sealed, meta.recipient),
+    unseal: (sealed, meta) =>
+      unsealWith(tools, identityPath(account), sealed, meta.recipient, {
+        window: fingerWindow(account),
+      }),
   };
 }

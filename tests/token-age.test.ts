@@ -183,11 +183,14 @@ describe('шов age: таймер и создание ключа на загл�
     await writeFile(join(stub, 'age'), '#!/bin/sh\nsleep 30 &\nwait\n');
     await chmod(join(stub, 'age'), 0o755);
     const started = Date.now();
-    const result = await codeOf(unsealWith(ageToolsIn(stub), join(stub, 'key'), 'x', 'r', 1_500));
+    const result = await codeOf(
+      unsealWith(ageToolsIn(stub), join(stub, 'key'), 'x', 'r', { timeoutMs: 1_500 }),
+    );
+    // Без окна профиля дописки о подписи нет — текст отказа прежний слово в слово.
     expect(result).toMatchObject({
       code: 'unlock_declined',
       cause: 'timeout',
-      detail: expect.stringContaining('Касания не было 2 с'),
+      detail: 'Касания не было 2 с — Google не открыт.',
     });
     expect(Date.now() - started).toBeLessThan(5_000);
   });

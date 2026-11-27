@@ -17,6 +17,7 @@ import { join } from 'node:path';
 
 import { gcError, type GcError } from '../errors.js';
 import { run, type RunResult } from '../subprocess.js';
+import { prepareFinger, type FingerReady, type FingerWindow } from './finger-window.js';
 
 /** Сколько ждать касания: дольше — `unlock_declined`, окно не держит вызов (спека). */
 export const UNLOCK_TIMEOUT_MS = 60_000;
@@ -105,8 +106,26 @@ export async function sealFor(tools: AgeTools, recipient: string, plain: string)
   });
 }
 
+export interface UnsealOptions {
+  /** Сколько ждать касания; по умолчанию `UNLOCK_TIMEOUT_MS`. */
+  readonly timeoutMs?: number;
+  /** Окно с подписью профиля (`finger-window.ts`); без него окно называется `age-plugin-se`. */
+  readonly window?: FingerWindow;
+}
+
+/** `PATH` расшифровки: папка подписи — первой, чтобы `age` нашёл прокладку раньше плагина. */
+const unsealPath = (tools: AgeTools, finger: FingerReady | undefined): string =>
+  finger !== undefined && 'dir' in finger ? `${finger.dir}:${tools.path}` : tools.path;
+
+/** Окно вышло без подписи — отказ без касания называет причину: голое имя человек счёл бы чужим. */
+const unnamedNote = (finger: FingerReady | undefined): string =>
+  finger !== undefined && 'failed' in finger
+    ? ` Окно было без подписи G connect («age-plugin-se»): ${finger.failed}.`
+    : '';
+
 /**
- * Расшифровать ключом анклава — окно Touch ID показывает плагин.
+ * Расшифровать ключом анклава — окно Touch ID показывает плагин, с окном профиля — его копия
+ * под именем «G connect (профиль)» (`finger-window.ts`).
  *
  * Отменённое касание и чужой ключ `age` называет одинаково — «no identity matched»: плагин
  * на ошибке анклава пишет сообщение и продолжает (замер исходников 0.2.1). Различает их
@@ -118,15 +137,19 @@ export async function unsealWith(
   identityFile: string,
   sealed: string,
   sealedFor: string,
-  timeoutMs: number = UNLOCK_TIMEOUT_MS,
+  options: UnsealOptions = {},
 ): Promise<string> {
+  const timeoutMs = options.timeoutMs ?? UNLOCK_TIMEOUT_MS;
+  const finger =
+    options.window === undefined ? undefined : await prepareFinger(tools.plugin, options.window);
   const result = await run(tools.age, ['--decrypt', '--identity', identityFile], {
     input: sealed,
-    env: { PATH: tools.path },
+    env: { PATH: unsealPath(tools, finger) },
     timeoutMs,
   });
   if (result.code === 0 && !result.timedOut) return result.stdout;
-  throw await unsealFailure(tools, result, identityFile, sealedFor, timeoutMs);
+  const note = unnamedNote(finger);
+  throw await unsealFailure(tools, result, identityFile, sealedFor, timeoutMs, note);
 }
 
 async function unsealFailure(
@@ -135,10 +158,11 @@ async function unsealFailure(
   identityFile: string,
   sealedFor: string,
   timeoutMs: number,
+  note: string,
 ): Promise<GcError> {
   if (result.timedOut) {
     return gcError('unlock_declined', {
-      detail: `Касания не было ${Math.round(timeoutMs / 1000)} с — Google не открыт.`,
+      detail: `Касания не было ${Math.round(timeoutMs / 1000)} с — Google не открыт.${note}`,
       cause: 'timeout',
     });
   }
@@ -149,7 +173,7 @@ async function unsealFailure(
       return gcError('unlock_declined', {
         detail:
           'Касание отменено или не прошло — Google не открыт. Повторяется после касания — ' +
-          'ключ анклава недоступен, поможет новый вход (gc login).',
+          `ключ анклава недоступен, поможет новый вход (gc login).${note}`,
         cause: 'declined',
       });
     }

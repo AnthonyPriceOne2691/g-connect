@@ -181,8 +181,12 @@ describe.skipIf(AGE_DIR === undefined)('токен процесса под па�
     const stored = await readSealedToken();
     expect(stored?.meta.obtained_at).toBe(42);
     expect(await unsealer.unseal(stored?.sealed ?? '', stored!.meta)).toContain('1//r2');
-    for (const file of await readdir(profileDir())) {
-      expect(await readFile(join(profileDir(), file), 'utf8')).not.toContain('1//r2');
+    // Вглубь: в папке профиля с 27.11 есть `finger/` (подпись окна) — открытого токена нет нигде.
+    const entries = await readdir(profileDir(), { recursive: true, withFileTypes: true });
+    const files = entries.filter((entry) => entry.isFile());
+    expect(files.map((entry) => entry.name)).toContain('token.age');
+    for (const entry of files) {
+      expect(await readFile(join(entry.parentPath, entry.name), 'utf8')).not.toContain('1//r2');
     }
   });
 

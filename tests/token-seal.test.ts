@@ -6,7 +6,7 @@
  * вход») и браузер — заглушки с журналом вызовов: порядок шагов и есть оракул (урок L19).
  */
 
-import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -94,6 +94,15 @@ describe.skipIf(AGE_DIR === undefined)('gc seal: порядок перехода
     expect(await present(plainFile())).toBe(false);
     // Новый токен зашифрован тем ключом, что прошёл пробу.
     expect((await readTokenMeta())?.recipient).toBe(report.recipient);
+  });
+
+  it('J1-путь: пробное касание — окном профиля; строка называет окно до касания', async () => {
+    const said: string[] = [];
+    await sealProfile({ ...flow(), say: (line) => said.push(line) });
+    expect(said[0]).toBe(
+      'Пробное касание: окно «G connect» попросит палец или пароль Mac, чтобы проверить ключ анклава.',
+    );
+    expect(await readdir(join(profileDir(), 'finger'))).toContain('G connect');
   });
 
   it('отзыв не подтверждён — входа нет, token.json на месте', async () => {

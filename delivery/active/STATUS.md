@@ -1,0 +1,34 @@
+# Active delivery status
+
+- **slug:** finger-window
+- **stack:** delivery@2.06, cqg@2.69, okf@absent
+- **class:** M
+- **kind:** feature
+- **repro_test:** n/a reason=kind=feature
+- **diagnosis:** n/a reason=kind=feature
+- **phase:** implement
+- **builder:** agent:claude-opus-5-5
+- **verifier:** human:anton
+- **human_ok_spec:** yes (by=human:anton, at=2026-11-27) reason=слово владельца в сессии «тебе напишет сессия по поводу переименования окон под пальцем» и ответ «Своя папка G connect (Рекомендую)» на вопрос с вариантами о месте прокладки; задача — записка сессии portfolio-site по его слову «можно их вызовы тоже нормально обозвать?»
+- **human_ok_plan:** yes (by=human:anton, at=2026-11-27) reason=план — вариант из того же ответа «Своя папка G connect»: копия плагина и прокладка в папке профиля, сбой подписи не мешает расшифровке; отклонённые альтернативы в plan.md
+- **shape-oracles:** cqg-deployed
+- **behavior-oracles:** tests-present (инструменты — через настоящий протокол; шов age — на заглушках age и плагина)
+- **artifact_oracle:** scripts/probe_mcp.mjs reason=судит СОБРАННЫЙ сервер по протоколу — в CI на каждом PR и перед переключением стабильной сборки
+- **ci-oracles:** tooling
+- **worktree:** ветка feat/finger-window в основном клоне reason=один строитель без агентов, правка одного шва; основной клон чистый, параллельной поставки нет; мерж только через merge_guard.sh, за ним contour_doctor
+- **parallel_sessions:** merge-guard
+- **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
+- **blockers:** none
+- **waivers:** none
+- **new_dependency:** none
+- **runtime_paths:** src/core/token/finger-window.ts <!-- копия плагина и прокладка первой в PATH расшифровки: имя окна Touch ID видно только живьём -->
+- **irreversible_surfaces:** none reason=папку подписи G connect пишет сам и перезаписывает при каждой расшифровке; удалённая папка возвращает прежнее окно; касание открывает Google на час, как до поставки
+- **model_surface:** src/policy/rules.md,src/policy/rules.json,src/core/token/age.ts
+  <!-- агенту уйдут: абзац «Про доступ» — окно называется как начало строки; правило google.unlock-window-named; дописка «Окно было без подписи…» в unlock_declined -->
+- **rule_enforcers:** src/policy/rules.json
+- **canon_drift_waiver:** no
+- **baseline_growth_waiver:** no
+- **observability:** 1
+- **observe_signal:** окно Touch ID G connect называется «G connect» или «G connect (work)»; в папке finger профиля — ровно копия и прокладка; нет отказов unlock_declined с дописью «Окно было без подписи»
+- **observe_until:** 2026-12-11
+- **circuit_breakers:** defaults from AGENT_DELIVERY_HARNESS.md §3.4
