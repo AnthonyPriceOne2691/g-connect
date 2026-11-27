@@ -110,6 +110,31 @@ describe('P20 — конверт doc-цели', () => {
     expect(outcome.status).toBe('confirm_required');
     expect(outcome.notes.join(' ')).toContain('appendText');
   });
+
+  it('Z6: подсветка фразы через gc_apply — мера её юниты: 10 проходят maxChars 20, абзац — нет', async () => {
+    const { deps, docs } = harness({ ops: ['updateTextStyle'], maxChars: 20 });
+    const args = {
+      op: 'updateTextStyle',
+      target: 'forecast',
+      tab: 'Прогноз',
+      where: { textStartsWith: 'Ставим' },
+      style: { background: '#fff2cc' },
+      dryRun: false,
+    };
+    const whole = (await applyData(args, deps)) as { status: string; notes: string[] };
+    expect(whole.status).toBe('confirm_required');
+    expect(whole.notes.join(' ')).toContain('Правка трогает 43 юнитов текста');
+    const piece = (await applyData({ ...args, fragment: 'Fluminense' }, deps)) as {
+      status: string;
+    };
+    expect(piece.status).toBe('ok');
+    const sent = docs.applied.flat() as { startIndex: number; endIndex: number }[];
+    expect(sent.map((request) => request.endIndex - request.startIndex)).toEqual([10]);
+    // Вид абзаца идёт той же разводкой, но style и fragment ему не передаются вовсе.
+    const view = { op: 'setParagraphStyle', target: 'forecast', tab: 'Прогноз', where: args.where };
+    const outcome = await applyData({ ...view, namedStyle: 'HEADING_2' }, deps);
+    expect(outcome).toMatchObject({ status: 'preview' });
+  });
 });
 
 describe('разрушающие doc-операции в конверт не кладутся — уже сейчас (D-20)', () => {
