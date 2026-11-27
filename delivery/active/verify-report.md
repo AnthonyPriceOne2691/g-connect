@@ -1,6 +1,7 @@
 # Verify report — окно Touch ID называет G connect и профиль
 
-Статус: **verify** — ветка `feat/finger-window`, один срез `0067365`; мерж — словом владельца.
+Статус: **verify** — ветка `feat/finger-window` (`0067365`, `419fca7`); мерж — слово владельца 2026-11-27
+«Пушь и сливай после зелёного CI».
 
 - **Verifier:** human:anton
 
@@ -93,9 +94,75 @@
   владельца не трогаем).
 - `.part-*` может остаться, если процесс убит между записью и `rename`; следующая расшифровка его не
   трогает.
+- §3.1d: спека и тесты приехали одним коммитом — порядок «пример до кода» git не показывает; примеры J1–J8
+  взяты из записки сессии portfolio-site и ответа владельца до кода, ожидания подписаны дайджестом.
 
-DIGEST
+## Assertion digest (ревью ожиданий, не кода)
+
+База: `origin/main` · сгенерировано `assert_digest.sh`
+
+Новых/изменённых утверждений: **45**, из них без ссылки на пример спеки:
+**9**. Вопрос к каждому непривязанному один: **откуда взято ожидаемое
+значение — из спеки или придумано под реализацию?**
+
+```
+J2	expect(await unseal({ window })).toEqual({
+J2	expect(await unseal()).toEqual({ path: `${bin}:/usr/bin:/bin`, plugin: BARE });
+J2	expect(await prepareFinger(tools.plugin, window)).toEqual({ dir: window.dir });
+J2	expect(call('keygen', '-o', 'x')).toBe('v1|age-plugin-se|keygen -o x');
+J2	expect(call('--age-plugin=recipient-v1')).toBe('v1|age-plugin-se|--age-plugin=recipient-v1');
+J2	expect(call()).toBe('v1|age-plugin-se|');
+J2	expect(call(IDENTITY_CALL)).toBe(NAMED);
+J2	expect((await readdir(window.dir)).sort()).toEqual([LABEL, 'age-plugin-se']);
+J2	expect((await stat(path)).mode & 0o777).toBe(0o700);
+J2	expect(await readFile(shim, 'utf8')).toBe(
+J2	expect(await readFile(copy, 'utf8')).toBe(pluginScript('v1'));
+J2	expect(execFileSync(join(window.dir, 'age-plugin-se'), [IDENTITY_CALL]).toString()).toBe(BARE);
+J3	expect((await unseal({ window })).plugin).toBe(`v2|${LABEL}|${IDENTITY_CALL}`);
+J8	expect((await unseal({ window })).plugin).toBe(`cellar|${LABEL}|${IDENTITY_CALL}`);
+J8	expect((await lstat(join(window.dir, LABEL))).isFile()).toBe(true);
+J8	expect(await readFile(join(window.dir, 'age-plugin-se'), 'utf8')).toContain(
+J4	expect(await unseal({ window })).toEqual({ path: `${bin}:/usr/bin:/bin`, plugin: BARE });
+J4	expect(await prepareFinger(tools.plugin, { ...window, label })).toEqual({
+J4	await expect(stat(window.dir)).rejects.toThrow();
+J4	expect(await prepareFinger(tools.plugin, { dir, label: LABEL })).toEqual({
+J4	await expect(stat(dir)).rejects.toThrow();
+J4	expect(await prepareFinger(tools.plugin, window)).toEqual({
+J4	expect(await prepareFinger(tools.plugin, window)).toEqual({
+J4	expect(await readdir(window.dir)).toEqual([LABEL]);
+J4	expect(await codeOf(unsealRaw({ window, timeoutMs: 1_000 }))).toMatchObject({
+J4	expect(await codeOf(unsealRaw({ window, timeoutMs: 1_000 }))).toMatchObject({
+J4	expect(await codeOf(unsealRaw({ window }))).toMatchObject({ cause: 'declined', detail: plain });
+J4	expect(await codeOf(unsealRaw({ window: { ...window, label: '' } }))).toMatchObject({
+J5	expect(results.map((result) => result.plugin)).toEqual([NAMED, NAMED, NAMED]);
+J5	expect((await readdir(window.dir)).sort()).toEqual([LABEL, 'age-plugin-se']);
+J6	expect((await unseal({ window })).plugin).toBe(NAMED);
+J7	expect((await unseal({ window: odd })).plugin).toBe(NAMED);
+-	expect(fingerFileName('G connect (a/b)')).toBe('G connect (ab)');
+-	expect(fingerFileName(' \tG connect\u0007 (work)\n ')).toBe('G connect (work)');
+-	expect(fingerWindow('work')).toEqual({ dir: join(root, 'work', 'finger'), label: LABEL });
+-	expect(fingerWindow('default')).toEqual({
+-	expect(printed).toEqual({
+-	import { expect } from 'vitest';
+-	expect(named.plugin).toBe(`v1|G connect (work)|${IDENTITY_CALL}`);
+-	expect(bare.plugin).toBe(`v1|age-plugin-se|${IDENTITY_CALL}`);
+-	expect(policyRules()).toHaveLength(72);
+J1	expect(said[0]).toBe(
+J1	expect(await readdir(join(profileDir(), 'finger'))).toContain('G connect');
+J1	expect(files.map((entry) => entry.name)).toContain('token.age');
+J1	expect(await readFile(join(entry.parentPath, entry.name), 'utf8')).not.toContain('1//r2');
+```
+
+Привязаны к примерам: **J1 J2 J3 J4 J5 J6 J7 J8**. Остальные 9 — нет.
+
+Читать нужно **только строки с `-` в первой колонке**: их ожидание
+ничем не подписано. Подпись: `asserts_reviewed_by: human:… at=…`.
+
+asserts_without_example: 9
 
 ## Ревью ожиданий
 
-REVIEW
+- **asserts_reviewed_by:** human:anton at=2026-11-27 (слово владельца в сессии: ответ «Подписываю» на вопрос с
+  вариантами — в вопросе названы 45 новых проверок ветки `feat/finger-window` относительно `main`, 36 привязанных
+  к примерам J1–J8 и 9 непривязанных по группам (имя файла, папка профиля и имя окна, расшифровка профилем, проба
+  правила, число правил, строка import) и путь к полному списку; дайджест выше — тот же, база `main`)

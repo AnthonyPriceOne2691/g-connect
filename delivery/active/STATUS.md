@@ -6,13 +6,13 @@
 - **kind:** feature
 - **repro_test:** n/a reason=kind=feature
 - **diagnosis:** n/a reason=kind=feature
-- **phase:** implement
+- **phase:** verify
 - **builder:** agent:claude-opus-5-5
 - **verifier:** human:anton
 - **human_ok_spec:** yes (by=human:anton, at=2026-11-27) reason=слово владельца в сессии «тебе напишет сессия по поводу переименования окон под пальцем» и ответ «Своя папка G connect (Рекомендую)» на вопрос с вариантами о месте прокладки; задача — записка сессии portfolio-site по его слову «можно их вызовы тоже нормально обозвать?»
 - **human_ok_plan:** yes (by=human:anton, at=2026-11-27) reason=план — вариант из того же ответа «Своя папка G connect»: копия плагина и прокладка в папке профиля, сбой подписи не мешает расшифровке; отклонённые альтернативы в plan.md
 - **shape-oracles:** cqg-deployed
-- **behavior-oracles:** tests-present (инструменты — через настоящий протокол; шов age — на заглушках age и плагина)
+- **behavior-oracles:** tests-present (1388 тестов; шов age — на заглушках age и плагина; живой прогон J1 — 27.11, `live-run.md`)
 - **artifact_oracle:** scripts/probe_mcp.mjs reason=судит СОБРАННЫЙ сервер по протоколу — в CI на каждом PR и перед переключением стабильной сборки
 - **ci-oracles:** tooling
 - **worktree:** ветка feat/finger-window в основном клоне reason=один строитель без агентов, правка одного шва; основной клон чистый, параллельной поставки нет; мерж только через merge_guard.sh, за ним contour_doctor

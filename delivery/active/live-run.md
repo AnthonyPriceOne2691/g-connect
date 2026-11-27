@@ -9,6 +9,7 @@
 | J1 | `GCONNECT_ACCOUNT=work gc_unlock` — окно «G connect (work) needs to authenticate to continue» | касание через 8,6 с, `unlocked`; в `~/.gconnect/work/finger` — ровно копия «G connect (work)» (299 664 байт, клон плагина) и прокладка, всё 700 |
 | J1 | `gc_unlock` личного профиля — окно «G connect needs to authenticate to continue» | касание через 5,4 с, `unlocked` |
 
-Google открывался только в процессе прогона и закрылся вместе с ним. Пробное касание `gc seal` —
+Имена окон подтвердил владелец — ответ «Да, оба так» на вопрос «Окна Touch ID назывались именно «G connect
+(work)» и «G connect»?» (27.11). Google открывался только в процессе прогона и закрылся вместе с ним. Пробное касание `gc seal` —
 тем же швом, живьём не проверялось (нужен новый вход); окно разрешения проекта (Secretive) — вне
 поставки.
