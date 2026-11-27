@@ -130,6 +130,10 @@ describe('P20 — конверт doc-цели', () => {
     expect(piece.status).toBe('ok');
     const sent = docs.applied.flat() as { startIndex: number; endIndex: number }[];
     expect(sent.map((request) => request.endIndex - request.startIndex)).toEqual([10]);
+    // Вид абзаца идёт той же разводкой, но style и fragment ему не передаются вовсе.
+    const view = { op: 'setParagraphStyle', target: 'forecast', tab: 'Прогноз', where: args.where };
+    const outcome = await applyData({ ...view, namedStyle: 'HEADING_2' }, deps);
+    expect(outcome).toMatchObject({ status: 'preview' });
   });
 });
 

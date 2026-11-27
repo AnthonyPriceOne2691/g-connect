@@ -173,8 +173,10 @@ describe('Z8 — откат подсветки', () => {
     const mask =
       'bold,italic,underline,strikethrough,link,fontSize,foregroundColor,backgroundColor';
     expect(toDocRequest(restyle(3, 5, {}, true))).toEqual(google(3, 5, {}, mask));
-    const none = toDocRequest(restyle(3, 5, { background: 'none' }, true));
-    expect(none).toEqual(google(3, 5, { backgroundColor: {} }, mask));
+    // Цвет текста идёт тем же переводом долей, что фон: #00ff80 — каналы по своим местам.
+    const none = toDocRequest(restyle(3, 5, { background: 'none', color: '#00ff80' }, true));
+    const green = { color: { rgbColor: { red: 0, green: 1, blue: 128 / 255 } } };
+    expect(none).toEqual(google(3, 5, { backgroundColor: {}, foregroundColor: green }, mask));
   });
 });
 
