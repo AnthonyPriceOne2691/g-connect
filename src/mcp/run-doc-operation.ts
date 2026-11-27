@@ -19,6 +19,7 @@ import type { ResolvedTarget } from '../core/targets.js';
 import type { ToolDeps } from './deps.js';
 import type { WriteRight } from '../core/write-right.js';
 import { envelopeJudge, journalOf } from './apply-support.js';
+import { isCommentOperation, runComment, type DocEditOperation } from './run-comment.js';
 
 export const isDocOperation = (operation: Operation): operation is DocOperation =>
   DOC_OPERATION_NAMES.includes(operation.op);
@@ -51,6 +52,19 @@ export async function runDocApply(
   // P19b: локальный источник картинки отклоняется ДО любого обращения к Google — и до
   // чтения документа тоже (находка читателя 2026-10-01: проверка стояла после get).
   if (operation.op === 'insertInlineImage') assertImageSource(operation.uri);
+  const options = {
+    dryRun: operation.dryRun,
+    journal: journalOf(deps),
+    journalSource: deps.journalSource,
+    account: deps.account,
+    alias: resolved.alias,
+    ...(operation.confirm === undefined ? {} : { confirm: operation.confirm }),
+    ...(operation.planId === undefined ? {} : { planId: operation.planId }),
+    force: operation.force,
+    authorize: envelopeJudge(resolved, right),
+  };
+  // Комментарии Google пишет Drive, а не batchUpdate (27.11): тот же контур, своя разводка.
+  if (isCommentOperation(operation)) return runComment(operation, resolved, deps, options);
   const client = await deps.docs();
   const snapshot = await client.getDocument(resolved.id);
   // Вызов без превью (CLI, раннер) несёт ревизию, на которой строил план: ушла — отказ,
@@ -63,17 +77,6 @@ export async function runDocApply(
       cause: 'expect_revision',
     });
   }
-  const options = {
-    dryRun: operation.dryRun,
-    journal: journalOf(deps),
-    journalSource: deps.journalSource,
-    account: deps.account,
-    alias: resolved.alias,
-    ...(operation.confirm === undefined ? {} : { confirm: operation.confirm }),
-    ...(operation.planId === undefined ? {} : { planId: operation.planId }),
-    force: operation.force,
-    authorize: envelopeJudge(resolved, right),
-  };
   const outcome = await dispatchDocOperation(client, snapshot, operation, options);
   return { ...outcome, target: { id: resolved.id, alias: resolved.alias } };
 }
@@ -82,7 +85,7 @@ export async function runDocApply(
 function dispatchDocOperation(
   client: Awaited<ReturnType<ToolDeps['docs']>>,
   snapshot: Awaited<ReturnType<Awaited<ReturnType<ToolDeps['docs']>>['getDocument']>>,
-  operation: DocOperation,
+  operation: DocEditOperation,
   options: Parameters<typeof runDocInsert>[3],
 ): Promise<DocApplyOutcome> {
   switch (operation.op) {
@@ -167,6 +170,8 @@ export async function runDocUndo(
   const docs = await deps.docs();
   return undoDocLast(docs, resolved.id, deps.journalSource, {
     account: deps.account,
+    // Свой комментарий Google (27.11) откатывает Drive — лениво: правкам текста он не нужен.
+    drive: () => deps.drive(),
     ...(input.force === undefined ? {} : { force: input.force }),
     ...(input.record === undefined ? {} : { correlationId: input.record }),
     ...(deps.project === undefined ? {} : { project: deps.project }),

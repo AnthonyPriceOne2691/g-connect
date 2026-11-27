@@ -10,11 +10,13 @@
  * - страница — до 100 комментариев (без `pageSize` — 20), дальше `nextPageToken`;
  * - якорь комментария к документу Google — «непрозрачные» данные редактора: позицию в тексте
  *   даёт только цитата (`quotedFileContent`), и место по ней ищет `docs/comment-place.ts`.
+ *
+ * Запись (27.11, вторым шагом): ответ в ветке и свой комментарий — `CommentWriter` ниже.
  */
 
 import type { drive_v3 } from 'googleapis';
 
-import { fromGoogleError } from '../errors.js';
+import { fromGoogleError, gcError, GcError } from '../errors.js';
 
 export interface CommentReply {
   readonly id: string;
@@ -50,10 +52,13 @@ export interface CommentList {
 const USER = 'author(displayName,me)';
 const REPLY = `id,${USER},content,createdTime,modifiedTime,action,deleted`;
 
+/** Поля одной ветки — те же у списка и у чтения по id (`comments.get`). */
+const THREAD =
+  `id,${USER},content,createdTime,modifiedTime,resolved,deleted,` +
+  `quotedFileContent(mimeType,value),replies(${REPLY})`;
+
 /** Поля ответа: без `fields` Drive отказывает (документация comments/list). */
-export const COMMENT_FIELDS =
-  `nextPageToken,comments(id,${USER},content,createdTime,modifiedTime,resolved,deleted,` +
-  `quotedFileContent(mimeType,value),replies(${REPLY}))`;
+export const COMMENT_FIELDS = `nextPageToken,comments(${THREAD})`;
 
 const PAGE_SIZE = 100;
 /** 50 страниц по 100 — 5000 комментариев; дальше список оборван с `truncated: true`. */
@@ -93,6 +98,113 @@ export async function listComments(
   }
   return { comments, truncated: true };
 }
+
+/** Созданный комментарий или ответ: по id откат его удалит. */
+export interface CreatedComment {
+  readonly id: string;
+  readonly createdTime: string | null;
+}
+
+/** Ответ в ветке: текст, закрытие (`resolve`) или открытие (`reopen`) — хотя бы одно. */
+export interface ReplyBody {
+  readonly text?: string;
+  readonly action?: 'resolve' | 'reopen';
+}
+
+/**
+ * Запись комментариев (27.11). Из документации Drive: удалить комментарий или ответ может только
+ * автор (`author.me`); ветку закрывает только ответ с `action: resolve` — `resolved` только читается.
+ */
+export interface CommentWriter {
+  /** Ветка с ответами. Удалённая — `null`; нет файла или такой ветки — `not_found`. */
+  getComment(fileId: string, commentId: string): Promise<FileComment | null>;
+  /** Ко всему файлу, цитата — текстом: якорь API-комментария Docs не рисует (manage-comments). */
+  createComment(fileId: string, text: string, quote?: string): Promise<CreatedComment>;
+  createReply(fileId: string, commentId: string, body: ReplyBody): Promise<CreatedComment>;
+  deleteComment(fileId: string, commentId: string): Promise<void>;
+  deleteReply(fileId: string, commentId: string, replyId: string): Promise<void>;
+}
+
+/**
+ * Запись поверх API Drive — ей делегирует `GoogleDriveClient`. Чтение — с повторами; создание — БЕЗ:
+ * оно не идемпотентно, и повтор после обрыва оставил бы людям второе такое же сообщение.
+ */
+export function commentWriter(drive: drive_v3.Drive, retry: Retry): CommentWriter {
+  return {
+    async getComment(fileId, commentId) {
+      const read = () =>
+        drive.comments.get({ fileId, commentId, includeDeleted: true, fields: THREAD });
+      const what = `Drive не отдал комментарий ${commentId} файла ${fileId}.`;
+      return toComment((await retry(read).catch(rethrow(what))).data);
+    },
+    async createComment(fileId, text, quote) {
+      const quoted =
+        quote === undefined ? {} : { quotedFileContent: { mimeType: 'text/plain', value: quote } };
+      const request = drive.comments.create({
+        fileId,
+        fields: 'id,createdTime,quotedFileContent',
+        requestBody: { content: text, ...quoted },
+      });
+      const what = `Drive не создал комментарий в файле ${fileId}.`;
+      return created((await request.catch(rethrow(what))).data, 'комментария');
+    },
+    async createReply(fileId, commentId, { text, action }) {
+      const request = drive.replies.create({
+        fileId,
+        commentId,
+        fields: 'id,createdTime,action',
+        requestBody: {
+          ...(text === undefined ? {} : { content: text }),
+          ...(action === undefined ? {} : { action }),
+        },
+      });
+      const what = `Drive не принял ответ в ветке ${commentId} файла ${fileId}.`;
+      return created((await request.catch(rethrow(what))).data, 'ответа');
+    },
+    deleteComment: (fileId, commentId) =>
+      deleteOnce(
+        retry,
+        () => drive.comments.delete({ fileId, commentId }),
+        `Drive не удалил комментарий ${commentId} файла ${fileId}.`,
+      ),
+    deleteReply: (fileId, commentId, replyId) =>
+      deleteOnce(
+        retry,
+        () => drive.replies.delete({ fileId, commentId, replyId }),
+        `Drive не удалил ответ ${replyId} в ветке ${commentId} файла ${fileId}.`,
+      ),
+  };
+}
+
+/** Без id созданное нечем откатить — это ошибка, а не «готово». */
+function created(data: drive_v3.Schema$Comment | drive_v3.Schema$Reply, what: string) {
+  if (!data.id) throw gcError('internal', { detail: `Drive не вернул id созданного ${what}.` });
+  return { id: data.id, createdTime: data.createdTime ?? null };
+}
+
+/**
+ * Удаление — С повторами: удалить дважды — то же, что один раз. Отсюда решение о 404: ПОСЛЕ повтора
+ * это успех — первая попытка дошла до Drive и удалила, а ответ потерялся в обрыве или 5xx; с первой
+ * попытки — `not_found`: удалять было нечего, и «удалено» было бы неправдой.
+ */
+async function deleteOnce(retry: Retry, call: () => Promise<unknown>, what: string): Promise<void> {
+  let attempts = 0;
+  const once = () => {
+    attempts += 1;
+    return call();
+  };
+  await retry(once).catch((error: unknown) => {
+    if (fromGoogleError(error).payload.code !== 'not_found' || attempts === 1) rethrow(what)(error);
+  });
+}
+
+/** Ошибка с тем, что не удалось: повтор отдаёт готовую `GcError` без `detail`. */
+const rethrow =
+  (what: string) =>
+  (error: unknown): never => {
+    const gc = fromGoogleError(error, what);
+    throw gc.payload.detail === undefined ? new GcError({ ...gc.payload, detail: what }) : gc;
+  };
 
 /** Автор и время — общие у комментария и ответа. */
 function byline(raw: drive_v3.Schema$Comment | drive_v3.Schema$Reply) {

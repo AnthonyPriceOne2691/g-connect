@@ -11,6 +11,7 @@
  */
 
 import { gcError, newCorrelationId } from './errors.js';
+import { isCommentRecord, undoComment } from './undo-comments.js';
 import { assertRecent, isUndoOutcome, pickUndoRecord } from './undo-shared.js';
 import { undoStructure } from './undo-structure.js';
 import type { UndoOptions, UndoOutcome } from './undo-types.js';
@@ -208,6 +209,8 @@ export async function undoLast(
   const record = await pickUndoRecord(source, targetId, options);
   if (isUndoOutcome(record)) return record;
   assertRecent(record, options);
+  // Комментарий по голому ID (вид цели неизвестен) приходит сюда, а не в откат документа (27.11).
+  if (isCommentRecord(record)) return undoComment(targetId, record, options);
   if (record.structure !== undefined) {
     return undoStructure(client, targetId, record, options, journalUndo);
   }

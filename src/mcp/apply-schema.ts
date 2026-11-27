@@ -36,7 +36,31 @@ import { sheetArg, targetArg } from './target-arg.js';
  */
 const docFields = {
   tab: z.string().min(1).optional().describe('Документ: таб по заголовку; без него — единственный'),
-  text: z.string().min(1).optional().describe('appendText/insertText: текст НОВОГО абзаца'),
+  text: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'appendText/insertText: текст НОВОГО абзаца; addComment/replyComment: текст комментария ' +
+        'или ответа — его получат люди',
+    ),
+  commentId: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('replyComment: id ветки комментариев — из gc_read mode=comments'),
+  resolve: z
+    .literal(true)
+    .optional()
+    .describe('replyComment: закрыть ветку ответом (resolve); без text — только закрыть'),
+  fragment: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'addComment: фраза внутри абзаца where — цитата комментария, одна и как есть в тексте ' +
+        '(mode=text); без неё цитата — абзац целиком, без where — комментарий ко всему документу',
+    ),
   afterHeading: z
     .string()
     .min(1)
@@ -164,7 +188,7 @@ export const applyInput = {
         'deleteRows и moveRows — ключ строки или значение любой колонки; пустое условие у ' +
         'formatCells, удаления и перемещения отклоняется. Документ: селектор абзаца, ровно ' +
         'один ключ из paragraphIndex (№ из mode=map), textStartsWith, textContains, ' +
-        'firstParagraph, lastParagraph',
+        'firstParagraph, lastParagraph; у addComment — абзац цитаты',
     ),
   values: z
     .record(z.string(), z.unknown())

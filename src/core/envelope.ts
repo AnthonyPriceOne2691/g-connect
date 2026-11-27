@@ -65,6 +65,10 @@ export const ENVELOPE_OPS: readonly OperationKind[] = [
   // Разрыв страницы и картинка по URL: один юнит, откат удаляет вставленное.
   'insertPageBreak',
   'insertInlineImage',
+  // Комментарии Google (27.11): текст документа не трогают, откат удаляет своё — ответ или
+  // комментарий, пока в его ветке нет чужих ответов. Мера — юниты текста комментария.
+  'replyComment',
+  'addComment',
 ];
 
 /**
@@ -253,6 +257,8 @@ const DOC_OPS: ReadonlySet<OperationKind> = new Set([
   'deleteParagraphBullets',
   'insertPageBreak',
   'insertInlineImage',
+  'replyComment',
+  'addComment',
 ]);
 
 export function envelopeAuthorizes(

@@ -209,3 +209,41 @@ export const insertInlineImageOp = z.object({
   where: docWhere.optional(),
   ...docCommonFields,
 });
+
+/**
+ * Ответ в ветке комментариев Google (27.11): `commentId` — из `gc_read mode=comments`. Текст, или
+ * закрыть ветку (`resolve`), или то и другое — пустой ответ отклоняется до Google.
+ */
+export const replyCommentOp = z
+  .object({
+    op: z.literal('replyComment'),
+    commentId: z.string().min(1),
+    text: z.string().min(1).optional(),
+    resolve: z.literal(true).optional(),
+    ...commonFields,
+  })
+  .refine((o) => o.text !== undefined || o.resolve !== undefined, {
+    path: ['text'],
+    message: 'нужен text ответа или resolve: true — закрыть ветку без текста',
+  });
+
+/**
+ * Свой комментарий Google (27.11): ко всему документу, а с `where` — с цитатой абзаца или фразы
+ * внутри него (`fragment`). `tab` и `fragment` говорят про абзац — без `where` им не к чему.
+ */
+export const addCommentOp = z
+  .object({
+    op: z.literal('addComment'),
+    text: z.string().min(1),
+    where: docWhere.optional(),
+    fragment: z.string().min(1).optional(),
+    ...docCommonFields,
+  })
+  .refine((o) => o.where !== undefined || (o.fragment === undefined && o.tab === undefined), {
+    path: ['where'],
+    message: 'fragment и tab — про абзац цитаты; без where комментарий ко всему документу',
+  });
+
+/** Комментарии пишет Drive, а не batchUpdate документа: среди doc-операций у них своя разводка. */
+export const COMMENT_OPS = ['replyComment', 'addComment'] as const;
+export type CommentOperation = z.infer<typeof replyCommentOp> | z.infer<typeof addCommentOp>;
