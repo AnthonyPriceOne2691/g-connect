@@ -100,8 +100,8 @@ export async function prepareFinger(plugin: string, window: FingerWindow): Promi
   try {
     await mkdir(window.dir, { recursive: true, mode: PRIVATE });
     await chmod(window.dir, PRIVATE);
-    // Ссылку Homebrew на Cellar копируем её целью: клон ссылки остался бы ссылкой, и окно
-    // назвалось бы по цели.
+    // Плагин Homebrew — ссылка на Cellar. `copyFile` её разыменовывает (замер 27.11, Node 24),
+    // `realpath` — страховка: копия-ссылка назвала бы окно по цели, а не по профилю (J8).
     const source = await realpath(plugin);
     const copy = join(window.dir, name);
     await place(copy, (draft) => copyFile(source, draft, constants.COPYFILE_FICLONE));
