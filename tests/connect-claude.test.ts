@@ -80,6 +80,8 @@ describe('connect_claude.sh — подключение ко всем проек�
     // D-24: памятка ведёт к Google через инструменты и называет строку перед окном.
     expect(memo).toContain('gc_unlock');
     expect(memo).toContain('G connect\n  попросит палец');
+    // 27.11: окно называется как начало строки (finger-window.ts).
+    expect(memo).toContain('Окно называется как начало строки: «G connect».');
     expect(await readdir(join(home, '.claude', 'backups'))).toHaveLength(1);
   });
 
@@ -172,6 +174,9 @@ describe('connect_claude.sh — два профиля рядом (D-25)', () => 
     expect(text).toContain('`mcp__g-connect-work__*` — профиль work');
     expect(text).toContain('Не знаешь, чей файл, —\n  спроси человека');
     expect(text).toContain('«G connect (work) попросит палец…»');
+    expect(text).toContain(
+      'Окно называется\n  как начало строки: «G connect» или «G connect (work)».',
+    );
     expect(text).not.toMatch(/@|docs\.google|spreadsheets\//);
     expect(text.match(/g-connect:begin/g)).toHaveLength(1);
   });

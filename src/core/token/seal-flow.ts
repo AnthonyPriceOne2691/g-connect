@@ -19,6 +19,7 @@ import { readFile } from 'node:fs/promises';
 
 import type { LoginResult, TokenRevoker } from '../auth.js';
 import { gcError } from '../errors.js';
+import { profileLabel } from '../profile-names.js';
 import {
   DEFAULT_ACCOUNT,
   identityPath,
@@ -35,6 +36,7 @@ import {
   unsealWith,
   type AgeTools,
 } from './age.js';
+import { fingerWindow } from './finger-window.js';
 
 /** Сколько ждать подтверждения отзыва: Google обещает «некоторое время». */
 const REVOKE_POLLS = 12;
@@ -70,7 +72,9 @@ async function identityRecipient(tools: AgeTools, account: string): Promise<stri
 async function probeTouch(tools: AgeTools, account: string, recipient: string): Promise<void> {
   const nonce = randomBytes(16).toString('hex');
   const sealed = await sealFor(tools, recipient, nonce);
-  const back = await unsealWith(tools, identityPath(account), sealed, recipient);
+  const back = await unsealWith(tools, identityPath(account), sealed, recipient, {
+    window: fingerWindow(account),
+  });
   if (back !== nonce) {
     throw gcError('internal', {
       detail: 'Пробная расшифровка вернула не то, что зашифровано: ключ анклава не годится.',
@@ -101,7 +105,10 @@ export async function sealProfile(deps: SealFlowDeps): Promise<SealReport> {
   const say = deps.say ?? (() => undefined);
   await requireAgeTools(deps.tools);
   const recipient = await identityRecipient(deps.tools, account);
-  say('Пробное касание: G connect просит палец или пароль Mac, чтобы проверить ключ анклава.');
+  say(
+    `Пробное касание: окно «${profileLabel(account)}» попросит палец или пароль Mac, чтобы ` +
+      'проверить ключ анклава.',
+  );
   await probeTouch(deps.tools, account, recipient);
 
   const old = (await readPlaintextToken(account))?.refresh_token;

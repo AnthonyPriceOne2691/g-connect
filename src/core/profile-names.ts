@@ -21,7 +21,8 @@ export function profileLabel(account: string): string {
 
 /**
  * Строка человеку перед окном Touch ID. По ней окно G connect отличают от чужого, а с двумя
- * профилями — ещё и рабочее от личного: в самом окне текст `age-plugin-se`, не наш.
+ * профилями — ещё и рабочее от личного. Окно называется теми же словами, что начинают строку
+ * (`profileLabel`, копия плагина в `finger-window.ts`): строка и окно сходятся слово в слово.
  */
 export function unlockLine(account: string): string {
   return `${profileLabel(account)} попросит палец, чтобы открыть Google этой сессии на час`;

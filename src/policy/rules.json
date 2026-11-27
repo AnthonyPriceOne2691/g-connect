@@ -519,6 +519,13 @@
       "kind": "invariant",
       "enforced_in": "src/core/google/drive-comments.ts (commentWriter, createComment) + src/mcp/run-comment.ts (planAdd, UNANCHORED)",
       "probe": "addComment с where и fragment: comments.create без anchor, quotedFileContent text/plain с фразой; превью называет «Все комментарии» и «без привязки к тексту»"
+    },
+    {
+      "id": "google.unlock-window-named",
+      "title": "Окно Touch ID G connect называется по профилю — «G connect», «G connect (work)», словами строки перед ним; подпись не мешает открыть Google: сбой подготовки — окно age-plugin-se, а unlock_declined называет причину (D-24, 27.11)",
+      "kind": "invariant",
+      "enforced_in": "src/core/token/finger-window.ts (prepareFinger, fingerWindow, shimText) + src/core/token/age.ts (unsealWith, unnamedNote)",
+      "probe": "расшифровка профилем work → плагин запущен копией с именем «G connect (work)»; на месте папки подписи файл → расшифровка идёт настоящим плагином"
     }
   ]
 }
