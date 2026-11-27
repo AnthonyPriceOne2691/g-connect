@@ -155,3 +155,14 @@ export function fromGoogleError(error: unknown, detail?: string): GcError {
   }
   return gcError('internal', opts(message));
 }
+
+/**
+ * Ошибка Google с конкретикой случая: что не удалось и, если ниже назвали, почему. `fromGoogleError`
+ * отдаёт готовую `GcError` как есть, а повтор отдаёт её без `detail` — и человек получил бы «Файл
+ * не найден» без имени файла. Общая для Drive: файлы (`drive.ts`) и комментарии (`drive-comments.ts`).
+ */
+export function googleFailure(error: unknown, what: string): GcError {
+  const gc = fromGoogleError(error);
+  const detail = gc.payload.detail === undefined ? what : `${what} ${gc.payload.detail}`;
+  return new GcError({ ...gc.payload, detail });
+}

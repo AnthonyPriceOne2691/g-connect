@@ -14,7 +14,7 @@
 
 import type { drive_v3 } from 'googleapis';
 
-import { fromGoogleError } from '../errors.js';
+import { googleFailure } from '../errors.js';
 
 export interface CommentReply {
   readonly id: string;
@@ -89,7 +89,7 @@ export async function listComments(
       if (pageToken === undefined || pageToken === '') return { comments, truncated: false };
     }
   } catch (error) {
-    throw fromGoogleError(error, `Drive не отдал комментарии файла ${fileId}.`);
+    throw googleFailure(error, `Drive не отдал комментарии файла ${fileId}.`);
   }
   return { comments, truncated: true };
 }

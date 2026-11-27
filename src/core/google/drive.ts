@@ -9,7 +9,7 @@
 
 import { google, type drive_v3 } from 'googleapis';
 
-import { fromGoogleError, gcError, GcError } from '../errors.js';
+import { fromGoogleError, gcError, googleFailure as failure } from '../errors.js';
 import { limitOf } from '../policy.js';
 import { listComments, type CommentList } from './drive-comments.js';
 import {
@@ -443,15 +443,4 @@ function toFileInfo(file: drive_v3.Schema$File, knownId?: string): DriveFileInfo
     ...present('webViewLink', file.webViewLink),
     ...present('parents', file.parents),
   };
-}
-
-/**
- * Ошибка с конкретикой случая: что не удалось и, если ниже назвали, почему. `fromGoogleError`
- * отдаёт готовую `GcError` как есть, а повтор отдаёт её без `detail` — и человек получил бы «Файл
- * не найден» без имени файла.
- */
-function failure(error: unknown, what: string): GcError {
-  const gc = fromGoogleError(error);
-  const detail = gc.payload.detail === undefined ? what : `${what} ${gc.payload.detail}`;
-  return new GcError({ ...gc.payload, detail });
 }
