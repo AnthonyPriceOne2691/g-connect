@@ -22,6 +22,7 @@ import { limitOf, policyText, policyRules } from '../core/policy.js';
 import { DEFAULT_ACCOUNT } from '../core/profiles.js';
 import { buildSheetData, buildSheetMap } from '../core/sheets/map.js';
 import { chooseSheet, type SheetAsk } from '../core/sheets/sheet-choice.js';
+import { readComments } from './read-comments.js';
 import { readDoc } from './read-doc.js';
 import { readValues } from './read-values.js';
 import type { ApplyOutcome } from '../core/sheets/rows.js';
@@ -75,7 +76,7 @@ const MAP_ROWS = 500;
 
 const readInput = {
   target: targetArg,
-  mode: z.enum(['map', 'values', 'text']).default('map'),
+  mode: z.enum(['map', 'values', 'text', 'comments']).default('map'),
   sheet: sheetArg,
   headerRow: z
     .number()
@@ -106,7 +107,11 @@ const readInput = {
     .boolean()
     .default(false)
     .describe('Таблица, mode=values: заметки ячеек по строкам (notes) — пояснения и правила'),
-  tab: z.string().min(1).optional().describe('Документ: таб по заголовку; без него — единственный'),
+  tab: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Документ: таб по заголовку; без него — единственный (mode=comments — все табы)'),
   fromParagraph: z
     .number()
     .int()
@@ -125,14 +130,17 @@ export const gcRead: ToolDefinition = {
     'таблицы. mode=values читает строки таблицы окном: до 5000 за вызов, fromRow — с какой ' +
     'строки, toRow — по какую строку листа отдан ответ; truncated: true — строки дальше есть, ' +
     'продолжай с nextFromRow; withFormat: true — вид ячеек по строкам, чтобы найти ' +
-    'отличающиеся; withNotes: true — заметки ячеек по строкам. mode=text — абзацы документа.',
+    'отличающиеся; withNotes: true — заметки ячеек по строкам. mode=text — абзацы документа. ' +
+    'mode=comments — комментарии Google: автор, время, текст, resolved, цитата, ответы ветки; у ' +
+    'документа place — № абзаца по цитате (found; ambiguous/notFound/unanchored — абзац не выбран).',
   input: readInput,
   async handle(args, deps) {
     // Обработчик разбирает вход САМ: схема транспорта не единственная граница —
     // тесты и раннер вызывают инструменты напрямую, и там валидировать больше некому.
     const input = z.object(readInput).parse(args);
     const resolved = await resolve(deps, input.target);
-    if (resolved.type === 'doc') return readDoc(deps, resolved.id, input);
+    if (input.mode === 'comments') return readComments(deps, resolved, input);
+    if (resolved.type === 'doc') return readDoc(deps, resolved.id, { ...input, mode: input.mode });
     if (input.mode === 'text') {
       throw gcError('bad_request', {
         detail: 'mode=text читает абзацы документа. У таблицы строки читает mode=values.',

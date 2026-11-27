@@ -11,6 +11,7 @@ import { google, type drive_v3 } from 'googleapis';
 
 import { fromGoogleError, gcError, GcError } from '../errors.js';
 import { limitOf } from '../policy.js';
+import { listComments, type CommentList } from './drive-comments.js';
 import {
   makeUploader,
   restoreContent,
@@ -226,6 +227,8 @@ export interface DriveClient {
   restoreRevision(fileId: string, revisionId: string): Promise<DriveFileInfo>;
   /** Неудалённые файлы с ровно таким именем прямо в папке `parentId` (Q48): свежая версия заменяет одноимённый. */
   findByName(parentId: string, name: string): Promise<DriveFileInfo[]>;
+  /** Комментарии файла с ответами (27.11): `gc_read mode=comments`. Нет доступа — ошибка Drive. */
+  listComments(fileId: string): Promise<CommentList>;
 }
 
 /** Тип → mimeType Google. Значения из документации Drive, менять нельзя. */
@@ -266,6 +269,10 @@ export class GoogleDriveClient implements DriveClient {
       options,
       auth,
     );
+  }
+
+  listComments(fileId: string): Promise<CommentList> {
+    return listComments(this.drive, this.retry, fileId);
   }
 
   async fileKind(id: string): Promise<DriveFile> {

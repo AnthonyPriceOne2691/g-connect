@@ -9,6 +9,7 @@ import type {
   DriveFileInfo,
   UploadBody,
 } from '../../src/core/google/drive.js';
+import type { CommentList, FileComment } from '../../src/core/google/drive-comments.js';
 
 /** Ревизия содержимого — как у Drive у загруженных файлов (у файлов Google их нет). */
 export interface FakeRevision {
@@ -69,7 +70,16 @@ export class FakeDriveClient implements DriveClient {
   private serial = 0;
   private clock = 0;
 
+  /** Комментарии по ID файла (27.11): `listComments` отдаёт их как Drive; файла нет — `not_found`. */
+  readonly comments = new Map<string, FileComment[]>();
+
   constructor(private readonly files: Readonly<Record<string, Omit<DriveFile, 'id'>>> = {}) {}
+
+  listComments(fileId: string): Promise<CommentList> {
+    const comments = this.comments.get(fileId);
+    if (comments === undefined) return Promise.reject(notFound(fileId));
+    return Promise.resolve({ comments, truncated: false });
+  }
 
   search(): Promise<{ files: never[]; incompleteBecause: never[] }> {
     return Promise.resolve({ files: [], incompleteBecause: [] });
