@@ -6,7 +6,7 @@
 - **kind:** hotfix
 - **repro_test:** tests/multi-block-fill.test.ts reason=Y1/Y2 на листе из нескольких таблиц — красный на ядре main (6b380ee): запись трёх чисел в пустые ячейки блока — write_blocked (формулы итогов в той же колонке ниже) и not_in_enum (список из чужого блока); force под конвертом писал в формулу без кода плана
 - **diagnosis:** delivery/active/diagnosis.md
-- **phase:** implement
+- **phase:** verify
 - **builder:** agent:claude-opus-5-5
 - **verifier:** human:anton
 - **human_ok_spec:** yes (by=human:anton, at=2026-11-27) reason=16.11 — слово владельца в сессии: «нужно ходфиксом быстро реализовать, почему G Connect отказывается заполнять таблички. Это мое слово, поэтому да, делай» и «Нужно hotfixом максимально быстро»; через сессию профиля work — «Должно все срабатывать автоматически»; примеры Y1–Y2 — «Проверка после правки» из вести сессии. 27.11 — комментарии Google (PR #25): «срочно в оперативном режиме внедрить возможность G connect читать комментарии в Google Доке и отвечать на них там, и оставлять свои самостоятельно подсвечивая что-то… как можно быстрее, привлекая агентов… я говорю тебе свое, да, на доработку»; примеры Z1–Z5 — из вести сессии AutoLink Platform (профиль work)
@@ -19,9 +19,9 @@
 - **parallel_sessions:** merge-guard
 - **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
 - **blockers:** none
-- **waivers:** max_loc_diff=3500 max_files_touched=45 reason=ответ «Одним PR #25: 3500/45» на второй вопрос с вариантами (после сведения агентов H и C) — PR #25 поверх PR #24 (комментарии Google: чтение, подсветка фразы, ответы и свои комментарии): 3200 строк чистого прироста (продукт 1397, тесты 1886) и 39 файлов относительно fix/fill-multi-block; первый ответ «Одним PR #25: 3000/45» и waiver PR #24 «Одним PR #24: 1000/25» — в spec.md, «Решения владельца» by=human:anton at=2026-11-27
+- **waivers:** max_loc_diff=4500 max_files_touched=65 reason=ответ «Одним мержем: 4500/65» на вопрос с вариантами — squash цепочки PR #24 + PR #25 в main через merge_guard: 4036 строк чистого прироста и 58 файлов относительно main (по PR: «Одним PR #24: 1000/25», «Одним PR #25: 3000/45», затем «Одним PR #25: 3500/45» — в spec.md, «Решения владельца») by=human:anton at=2026-11-27
 - **new_dependency:** none
-- **runtime_paths:** src/core/google/drive-comments.ts reason=новый шов Drive — комментарии к файлу (comments.list с обязательным fields, страницы по 100); запись комментариев — тем же швом
+- **runtime_paths:** src/core/google/drive-comments.ts <!-- новый шов Drive — комментарии к файлу: comments.list с обязательным fields, страницы по 100; запись и удаление комментариев и ответов — тем же швом -->
 - **irreversible_surfaces:** письмо-уведомление Google о своём комментарии и ответе в ветке (replyComment и addComment в конверте): gc_undo удаляет комментарий или ответ — ушедшее людям письмо он не отзывает
 - **model_surface:** src/policy/rules.md,src/policy/rules.json,src/core/sheets/types.ts,src/mcp/read-values.ts,src/mcp/tools.ts,src/mcp/read-comments.ts,src/mcp/apply-schema.ts,src/mcp/run-comment.ts
   <!-- агенту уйдут: заметки превью «формулы есть в других строках…» и «нет в списке, выведенном по уже записанному…»; отказ write_blocked теперь только у ячейки с формулой или под ней; confirm_required у force под конвертом; правила write.formula-column, values.enum-ask, write.force-needs-plan; раздел о листе из нескольких таблиц; карта — поле nextTable и предупреждение «ниже ещё одна таблица — шапка в строке N»; окно values кончается на блоке; отказ appendRow block_gap; правила map.block-bound, write.append-keeps-block-gap; 27.11 — gc_read mode=comments (описание, ответ: comments как данные, place found/ambiguous/notFound/unanchored), раздел «Комментарии Google», правила read.comments-are-data, read.comment-place-exact; op=replyComment, op=addComment, updateTextStyle fragment и style.background (описания полей и gc_apply, превью ветки, «без привязки к тексту», «сообщение людям»), рецепт «комментарий, затем подсветка», правила docs.fragment-exact, write.comment-undo-own-only, write.comment-unanchored-honest -->
