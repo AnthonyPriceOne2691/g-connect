@@ -23,8 +23,8 @@
 - **new_dependency:** none
 - **runtime_paths:** src/core/token/finger-window.ts <!-- копия плагина и прокладка первой в PATH расшифровки: имя окна Touch ID видно только живьём -->
 - **irreversible_surfaces:** none reason=папку подписи G connect пишет сам и перезаписывает при каждой расшифровке; удалённая папка возвращает прежнее окно; касание открывает Google на час, как до поставки
-- **model_surface:** src/policy/rules.md,src/policy/rules.json,src/core/token/age.ts
-  <!-- агенту уйдут: абзац «Про доступ» — окно называется как начало строки; правило google.unlock-window-named; дописка «Окно было без подписи…» в unlock_declined -->
+- **model_surface:** src/policy/rules.md,src/policy/rules.json,src/core/token/age.ts,scripts/connect_claude_edit.py
+  <!-- агенту уйдут: абзац «Про доступ» — окно называется как начало строки; правило google.unlock-window-named; дописка «Окно было без подписи…» в unlock_declined; памятка в ~/.claude/CLAUDE.md — то же про имя окна -->
 - **rule_enforcers:** src/policy/rules.json
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
