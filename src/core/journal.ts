@@ -169,6 +169,25 @@ export interface RangeSnapshot {
   readonly rows: readonly (readonly SnapshotCell[])[];
 }
 
+/** Комментарии Google (27.11): пишет Drive, а не правка текста документа. */
+export type CommentKind = 'addComment' | 'replyComment';
+
+/**
+ * Свой комментарий или ответ (27.11): по id откат его удалит. Ветку, которую закрыл наш ответ,
+ * откат откроет снова, если до ответа она была открыта (`resolvedBefore`).
+ */
+export interface CommentWriteDetail {
+  readonly commentId: string;
+  /** Есть — запись оставила ответ в ветке; нет — сам комментарий. */
+  readonly replyId?: string;
+  readonly text?: string;
+  /** Цитата своего комментария — текстом: якоря у него нет. */
+  readonly quote?: string;
+  /** Ответ закрыл ветку (`resolve`). */
+  readonly resolved?: true;
+  readonly resolvedBefore?: boolean;
+}
+
 export interface WriteRecord {
   /** ISO-время записи. */
   readonly at: string;
@@ -185,6 +204,7 @@ export interface WriteRecord {
     | 'findReplace'
     | StructuralKind
     | DocOperationKind
+    | CommentKind
     | 'undo';
   readonly changes: readonly JournalChange[];
   /** Геометрия: что сделали со строками, колонками, листами или файлами (D-19). */
@@ -202,6 +222,8 @@ export interface WriteRecord {
    * прежние записи целы (та же совместимость, что у `structure`/`snapshots`, D-19).
    */
   readonly doc?: DocWriteDetail;
+  /** Свой комментарий или ответ Google (27.11): ревизий у них нет — обе `null`. */
+  readonly comment?: CommentWriteDetail;
   /** Ревизия таблицы до и после записи — по ним undo решает, безопасен ли откат. */
   readonly revisionBefore: string | null;
   readonly revisionAfter: string | null;
@@ -256,8 +278,14 @@ export function lastUndoable(
     if (undone.has(record.correlationId)) continue;
     // Запись без ячеек, геометрии И текста — превью-след, откатывать нечего. Проверка
     // на `doc` не украшение: без неё вставка в документ считалась бы неоткатываемой —
-    // тот же класс дыры, что нашёл оракул G3 у структурных правок (уровень 2).
-    if (record.changes.length === 0 && record.structure === undefined && record.doc === undefined)
+    // тот же класс дыры, что нашёл оракул G3 у структурных правок (уровень 2). Свой комментарий
+    // (27.11) — тоже правка: ячеек и текста у него нет, а откат есть.
+    if (
+      record.changes.length === 0 &&
+      record.structure === undefined &&
+      record.doc === undefined &&
+      record.comment === undefined
+    )
       continue;
     return record;
   }

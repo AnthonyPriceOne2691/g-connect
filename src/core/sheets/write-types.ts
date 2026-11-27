@@ -4,7 +4,7 @@
  * «что записываем» и «пускать ли записывать» разъехался бы первым же рефакторингом.
  */
 
-import type { JournalSink, JournalSource, StructuralKind } from '../journal.js';
+import type { CommentKind, JournalSink, JournalSource, StructuralKind } from '../journal.js';
 import type { ResolveOptions } from '../resolver.js';
 import type { CellFormat, CellValue, SheetProperties } from './types.js';
 import type { DocOperationKind } from '../docs/types.js';
@@ -22,7 +22,8 @@ export type OperationKind =
   | 'formatCells'
   | 'findReplace'
   | StructuralKind
-  | DocOperationKind;
+  | DocOperationKind
+  | CommentKind;
 
 /**
  * Структурная часть плана (D-19): превью правки геометрии описывает ПОЗИЦИИ, а не ячейки.

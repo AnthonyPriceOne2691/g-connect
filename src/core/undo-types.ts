@@ -7,6 +7,7 @@
  */
 
 import type { DriveClient } from './google/drive.js';
+import type { CommentWriter } from './google/drive-comments.js';
 import type { JournalSink } from './journal.js';
 import type { CellFormat } from './sheets/types.js';
 
@@ -44,10 +45,13 @@ export interface UndoOptions {
    */
   readonly trash?: (fileId: string) => Promise<void>;
   /**
-   * Drive для отката загрузки (Q45–Q48): сведения о файле, корзина и возврат прежней ревизии.
-   * Лениво, как `trash`: откату таблицы клиент Drive не нужен, а ядро не знает, откуда он берётся.
+   * Drive для отката загрузки (Q45–Q48): сведения о файле, корзина и возврат прежней ревизии; и
+   * своего комментария Google (27.11) — ветка, удаление, `reopen`. Лениво, как `trash`: откату
+   * таблицы клиент Drive не нужен, а ядро не знает, откуда он берётся.
    */
-  readonly drive?: () => Promise<Pick<DriveClient, 'fileInfo' | 'trash' | 'restoreRevision'>>;
+  readonly drive?: () => Promise<
+    Pick<DriveClient, 'fileInfo' | 'trash' | 'restoreRevision' | keyof CommentWriter>
+  >;
   /**
    * Проект вызывающей сессии (D-23): откат видит только записи этого проекта, запись
    * чужого по id — отказ `undo.own-project`. Нет поля — вызов из терминала, видно всё.

@@ -11,7 +11,13 @@ import { google, type drive_v3 } from 'googleapis';
 
 import { fromGoogleError, gcError, googleFailure as failure } from '../errors.js';
 import { limitOf } from '../policy.js';
-import { listComments, type CommentList } from './drive-comments.js';
+import {
+  commentWriter,
+  listComments,
+  type CommentList,
+  type CommentWriter,
+  type ReplyBody,
+} from './drive-comments.js';
 import {
   makeUploader,
   restoreContent,
@@ -195,7 +201,8 @@ export interface DriveFileInfo {
   readonly parents?: readonly string[];
 }
 
-export interface DriveClient {
+/** Шов Drive. Комментарии (27.11): ветки читает `listComments`, ответ и свой — `CommentWriter`. */
+export interface DriveClient extends CommentWriter {
   search(query: SearchQuery): Promise<SearchResult>;
   /**
    * Тип и имя файла по ID (D-26, Q20): у голого ID тип неизвестен, и создание спрашивает
@@ -255,10 +262,12 @@ export class GoogleDriveClient implements DriveClient {
   private readonly drive: drive_v3.Drive;
   private readonly retry: ReturnType<typeof makeRetry>;
   private readonly uploader: Uploader;
+  private readonly comments: CommentWriter;
 
   /**
    * Повторы — только у чтения: создание, загрузка, замена и корзина не идемпотентны, их не
-   * повторяют. Исключение — закрепление ревизии: `keepForever: true` дважды — то же самое.
+   * повторяют. Исключения — закрепление ревизии (`keepForever: true` дважды — то же самое) и
+   * удаление комментария или ответа (см. `deleteOnce` в `drive-comments.ts`).
    */
   constructor(options: GoogleDriveClientOptions) {
     const auth = authorizedClient(options.accessToken);
@@ -269,10 +278,31 @@ export class GoogleDriveClient implements DriveClient {
       options,
       auth,
     );
+    this.comments = commentWriter(this.drive, this.retry);
   }
 
   listComments(fileId: string): Promise<CommentList> {
     return listComments(this.drive, this.retry, fileId);
+  }
+
+  getComment(fileId: string, commentId: string) {
+    return this.comments.getComment(fileId, commentId);
+  }
+
+  createComment(fileId: string, text: string, quote?: string) {
+    return this.comments.createComment(fileId, text, quote);
+  }
+
+  createReply(fileId: string, commentId: string, body: ReplyBody) {
+    return this.comments.createReply(fileId, commentId, body);
+  }
+
+  deleteComment(fileId: string, commentId: string) {
+    return this.comments.deleteComment(fileId, commentId);
+  }
+
+  deleteReply(fileId: string, commentId: string, replyId: string) {
+    return this.comments.deleteReply(fileId, commentId, replyId);
   }
 
   async fileKind(id: string): Promise<DriveFile> {

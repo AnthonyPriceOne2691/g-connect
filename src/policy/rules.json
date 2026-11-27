@@ -505,6 +505,20 @@
       "kind": "invariant",
       "enforced_in": "src/core/docs/comment-place.ts (placeFinder)",
       "probe": "цитата в двух абзацах → ambiguous без paragraph; правленая → notFound; без цитаты → unanchored; одна → found с № абзаца"
+    },
+    {
+      "id": "write.comment-undo-own-only",
+      "title": "Откат комментария Google удаляет только своё: свой ответ или свой комментарий, пока в его ветке нет чужих ответов — иначе отказ, а не удаление ветки с чужими словами (27.11)",
+      "kind": "deny",
+      "enforced_in": "src/core/undo-comments.ts (undoComment, dropComment, dropReply, assertMine)",
+      "probe": "откат addComment, когда в ветке ответил другой, → policy_denied write.comment-undo-own-only, комментарий на месте; чужой комментарий по записи — тот же отказ; без чужих ответов — удалён"
+    },
+    {
+      "id": "write.comment-unanchored-honest",
+      "title": "Свой комментарий уходит без якоря — цитата текстом (quotedFileContent text/plain), и ответ говорит, что Docs покажет его в «Все комментарии» без привязки к тексту (27.11)",
+      "kind": "invariant",
+      "enforced_in": "src/core/google/drive-comments.ts (commentWriter, createComment) + src/mcp/run-comment.ts (planAdd, UNANCHORED)",
+      "probe": "addComment с where и fragment: comments.create без anchor, quotedFileContent text/plain с фразой; превью называет «Все комментарии» и «без привязки к тексту»"
     }
   ]
 }

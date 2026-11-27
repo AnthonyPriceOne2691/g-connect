@@ -9,7 +9,16 @@ import type {
   DriveFileInfo,
   UploadBody,
 } from '../../src/core/google/drive.js';
-import type { CommentList, FileComment } from '../../src/core/google/drive-comments.js';
+import type {
+  CommentList,
+  CommentReply,
+  CreatedComment,
+  FileComment,
+  ReplyBody,
+} from '../../src/core/google/drive-comments.js';
+
+/** Автор того, что оставил этот профиль: Drive отдаёт его с `author.me: true`. */
+export const ME = 'Профиль G connect';
 
 /** Ревизия содержимого — как у Drive у загруженных файлов (у файлов Google их нет). */
 export interface FakeRevision {
@@ -72,6 +81,8 @@ export class FakeDriveClient implements DriveClient {
 
   /** Комментарии по ID файла (27.11): `listComments` отдаёт их как Drive; файла нет — `not_found`. */
   readonly comments = new Map<string, FileComment[]>();
+  /** Удалённые ветки: Drive с `includeDeleted` отдаёт их с `deleted` — шов отвечает `null`. */
+  private readonly deletedComments = new Set<string>();
 
   constructor(private readonly files: Readonly<Record<string, Omit<DriveFile, 'id'>>> = {}) {}
 
@@ -79,6 +90,84 @@ export class FakeDriveClient implements DriveClient {
     const comments = this.comments.get(fileId);
     if (comments === undefined) return Promise.reject(notFound(fileId));
     return Promise.resolve({ comments, truncated: false });
+  }
+
+  /*
+   * Запись комментариев — по документации Drive: своё оставлено с `me: true`, ответ с `resolve`
+   * закрывает ветку, с `reopen` — открывает; удаление ответа ветку не открывает (худший случай для
+   * отката: открывает он сам). Ветки меняются на месте — тест держит ссылку на массив файла.
+   */
+  async getComment(fileId: string, commentId: string): Promise<FileComment | null> {
+    this.calls.push('getComment');
+    return this.deletedComments.has(commentId) ? null : this.commentOf(fileId, commentId);
+  }
+
+  async createComment(fileId: string, text: string, quote?: string): Promise<CreatedComment> {
+    this.calls.push('createComment');
+    const made = { id: `CMT${this.serial + 1}`, createdTime: this.tick() };
+    this.serial += 1;
+    this.threadsOf(fileId).push({
+      ...made,
+      author: ME,
+      me: true,
+      modifiedTime: made.createdTime,
+      text,
+      resolved: false,
+      ...(quote === undefined ? {} : { quote }),
+      replies: [],
+    });
+    return made;
+  }
+
+  async createReply(fileId: string, commentId: string, body: ReplyBody): Promise<CreatedComment> {
+    this.calls.push('createReply');
+    const comment = this.commentOf(fileId, commentId);
+    const made = { id: `RPL${this.serial + 1}`, createdTime: this.tick() };
+    this.serial += 1;
+    const reply: CommentReply = {
+      ...made,
+      author: ME,
+      me: true,
+      modifiedTime: made.createdTime,
+      text: body.text ?? '',
+      ...(body.action === undefined ? {} : { action: body.action }),
+    };
+    const resolved = body.action === undefined ? comment.resolved : body.action === 'resolve';
+    this.putComment(fileId, { ...comment, resolved, replies: [...comment.replies, reply] });
+    return made;
+  }
+
+  async deleteComment(fileId: string, commentId: string): Promise<void> {
+    this.calls.push('deleteComment');
+    const threads = this.threadsOf(fileId);
+    threads.splice(threads.indexOf(this.commentOf(fileId, commentId)), 1);
+    this.deletedComments.add(commentId);
+  }
+
+  async deleteReply(fileId: string, commentId: string, replyId: string): Promise<void> {
+    this.calls.push('deleteReply');
+    const comment = this.commentOf(fileId, commentId);
+    const replies = comment.replies.filter((reply) => reply.id !== replyId);
+    if (replies.length === comment.replies.length) throw notFound(replyId);
+    this.putComment(fileId, { ...comment, replies });
+  }
+
+  /** Ветка заменяется в том же массиве файла: ссылки теста на него остаются живыми. */
+  putComment(fileId: string, comment: FileComment): void {
+    const threads = this.threadsOf(fileId);
+    threads.splice(threads.indexOf(this.commentOf(fileId, comment.id)), 1, comment);
+  }
+
+  private threadsOf(fileId: string): FileComment[] {
+    const threads = this.comments.get(fileId);
+    if (threads === undefined) throw notFound(fileId);
+    return threads;
+  }
+
+  private commentOf(fileId: string, commentId: string): FileComment {
+    const comment = this.threadsOf(fileId).find((c) => c.id === commentId);
+    if (comment === undefined) throw notFound(commentId);
+    return comment;
   }
 
   search(): Promise<{ files: never[]; incompleteBecause: never[] }> {

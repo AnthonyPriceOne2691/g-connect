@@ -84,6 +84,8 @@ const SAMPLE: Record<string, unknown> = {
   endIndex: 9,
   localPath: 'video/sales.mp4',
   startColumn: 'C',
+  commentId: 'AAAAthread01',
+  resolve: true,
 };
 
 /** `rows` по операции; у остальных — число строк новой таблицы документа. */

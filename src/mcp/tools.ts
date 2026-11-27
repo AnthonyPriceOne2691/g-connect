@@ -263,7 +263,12 @@ export const gcApply: ToolDefinition = {
     'и строками — op=addSheet с columns и rows. Файл с компьютера — op=uploadFile: target — ' +
     'папка Диска, localPath — путь от каталога проекта; одноимённый файл папки получает ' +
     'свежую версию с той же ссылкой. Выделить фразу в документе — op=updateTextStyle с ' +
-    'fragment (точная фраза абзаца where) и style.background #RRGGBB; "none" снимает выделение.',
+    'fragment (точная фраза абзаца where) и style.background #RRGGBB; "none" снимает выделение. ' +
+    'Комментарии Google в документе: op=replyComment — ответ в ветке (commentId из gc_read ' +
+    'mode=comments; text и/или resolve: true), op=addComment — свой комментарий (where и fragment — ' +
+    'цитата). Это сообщения людям: Google о них уведомляет, а Docs показывает такой комментарий в ' +
+    '«Все комментарии» без привязки к тексту — фразу, о которой он, подсвети следом updateTextStyle ' +
+    'с теми же where и fragment и style.background (откат — gc_undo дважды: подсветка, комментарий).',
   input: applyInput,
   // Вход судит ядро (`operationOf`): неизвестная операция, поля НАЗВАННОЙ операции, типы.
   // Общая схема `applyInput` — для `tools/list`, чтобы модель видела поля, а не для суда.

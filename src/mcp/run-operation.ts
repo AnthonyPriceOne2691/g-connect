@@ -59,7 +59,9 @@ type Operation = Exclude<
       | 'createParagraphBullets'
       | 'deleteParagraphBullets'
       | 'insertPageBreak'
-      | 'insertInlineImage';
+      | 'insertInlineImage'
+      | 'replyComment'
+      | 'addComment';
   }
 >;
 type Options = Parameters<typeof upsertRow>[4];
