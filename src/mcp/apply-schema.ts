@@ -58,7 +58,16 @@ const docFields = {
     .optional()
     .describe(
       'updateTextStyle: bold, italic, underline, strikethrough, link (URL), fontSize ' +
-        '(6–96), color #RRGGBB — частичная правка, остальное не сбрасывается',
+        '(6–96), color #RRGGBB, background #RRGGBB — выделение маркером, "none" снимает его; ' +
+        'частичная правка, остальное не сбрасывается',
+    ),
+  fragment: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'updateTextStyle: точная фраза внутри абзаца where (как в gc_read mode=text) — стиль ' +
+        'ложится только на неё; фразы нет или она не одна — отказ без записи; count с ней — 1',
     ),
   namedStyle: setParagraphStyleOp.shape.namedStyle
     .optional()

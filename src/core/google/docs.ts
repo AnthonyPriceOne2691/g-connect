@@ -44,6 +44,18 @@ function docColorToHex(color: docs_v1.Schema$OptionalColor | undefined): string 
   return rgb === undefined || rgb === null ? undefined : rgbToHex(rgb);
 }
 
+/**
+ * Фон текста — выделение маркером (27.11). По документации Docs API три состояния, и откат
+ * обязан различать их: цвет — `#rrggbb`; `OptionalColor` без `color` — «If unset, this
+ * represents a transparent color», в домене `'none'`; поля нет — фон наследуется («Inherited
+ * text styles are represented as unset fields in this message»). Прозрачный поверх прозрачного
+ * родителя Google хранит наследованием («If the value for a particular style matches that of the
+ * parent, that style will be set to inherit»): `'none'` придёт, лишь где фон у родителя есть.
+ * Это прочтение документации, живьём не сверено.
+ */
+const docBackground = (color: docs_v1.Schema$OptionalColor | undefined): string | undefined =>
+  color === undefined ? undefined : (docColorToHex(color) ?? 'none');
+
 function toStyle(style: docs_v1.Schema$TextStyle | undefined): DocTextStyle | undefined {
   if (style === undefined) return undefined;
   // Таблица полей, а не цепочка if: поле попадает в домен, только когда задано явно.
@@ -55,6 +67,7 @@ function toStyle(style: docs_v1.Schema$TextStyle | undefined): DocTextStyle | un
     ['link', some(style.link?.url)],
     ['fontSize', some(style.fontSize?.magnitude)],
     ['color', docColorToHex(some(style.foregroundColor))],
+    ['background', docBackground(some(style.backgroundColor))],
   ];
   const out: Partial<Record<keyof DocTextStyle, DocTextStyle[keyof DocTextStyle]>> = {};
   for (const [key, value] of fields) {

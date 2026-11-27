@@ -42,6 +42,8 @@ export interface DocTextStyle {
   readonly fontSize?: number;
   /** Цвет текста как его вводит человек: `#RRGGBB`. */
   readonly color?: string;
+  /** Фон текста — выделение маркером: `#RRGGBB`; `'none'` — фон задан прозрачным, без выделения. */
+  readonly background?: string;
 }
 
 /**

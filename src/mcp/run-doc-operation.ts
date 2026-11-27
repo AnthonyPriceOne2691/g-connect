@@ -191,7 +191,9 @@ const styleRequest = (
   where: operation.where,
   count: operation.count,
   // Чистка undefined-ключей: exactOptionalPropertyTypes различает «поля нет» и undefined.
-  ...(operation.op === 'updateTextStyle' ? { style: cleanStyle(operation.style) } : {}),
+  ...(operation.op === 'updateTextStyle'
+    ? { style: cleanStyle(operation.style), fragment: operation.fragment }
+    : {}),
   ...(operation.op === 'setParagraphStyle' ? { namedStyle: operation.namedStyle } : {}),
 });
 

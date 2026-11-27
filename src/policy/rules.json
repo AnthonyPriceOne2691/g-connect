@@ -386,6 +386,13 @@
       "probe": "удаление абзаца с предложением — policy_denied docs.suggestions-not-edited до подписи; массовая замена обходит его и называет числом"
     },
     {
+      "id": "docs.fragment-exact",
+      "title": "Фраза внутри абзаца (подсветка, 27.11) берётся как есть: её нет в абзаце или она там не одна — отказ без записи, а не похожая фраза или первое вхождение",
+      "kind": "deny",
+      "enforced_in": "src/core/docs/fragment.ts (fragmentRange) + src/core/docs/style-op.ts (styleScope, fragmentOf)",
+      "probe": "updateTextStyle с fragment «Palmeiras», которой нет в абзаце, → bad_request fragment_not_found; с фразой «о», которая там не одна, → fragment_ambiguous; запросов записи ноль"
+    },
+    {
       "id": "input.no-silent-drop",
       "title": "Незнакомое поле запроса — отказ с названием и подсказкой, а не молчаливый пропуск",
       "kind": "deny",

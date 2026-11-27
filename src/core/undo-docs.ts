@@ -300,8 +300,19 @@ const undoStyles = snapshotUndo('doc_moved_after_style', 'правки стил�
     ...exactStyleRequests(tab.tabId, stored.startIndex, stored.runs),
     ...paragraphViewRequests(tab.tabId, stored),
   ],
-  done: `Стили возвращены: ${(stored.paragraphs ?? []).length} абзац(ев), текст не тронут.`,
+  done: `Стили возвращены: ${restyled(stored)}, текст не тронут.`,
 }));
+
+/**
+ * Что вернул откат стилей. Абзацы целиком кончаются переносом, фраза внутри абзаца (27.11) —
+ * нет: её снимок без абзацев, и «0 абзац(ев)» сказал бы человеку, что не вернулось ничего.
+ */
+function restyled(stored: StoredSnapshot): string {
+  const text = stored.runs.map((run) => run.text).join('');
+  return text.endsWith('\n')
+    ? `${(stored.paragraphs ?? []).length} абзац(ев)`
+    : `фраза «${text}» — остальной абзац не трогался`;
+}
 
 /** Снимок «до» и живой таб записи — общий пролог откатов по снимку. */
 function storedAndTab(

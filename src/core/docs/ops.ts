@@ -150,6 +150,11 @@ const docTextStyle = z
       .string()
       .regex(/^#[0-9a-fA-F]{6}$/, 'цвет задаётся как #RRGGBB')
       .optional(),
+    // Выделение маркером (27.11); "none" снимает его — фон прозрачный, как у Google.
+    background: z
+      .string()
+      .regex(/^(#[0-9a-fA-F]{6}|none)$/, 'фон задаётся как #RRGGBB или "none" (без выделения)')
+      .optional(),
   })
   .strict();
 
@@ -160,10 +165,14 @@ const styleCommonFields = {
   ...docCommonFields,
 };
 
-/** Вид текста абзаца (частичная правка: {bold} не сбрасывает остальное). */
+/**
+ * Вид текста абзаца (частичная правка: {bold} не сбрасывает остальное). `fragment` — точная
+ * фраза внутри абзаца `where`: вид ложится только на неё (подсветка, 27.11).
+ */
 export const updateTextStyleOp = z.object({
   op: z.literal('updateTextStyle'),
   style: docTextStyle,
+  fragment: z.string().min(1).optional(),
   ...styleCommonFields,
 });
 
