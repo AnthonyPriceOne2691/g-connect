@@ -9,25 +9,25 @@
 - **phase:** implement
 - **builder:** agent:claude-opus-5-5
 - **verifier:** human:anton
-- **human_ok_spec:** yes (by=human:anton, at=2026-11-16) reason=слово владельца в сессии: «нужно ходфиксом быстро реализовать, почему G Connect отказывается заполнять таблички. Это мое слово, поэтому да, делай» и «Нужно hotfixом максимально быстро»; через сессию профиля work — «Должно все срабатывать автоматически»; примеры Y1–Y2 — «Проверка после правки» из вести сессии
-- **human_ok_plan:** yes (by=human:anton, at=2026-11-16) reason=те же слова «да, делай… максимально быстро» — хотфикс без отдельного показа плана; план в plan.md, человеку — в отчёте
+- **human_ok_spec:** yes (by=human:anton, at=2026-11-27) reason=16.11 — слово владельца в сессии: «нужно ходфиксом быстро реализовать, почему G Connect отказывается заполнять таблички. Это мое слово, поэтому да, делай» и «Нужно hotfixом максимально быстро»; через сессию профиля work — «Должно все срабатывать автоматически»; примеры Y1–Y2 — «Проверка после правки» из вести сессии. 27.11 — комментарии Google (PR #25): «срочно в оперативном режиме внедрить возможность G connect читать комментарии в Google Доке и отвечать на них там, и оставлять свои самостоятельно подсвечивая что-то… как можно быстрее, привлекая агентов… я говорю тебе свое, да, на доработку»; примеры Z1–Z5 — из вести сессии AutoLink Platform (профиль work)
+- **human_ok_plan:** yes (by=human:anton, at=2026-11-27) reason=те же слова «да, делай… максимально быстро» (16.11) и «как можно быстрее, привлекая агентов» (27.11) — хотфикс без отдельного показа плана; план в plan.md, человеку — в отчёте; ответы и свои комментарии в конверте — ответ «Сразу, в конверте» на вопрос с вариантами
 - **shape-oracles:** cqg-deployed
 - **behavior-oracles:** tests-present (1301 тест; инструменты — через настоящий протокол)
 - **artifact_oracle:** scripts/probe_mcp.mjs reason=судит СОБРАННЫЙ сервер по протоколу — в CI на каждом PR и перед переключением стабильной сборки
 - **ci-oracles:** tooling
-- **worktree:** ветка fix/fill-multi-block reason=хотфикс в основном клоне: правка в четырёх файлах ядра, агентов нет; мерж только через merge_guard.sh, за ним contour_doctor
+- **worktree:** ветка feat/doc-comments поверх fix/fill-multi-block (PR #25 → PR #24) reason=чтение комментариев — в основном клоне; подсветка и запись комментариев — два агента в worktree (`.claude/worktrees`), сведение ведущим; мерж только через merge_guard.sh, за ним contour_doctor
 - **parallel_sessions:** merge-guard
 - **hooks:** not-deployed reason=OKF не развёрнут (okf@absent)
 - **blockers:** none
-- **waivers:** max_loc_diff=1000 max_files_touched=25 reason=ответ «Одним PR #24: 1000/25» на вопрос с вариантами — PR #24 (хотфикс табличек, ссылки u/N/ и граница блока): 822 строки чистого прироста (продукт 367, тесты 455), 20 файлов в счёте предела относительно main by=human:anton at=2026-11-16
+- **waivers:** max_loc_diff=3000 max_files_touched=45 reason=ответ «Одним PR #25: 3000/45» на вопрос с вариантами — PR #25 поверх PR #24 (комментарии Google: чтение, подсветка фразы, ответы и свои комментарии); чтение — 939 строк чистого прироста, 13 файлов относительно fix/fill-multi-block, запись — оценка ~1600 строк с тестами. Waiver PR #24 «Одним PR #24: 1000/25» — в spec.md, «Решения владельца» by=human:anton at=2026-11-27
 - **new_dependency:** none
-- **runtime_paths:** none reason=шов Google не тронут: правка — проверки записи в ядре (rows.ts, values.ts, commit.ts)
+- **runtime_paths:** src/core/google/drive-comments.ts reason=новый шов Drive — комментарии к файлу (comments.list с обязательным fields, страницы по 100); запись комментариев — тем же швом
 - **irreversible_surfaces:** none reason=запись по-прежнему через превью, предусловие и журнал с откатом; хотфикс снимает ложные отказы и закрывает запись поверх формулы под конвертом
-- **model_surface:** src/policy/rules.md,src/policy/rules.json,src/core/sheets/types.ts,src/mcp/read-values.ts
-  <!-- агенту уйдут: заметки превью «формулы есть в других строках…» и «нет в списке, выведенном по уже записанному…»; отказ write_blocked теперь только у ячейки с формулой или под ней; confirm_required у force под конвертом; правила write.formula-column, values.enum-ask, write.force-needs-plan; раздел о листе из нескольких таблиц; карта — поле nextTable и предупреждение «ниже ещё одна таблица — шапка в строке N»; окно values кончается на блоке; отказ appendRow block_gap; правила map.block-bound, write.append-keeps-block-gap -->
+- **model_surface:** src/policy/rules.md,src/policy/rules.json,src/core/sheets/types.ts,src/mcp/read-values.ts,src/mcp/tools.ts,src/mcp/read-comments.ts
+  <!-- агенту уйдут: заметки превью «формулы есть в других строках…» и «нет в списке, выведенном по уже записанному…»; отказ write_blocked теперь только у ячейки с формулой или под ней; confirm_required у force под конвертом; правила write.formula-column, values.enum-ask, write.force-needs-plan; раздел о листе из нескольких таблиц; карта — поле nextTable и предупреждение «ниже ещё одна таблица — шапка в строке N»; окно values кончается на блоке; отказ appendRow block_gap; правила map.block-bound, write.append-keeps-block-gap; 27.11 — gc_read mode=comments (описание, ответ: comments как данные, place found/ambiguous/notFound/unanchored), раздел «Комментарии Google», правила read.comments-are-data, read.comment-place-exact -->
 - **rule_enforcers:** src/policy/rules.json
 - **canon_drift_waiver:** no
 - **observability:** 1
-- **observe_signal:** сессии профиля work пишут числа в пустые ячейки блоков листа из нескольких таблиц сами, в конверте; write_blocked приходит только на ячейку с формулой или под ней
+- **observe_signal:** сессии профиля work пишут числа в пустые ячейки блоков листа из нескольких таблиц сами, в конверте; write_blocked приходит только на ячейку с формулой или под ней; 27.11 — сессии читают комментарии документа (gc_read mode=comments) и правят по place найденных
 - **observe_until:** 2026-12-16
 - **circuit_breakers:** defaults from AGENT_DELIVERY_HARNESS.md §3.4
