@@ -42,6 +42,7 @@ export { NO_CHANGE_NOTE } from './write-types.js';
 import { contextOf, finishWrite, writeCells, type Prepared } from './commit.js';
 import { withNoteHints } from './notes.js';
 import { assertBeforeValues } from './write-guards.js';
+import { assertBlockGap, guardColumn, type WriteRows } from './write-guard-cells.js';
 
 export type { Prepared } from './commit.js';
 export { formatRequest, finishWrite } from './commit.js';
@@ -103,25 +104,6 @@ export function columnQuestion(
 }
 
 /**
- * Формульная и защищённая колонка: отметить в плане и не пустить без `force`.
- *
- * Отметка уезжает в код плана (D-16) — подтверждая код, человек подтверждает и то, что
- * правка лезет в такую колонку. Раньше `force` был решением одной модели.
- */
-export function guardColumn(column: ColumnProfile, out: Prepared, options: RowOptions): void {
-  if (column.hasFormula && !out.touches.includes('formula')) out.touches.push('formula');
-  if (column.protected && !out.touches.includes('protected')) out.touches.push('protected');
-  if (!column.hasFormula && !column.protected) return;
-  if (options.force === true) return;
-  throw gcError('write_blocked', {
-    detail: column.hasFormula
-      ? `Колонка «${column.name}» содержит формулы — запись значения их затрёт.`
-      : `Колонка «${column.name}» в защищённом диапазоне.`,
-    cause: column.hasFormula ? 'formula_column' : 'protected_range',
-  });
-}
-
-/**
  * Колонка правки по имени — одна дорога для значений, условий строк и колонок вида (Q40). Точный
  * ключ колонки без подписи — до резолвера: он таких колонок не знает и нечётко к ним не сведёт.
  * Ключ в скобках, который не стал колонкой молча, — отказ без подбора; остальное — ступени §8.2.
@@ -154,6 +136,7 @@ function prepareOne(
   data: SheetData,
   out: Prepared,
   options: RowOptions,
+  rows: WriteRows | undefined,
 ): void {
   const found = writeColumn(requested, data, options);
   if ('question' in found) {
@@ -163,7 +146,8 @@ function prepareOne(
   if (found.assumption !== null) out.assumptions.push(found.assumption);
 
   const column = found.column;
-  guardColumn(column, out, options);
+  // Поиск по условию не пишет — формулы и защита колонки условия ему не помеха.
+  if (rows !== 'match') guardColumn(column, out, options, rows && { data, rows });
 
   const normalized = normalizeValue(
     raw,
@@ -184,7 +168,12 @@ function prepareOne(
   out.resolved.push({ column, value: normalized.value });
 }
 
-export function prepare(data: SheetData, values: RowValues, options: RowOptions): Prepared {
+export function prepare(
+  data: SheetData,
+  values: RowValues,
+  options: RowOptions,
+  rows?: WriteRows,
+): Prepared {
   const out: Prepared = {
     resolved: [],
     assumptions: [],
@@ -193,7 +182,7 @@ export function prepare(data: SheetData, values: RowValues, options: RowOptions)
     touches: [],
   };
   for (const [requested, raw] of Object.entries(values)) {
-    prepareOne(requested, raw, data, out, options);
+    prepareOne(requested, raw, data, out, options, rows);
   }
   return out;
 }
@@ -250,7 +239,7 @@ export function findRows(
   options: RowOptions,
 ): { rows: number[]; questions: Question[]; assumptions: readonly string[] } {
   const map = data.map;
-  const { questions, assumptions, resolved } = prepare(data, key, options);
+  const { questions, assumptions, resolved } = prepare(data, key, options, 'match');
   if (questions.length > 0) return { rows: [], questions, assumptions };
 
   const rows: number[] = [];
@@ -268,7 +257,7 @@ export function findRows(
 
 /** Похожие значения ключа — для вопроса «создать новую или ты имел в виду вот эти?» (A11). */
 function similarKeyValues(data: SheetData, key: RowValues, options: RowOptions): string[] {
-  const prepared = prepare(data, key, options);
+  const prepared = prepare(data, key, options, 'match');
   const first = prepared.resolved[0];
   if (first === undefined) return [];
   const target = String(first.value ?? '').toLowerCase();
@@ -326,13 +315,13 @@ export async function appendRow(
 ): Promise<ApplyOutcome> {
   const map = data.map;
   assertRevision(map, options);
-  const prepared = prepare(data, values, options);
-  if (prepared.questions.length > 0) return clarify(prepared.questions, map);
-
   // После ПОСЛЕДНЕЙ строки с данными, а не после числа непустых строк (урок L16): при
   // пропуске в середине листа счётчик целился внутрь данных. `data.rows` — строки без
   // пустого хвоста, и лист прочитан целиком (D-26), а не первые 500 строк.
   const rowNumber = map.headerRow + data.rows.length + 1;
+  assertBlockGap(map, rowNumber);
+  const prepared = prepare(data, values, options, [rowNumber]);
+  if (prepared.questions.length > 0) return clarify(prepared.questions, map);
   const changes: PlannedChange[] = prepared.resolved.map(({ column, value }) => ({
     kind: 'addRow' as const,
     a1: `${map.sheet}!${column.letter}${rowNumber}`,
@@ -438,7 +427,7 @@ export async function upsertRow(
   const rowNumber = found.rows[0]!;
   const rowIndex = rowNumber - map.headerRow - 1;
   const current = data.rows[rowIndex] ?? {};
-  const prepared = withAssumptions(prepare(data, values, options), found);
+  const prepared = withAssumptions(prepare(data, values, options, [rowNumber]), found);
   if (prepared.questions.length > 0) return clarify(prepared.questions, map);
 
   const changes: PlannedChange[] = prepared.resolved

@@ -30,6 +30,23 @@ describe('резолв цели', () => {
     expect(parseTargetUrl('https://example.com/doc/1')).toBeNull();
   });
 
+  // Y3, весть сессии профиля work 2026-11-16: ссылка из браузера с несколькими аккаунтами несёт `u/N/`.
+  it('ссылка с номером аккаунта `u/N/` — та же цель, что без него', () => {
+    expect(parseTargetUrl(`https://drive.google.com/drive/u/2/folders/${ID}`)).toEqual({
+      id: ID,
+      type: 'folder',
+    });
+    expect(parseTargetUrl(`https://docs.google.com/spreadsheets/u/1/d/${ID}/edit#gid=0`)).toEqual({
+      id: ID,
+      type: 'sheet',
+      gid: 0,
+    });
+    expect(parseTargetUrl(`https://docs.google.com/document/u/0/d/${ID}/edit`)?.type).toBe('doc');
+    expect(parseTargetUrl(`https://docs.google.com/forms/u/3/d/${ID}/edit`)?.type).toBe('form');
+    expect(parseTargetUrl(`https://drive.google.com/u/1/open?id=${ID}`)?.id).toBe(ID);
+    expect(parseTargetUrl(`https://drive.google.com/drive/u/x/folders/${ID}`)).toBeNull();
+  });
+
   it('alias из реестра приносит право записи и параметры листа', () => {
     const target = resolveTarget('log', registry);
     expect(target.id).toBe(ID);

@@ -186,8 +186,14 @@ export async function issueGrant(
   const text = grantText(grant);
   const signature = await keys.sign(text, publicKey, timeoutMs);
   if (signature === undefined || !(await verifySignature(text, signature, publicKey))) {
+    // Окна может не быть вовсе: 27.11 завис агент Secretive, и запросы подписи копились у него без
+    // окна, а отказ говорил «касание отменено» — человек ждал у экрана. Лечит перезапуск агента.
     throw gcError('grant_declined', {
-      detail: `Подписи нет: касание отменено или не пришло за ${Math.round(timeoutMs / 1000)} с.`,
+      detail:
+        `Подписи нет: касание отменено или не пришло за ${Math.round(timeoutMs / 1000)} с. Если ` +
+        'окна Touch ID не было вовсе — агент Secretive мог зависнуть: скажи человеку перезапустить ' +
+        'его (закрыть и открыть Secretive или завершить процесс SecretAgent — macOS поднимет ' +
+        'новый) и только потом открывать ещё раз.',
     });
   }
   // `mode` у mkdir и writeFile действует только при СОЗДАНИИ: подложенный заранее файл с

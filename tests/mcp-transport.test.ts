@@ -68,7 +68,8 @@ const SAMPLE: Record<string, unknown> = {
   text: 'Судья: Раморенко',
   afterHeading: 'Составы',
   uri: 'https://example.com/lineup.png',
-  style: { bold: true, fontSize: 12, color: '#112233' },
+  style: { bold: true, fontSize: 12, color: '#112233', background: '#fff2cc' },
+  fragment: 'Составы',
   namedStyle: 'HEADING_2',
   rows: 2,
   asText: false,
@@ -83,6 +84,8 @@ const SAMPLE: Record<string, unknown> = {
   endIndex: 9,
   localPath: 'video/sales.mp4',
   startColumn: 'C',
+  commentId: 'AAAAthread01',
+  resolve: true,
 };
 
 /** `rows` по операции; у остальных — число строк новой таблицы документа. */

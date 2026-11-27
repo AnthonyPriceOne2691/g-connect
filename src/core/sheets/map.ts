@@ -15,6 +15,8 @@ import {
   unlabeledIn,
   type KeyedColumn,
 } from './bounds.js';
+import { blockBound, type BlockBound } from './block-bound.js';
+import { DATE_RE, NUMBER_RE, isBlank, text } from './cell-text.js';
 import { detectDateFormat, withDateStyle } from './date-style.js';
 import { headerNotes } from './notes.js';
 import { unlabeledProfiles } from './unlabeled-key.js';
@@ -55,15 +57,9 @@ const ENUM_MAX_LENGTH = 40;
 const TYPE_MIN_VALUES = 2;
 const TYPE_MIN_SHARE = 0.8;
 
-const text = (cell: Cell | undefined): string =>
-  cell?.value === null || cell?.value === undefined ? '' : String(cell.value).trim();
-
-const isBlank = (cell: Cell | undefined): boolean => text(cell) === '';
 /** В строке есть значение: пусто и одни пробелы — не значение. */
 const filled = (row: readonly Cell[]): boolean => row.some((cell) => !isBlank(cell));
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$|^\d{1,2}[./]\d{1,2}[./]\d{2,4}$/;
-const NUMBER_RE = /^-?\d+([.,]\d+)?$/;
 const LINK_RE = /^https?:\/\//i;
 
 function valueType(raw: string): ColumnType {
@@ -279,7 +275,10 @@ export function buildSheetData(
       ? detectHeaderRow(rows)
       : { row: options.headerRow, reason: 'строка заголовков задана вызывающим', confident: true };
   const headerCells = rows[guess.row - 1] ?? [];
-  const dataRows = rows.slice(guess.row);
+  // Данные шапки — до следующей таблицы листа, если она подтверждена (§9.3, хотфикс 16.11).
+  const below = rows.slice(guess.row);
+  const bound = blockBound(below, headerCells, guess.row);
+  const dataRows = bound === null ? below : below.slice(0, bound.end);
   // Заметки шапки — правила заполнения (Q24): предупреждение о них идёт первым, до записи.
   const notes = headerNotes(rows, guess.row, { id: snapshot.id, sheet: sheet.title });
   const warnings: string[] = [...notes.warnings];
@@ -334,7 +333,7 @@ export function buildSheetData(
   // Значения под пустой ячейкой шапки и правее последней подписи — полем и предупреждением (Q30).
   const unlabeled = unlabeledIn(dataRows, guess.row + 1, columns, 'map');
 
-  warnings.push(...sideBlockWarning(headerCells));
+  warnings.push(...sideBlockWarning(headerCells), ...boundWarning(bound, guess.row));
   warnings.push(...unlabeled.warnings, ...mergeWarnings(sheet, guess.row));
   warnings.push(...partialReadWarning(snapshot.rowLimit, rows.length, sheet.gridRows));
   if (!guess.confident && options.headerRow === undefined) {
@@ -377,6 +376,15 @@ export function buildSheetData(
       .filter((s) => s.title !== sheet.title)
       .map((s) => ({ title: s.title, rowCount: dataHeight(s.rows) })),
     ...(sheet.gridRows === undefined ? {} : { sheetRows: sheet.gridRows }),
+    ...(bound === null
+      ? {}
+      : {
+          nextTable: {
+            row: bound.nextRow,
+            headerRow: bound.nextHeaderRow,
+            blankRows: bound.blankRows,
+          },
+        }),
     ...notes.fields,
     ...unlabeled.fields,
     // Снимок усечён по листу — значит список других листов НЕ полон, и молчать об этом
@@ -475,4 +483,15 @@ export function buildSheetMap(
   options: SheetMapOptions = {},
 ): SheetMap {
   return buildSheetData(snapshot, options).map;
+}
+
+/** Ниже — другая таблица (§9.3): где кончаются данные этой шапки и как прочесть следующую. */
+function boundWarning(bound: BlockBound | null, headerRow: number): string[] {
+  if (bound === null) return [];
+  const shown = bound.labels.slice(0, 4).join(' | ') + (bound.labels.length > 4 ? ' | …' : '');
+  return [
+    `ниже ещё одна таблица — шапка в строке ${bound.nextHeaderRow} («${shown}»): данные этой шапки — ` +
+      `строки ${headerRow + 1}–${headerRow + bound.end}, блок ниже в них не входит; прочитать его — ` +
+      `gc_read с headerRow: ${bound.nextHeaderRow}`,
+  ];
 }

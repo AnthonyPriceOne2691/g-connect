@@ -143,10 +143,17 @@ describe('выдача и проверка (X3)', () => {
     expect(await readFile(file, 'utf8')).not.toContain('token');
   });
 
-  it('отмена касания или тишина — grant_declined, файла нет', async () => {
+  it('Z21: отмена касания или тишина — grant_declined с подсказкой про зависший Secretive, файла нет', async () => {
     const declining: GrantKeys = { ...fileKeys(owner), sign: () => Promise.resolve(undefined) };
     await expect(issueGrant(declining, PROJECT_A, 'default', NOON)).rejects.toMatchObject({
-      payload: { code: 'grant_declined' },
+      payload: {
+        code: 'grant_declined',
+        detail:
+          'Подписи нет: касание отменено или не пришло за 60 с. Если окна Touch ID не было вовсе — ' +
+          'агент Secretive мог зависнуть: скажи человеку перезапустить его (закрыть и открыть ' +
+          'Secretive или завершить процесс SecretAgent — macOS поднимет новый) и только потом ' +
+          'открывать ещё раз.',
+      },
     });
     expect((await currentGrant(fileKeys(owner), PROJECT_A, 'default', NOON)).state).toBe('none');
   });

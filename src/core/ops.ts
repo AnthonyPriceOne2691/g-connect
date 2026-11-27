@@ -13,7 +13,9 @@ import { gcError } from './errors.js';
 import { enumRefusal, issuesDetail, unknownFields, unknownFieldsDetail } from './field-check.js';
 import { cellValue, commonFields, contentFields, orJsonText } from './op-fields.js';
 import {
+  addCommentOp,
   appendTextOp,
+  COMMENT_OPS,
   createParagraphBulletsOp,
   deleteParagraphBulletsOp,
   deleteParagraphOp,
@@ -29,6 +31,7 @@ import {
   insertTextOp,
   replaceAllTextOp,
   replaceTextOp,
+  replyCommentOp,
   setParagraphStyleOp,
   updateTextStyleOp,
 } from './docs/ops.js';
@@ -302,6 +305,8 @@ export const operationSchema = z.discriminatedUnion('op', [
   deleteParagraphBulletsOp,
   insertPageBreakOp,
   insertInlineImageOp,
+  replyCommentOp,
+  addCommentOp,
 ]);
 
 export type Operation = z.infer<typeof operationSchema>;
@@ -349,6 +354,8 @@ export const OPERATION_NAMES: readonly OperationName[] = [
   'deleteParagraphBullets',
   'insertPageBreak',
   'insertInlineImage',
+  'replyComment',
+  'addComment',
 ];
 
 /** Имена doc-операций — ЕДИНСТВЕННЫМ источником (урок L21): срез общего списка. */
@@ -371,6 +378,7 @@ const DOC_NAMES = [
   'deleteParagraphBullets',
   'insertPageBreak',
   'insertInlineImage',
+  ...COMMENT_OPS,
 ] as const;
 
 /** Операции над документом — разводятся по виду цели ДО чтения таблицы. */

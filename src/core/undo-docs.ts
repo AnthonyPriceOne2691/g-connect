@@ -10,6 +10,7 @@
 
 import { gcError, newCorrelationId } from './errors.js';
 import type { DocReplacement, JournalSource, WriteRecord } from './journal.js';
+import { isCommentRecord, undoComment } from './undo-comments.js';
 import { assertRecent, isUndoOutcome, pickUndoRecord } from './undo-shared.js';
 import type { UndoOptions, UndoOutcome } from './undo-types.js';
 import { tableUndoRequests } from './undo-docs-table.js';
@@ -300,8 +301,19 @@ const undoStyles = snapshotUndo('doc_moved_after_style', 'правки стил�
     ...exactStyleRequests(tab.tabId, stored.startIndex, stored.runs),
     ...paragraphViewRequests(tab.tabId, stored),
   ],
-  done: `Стили возвращены: ${(stored.paragraphs ?? []).length} абзац(ев), текст не тронут.`,
+  done: `Стили возвращены: ${restyled(stored)}, текст не тронут.`,
 }));
+
+/**
+ * Что вернул откат стилей. Абзацы целиком кончаются переносом, фраза внутри абзаца (27.11) —
+ * нет: её снимок без абзацев, и «0 абзац(ев)» сказал бы человеку, что не вернулось ничего.
+ */
+function restyled(stored: StoredSnapshot): string {
+  const text = stored.runs.map((run) => run.text).join('');
+  return text.endsWith('\n')
+    ? `${(stored.paragraphs ?? []).length} абзац(ев)`
+    : `фраза «${text}» — остальной абзац не трогался`;
+}
 
 /** Снимок «до» и живой таб записи — общий пролог откатов по снимку. */
 function storedAndTab(
@@ -376,6 +388,8 @@ export async function undoDocLast(
   const picked = await pickUndoRecord(source, targetId, options);
   if (isUndoOutcome(picked)) return picked;
   assertRecent(picked, options);
+  // Свой комментарий или ответ (27.11) откатывает Drive: текст документа он не трогал.
+  if (isCommentRecord(picked)) return undoComment(targetId, picked, options);
   const record = { ...picked, revisionAfter: await settledRevision(source, targetId, picked) };
   const doc = docOf(record);
 

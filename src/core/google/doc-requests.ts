@@ -138,20 +138,25 @@ function toGoogleTextStyle(style: DocTextStyle): docs_v1.Schema$TextStyle {
   if (style.strikethrough !== undefined) out.strikethrough = style.strikethrough;
   if (style.link !== undefined) out.link = { url: style.link };
   if (style.fontSize !== undefined) out.fontSize = { magnitude: style.fontSize, unit: 'PT' };
-  if (style.color !== undefined) {
-    const hex = style.color.replace('#', '');
-    out.foregroundColor = {
-      color: {
-        rgbColor: {
-          red: parseInt(hex.slice(0, 2), 16) / 255,
-          green: parseInt(hex.slice(2, 4), 16) / 255,
-          blue: parseInt(hex.slice(4, 6), 16) / 255,
-        },
-      },
-    };
-  }
+  if (style.color !== undefined) out.foregroundColor = { color: { rgbColor: rgbOf(style.color) } };
+  if (style.background !== undefined) out.backgroundColor = backgroundOf(style.background);
   return out;
 }
+
+/** `#rrggbb` → доли, как их ждёт Google (обратная сторона `rgbToHex` шва). */
+function rgbOf(hex: string): docs_v1.Schema$RgbColor {
+  const part = (at: number): number => parseInt(hex.slice(at, at + 2), 16) / 255;
+  return { red: part(1), green: part(3), blue: part(5) };
+}
+
+/**
+ * Фон текста — выделение маркером (27.11). `'none'` — `OptionalColor` БЕЗ `color`, по
+ * документации Docs API (`OptionalColor.color`): «If set, this will be used as an opaque color.
+ * If unset, this represents a transparent color.» Прозрачный фон и есть снятое выделение — и
+ * поверх фона из стиля абзаца, тогда как поле в маске без значения вернуло бы фон родителя.
+ */
+const backgroundOf = (background: string): docs_v1.Schema$OptionalColor =>
+  background === 'none' ? {} : { color: { rgbColor: rgbOf(background) } };
 
 const STYLE_FIELD_NAMES: Readonly<Record<string, string>> = {
   bold: 'bold',
@@ -161,9 +166,15 @@ const STYLE_FIELD_NAMES: Readonly<Record<string, string>> = {
   link: 'link',
   fontSize: 'fontSize',
   color: 'foregroundColor',
+  background: 'backgroundColor',
 };
 
-/** Маска точного стиля: каждое управляемое поле — отсутствующее в стиле сбросится. */
+/**
+ * Маска точного стиля: каждое управляемое поле — отсутствующее в стиле сбросится. Документация
+ * `UpdateTextStyleRequest.fields`: «To reset a property to its default value, include its field
+ * name in the field mask but leave the field itself unset.» — так откат снимает и выделение,
+ * которого до правки не было.
+ */
 const ALL_STYLE_FIELDS = Object.values(STYLE_FIELD_NAMES).join(',');
 
 function styleFields(style: DocTextStyle): string {
