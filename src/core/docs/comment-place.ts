@@ -34,6 +34,7 @@ export type CommentPlace =
 const SHOWN_MATCHES = 5;
 
 interface Piece {
+  /** Начало и конец (не включая) текста абзаца в строке таба. */
   readonly start: number;
   readonly end: number;
   readonly paragraph: number;
@@ -52,32 +53,40 @@ const squeeze = (text: string): string => text.replace(/[\s\u200b]+/g, ' ').trim
  * цитату не несёт, а с ним цитата «a\n\nb» не сошлась бы с «a b».
  */
 function tabText(tab: DocTab): TabText {
-  let text = '';
-  const pieces: Piece[] = [];
-  for (const paragraph of tab.paragraphs) {
-    const own = squeeze(visibleText(paragraph.text));
-    if (own === '') continue;
-    if (text !== '') text += ' ';
-    pieces.push({ start: text.length, end: text.length + own.length, paragraph: paragraph.index });
-    text += own;
-  }
-  return { title: tab.title, text, pieces };
+  const owned = tab.paragraphs
+    .map((paragraph) => ({
+      paragraph: paragraph.index,
+      text: squeeze(visibleText(paragraph.text)),
+    }))
+    .filter((entry) => entry.text !== '');
+  let start = 0;
+  const pieces = owned.map((entry) => {
+    const piece = { start, end: start + entry.text.length, paragraph: entry.paragraph };
+    start = piece.end + 1;
+    return piece;
+  });
+  return { title: tab.title, text: owned.map((entry) => entry.text).join(' '), pieces };
 }
 
-const pieceAt = (pieces: readonly Piece[], offset: number): Piece | undefined =>
-  pieces.find((piece) => offset < piece.end) ?? pieces.at(-1);
+/**
+ * Абзацы вхождения `[at, end)`: первый — последний, начавшийся не позже `at`; последний — первый,
+ * кончившийся не раньше `end`. Цитата сжата и обрезана, поэтому ни начало, ни конец не падают на
+ * пробел-стык между абзацами.
+ */
+function span(pieces: readonly Piece[], at: number, end: number) {
+  let paragraph = 0;
+  let toParagraph = 0;
+  for (const piece of pieces) {
+    if (piece.start <= at) paragraph = piece.paragraph;
+    if (toParagraph === 0 && end <= piece.end) toParagraph = piece.paragraph;
+  }
+  return toParagraph === paragraph ? { paragraph } : { paragraph, toParagraph };
+}
 
 function matchesIn(tab: TabText, quote: string): PlaceMatch[] {
   const found: PlaceMatch[] = [];
   for (let at = tab.text.indexOf(quote); at !== -1; at = tab.text.indexOf(quote, at + 1)) {
-    const first = pieceAt(tab.pieces, at);
-    const last = pieceAt(tab.pieces, at + quote.length - 1);
-    if (first === undefined || last === undefined) continue;
-    found.push({
-      tab: tab.title,
-      paragraph: first.paragraph,
-      ...(last.paragraph === first.paragraph ? {} : { toParagraph: last.paragraph }),
-    });
+    found.push({ tab: tab.title, ...span(tab.pieces, at, at + quote.length) });
   }
   return found;
 }

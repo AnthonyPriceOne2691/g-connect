@@ -14,7 +14,8 @@ import { COMMENT_FIELDS, type FileComment } from '../src/core/google/drive-comme
 import { GoogleDriveClient } from '../src/core/google/drive.js';
 import type { Registry } from '../src/core/targets.js';
 import { gcRead, type ToolDeps, type ToolResult } from '../src/mcp/tools.js';
-import { FakeDocsClient, forecastDoc } from './fixtures/doc.js';
+import { placeFinder } from '../src/core/docs/comment-place.js';
+import { FakeDocsClient, buildDoc, forecastDoc, p } from './fixtures/doc.js';
 import { FakeDriveClient } from './fixtures/drive.js';
 import { callMcp } from './fixtures/protocol.js';
 import { FakeSheetsClient, reportSheet } from './fixtures/sheet.js';
@@ -219,6 +220,37 @@ describe('Z2 — место по цитате честное: абзац тол�
       tab: 'Прогноз',
       paragraph: paragraphOf('Составы'),
       toParagraph: paragraphOf('Основа выйдет без ротации, Fluminense FC подтвердил заявку.'),
+    });
+  });
+
+  it('цитата от начала до конца абзаца — один абзац, без toParagraph', async () => {
+    expect(await placeOf('Составы')).toEqual({
+      status: 'found',
+      tab: 'Прогноз',
+      paragraph: paragraphOf('Составы'),
+    });
+    expect(await placeOf('Настроение отличное 😀')).toEqual({
+      status: 'found',
+      tab: 'Прогноз',
+      paragraph: paragraphOf('Изучаем форму Fluminense перед дерби. Настроение отличное 😀'),
+    });
+  });
+
+  it('цитата через пустой абзац сходится: пустые абзацы цитату не несут', () => {
+    const doc = buildDoc({
+      tabs: [{ title: 'Т', content: [p('Срок сдачи'), p(''), p('пятница, 18:00'), p('Итог')] }],
+    });
+    expect(placeFinder(doc.tabs)('Срок сдачи\n\nпятница')).toEqual({
+      status: 'found',
+      tab: 'Т',
+      paragraph: 1,
+      toParagraph: 3,
+    });
+    expect(placeFinder(doc.tabs)('18:00 Итог')).toEqual({
+      status: 'found',
+      tab: 'Т',
+      paragraph: 3,
+      toParagraph: 4,
     });
   });
 
